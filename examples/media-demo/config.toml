@@ -1,0 +1,32 @@
+# Pre-decoded sequence and audio demo for the Sprint 8 console path.
+#
+# `frames/` holds 90 PNGs at 30 fps and `audio.wav` has the beep at 1 s.
+# `yet-app run` opens the console; add `--headless` to run without a window.
+
+[display]
+# Zero-based: 1 is the second monitor (labelled "2" in the console).
+presenter_monitor = 1
+console_monitor = 0
+width = 1440
+height = 2560
+fullscreen = true
+
+[camera]
+usb_index = 2
+width = 640
+height = 480
+fps = 30
+format = "yuyv"
+eye_region = [0.25, 0.25, 0.5, 0.5]
+
+[presenter]
+backend = "egui"
+overlay = "auto"
+
+[overlay]
+monitor = 1
+
+[audio]
+enabled = true
+device = "default"
+volume = 0.8

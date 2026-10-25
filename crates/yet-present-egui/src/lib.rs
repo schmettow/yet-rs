@@ -20,6 +20,7 @@
 mod blur;
 mod media;
 mod painter;
+mod playback;
 mod presenter;
 mod view;
 

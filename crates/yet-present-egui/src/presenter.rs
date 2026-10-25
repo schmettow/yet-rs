@@ -13,13 +13,15 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use image::RgbaImage;
+use yet_media::NullAudioPlayer;
 use yet_present::{
-    FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError, Scene,
-    ScreenGeometry, SessionTime,
+    AudioPlayer, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
+    Scene, ScreenGeometry, SessionTime,
 };
 
 use crate::media::MediaStore;
 use crate::painter;
+use crate::playback::PlaybackBank;
 use crate::view;
 
 const PAINT_INTERVALS: usize = 120;
@@ -57,7 +59,9 @@ impl PresenterConfig {
 
 impl Default for PresenterConfig {
     fn default() -> Self {
-        Self::new(0, true, (1920, 1080), 1.0)
+        // The project's reference setup has two monitors; the presenter is the
+        // second one (zero-based index 1, labelled "2" in the console).
+        Self::new(1, true, (1920, 1080), 1.0)
     }
 }
 
@@ -220,14 +224,34 @@ impl PresenterState {
     }
 
     /// Record a scene for the next paint.
+    ///
+    /// Calling this with an unchanged scene does not request another repaint;
+    /// sequence frames mark the state dirty when their pixels change. This
+    /// keeps a 60 Hz controller from forcing redundant paints.
     pub fn present(&mut self, frame: &FrameStamp, scene: &Scene) -> PresentStats {
+        self.present_frame(frame, scene, None)
+    }
+
+    /// Record a scene and an optional new sequence frame for the next paint.
+    pub fn present_frame(
+        &mut self,
+        frame: &FrameStamp,
+        scene: &Scene,
+        media: Option<(MediaId, RgbaImage)>,
+    ) -> PresentStats {
         let dropped = self.dirty;
         if dropped {
             self.coalesced += 1;
         }
-        self.scene.clone_from(scene);
+        if let Some((media, image)) = media {
+            self.media.replace_image(media, image);
+            self.dirty = true;
+        }
+        if self.scene != *scene {
+            self.scene.clone_from(scene);
+            self.dirty = true;
+        }
         self.frame = Some(frame.clone());
-        self.dirty = true;
         self.presents += 1;
         self.last_dt = Some(frame.dt);
 
@@ -240,6 +264,11 @@ impl PresenterState {
             audio_drift_ms: None,
             audio_underruns: 0,
         }
+    }
+
+    /// Whether the viewport has an unpainted scene or frame.
+    pub fn needs_paint(&self) -> bool {
+        self.dirty
     }
 
     /// Paint the current scene. Called from the deferred viewport.
@@ -332,13 +361,20 @@ impl PresenterState {
 #[derive(Clone)]
 pub struct EguiPresenter {
     state: Arc<Mutex<PresenterState>>,
+    playback: Arc<Mutex<PlaybackBank>>,
 }
 
 impl EguiPresenter {
-    /// Create a presenter and its shared state.
+    /// Create a presenter without audio playback.
     pub fn new(config: PresenterConfig) -> Self {
+        Self::with_audio(config, Box::new(NullAudioPlayer), 1.0)
+    }
+
+    /// Create a presenter with an audio backend and initial volume.
+    pub fn with_audio(config: PresenterConfig, audio: Box<dyn AudioPlayer>, volume: f32) -> Self {
         Self {
             state: Arc::new(Mutex::new(PresenterState::new(config))),
+            playback: Arc::new(Mutex::new(PlaybackBank::new(audio, volume))),
         }
     }
 
@@ -354,6 +390,12 @@ impl EguiPresenter {
 
     fn lock(&self) -> MutexGuard<'_, PresenterState> {
         lock_state(&self.state)
+    }
+
+    fn lock_playback(&self) -> MutexGuard<'_, PlaybackBank> {
+        self.playback
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Change the target monitor or fullscreen mode of the viewport.
@@ -413,9 +455,19 @@ impl Presenter for EguiPresenter {
                 self.lock().insert_image(id, image);
                 Ok(())
             }
-            PresenterCommand::LoadSequence { .. } => Err(PresenterError::InvalidCommand(
-                "frame sequences arrive in Sprint 8; use a static image".to_owned(),
-            )),
+            PresenterCommand::LoadSequence {
+                id,
+                dir,
+                fps,
+                looped,
+                audio,
+            } => {
+                let first = self
+                    .lock_playback()
+                    .load_sequence(id, dir, fps, looped, audio)?;
+                self.lock().insert_image(id, first);
+                Ok(())
+            }
             PresenterCommand::ShowMonitor {
                 monitor,
                 fullscreen,
@@ -424,20 +476,63 @@ impl Presenter for EguiPresenter {
                 self.request_repaint();
                 Ok(())
             }
-            PresenterCommand::Play { id } => self.lock().play(id),
-            PresenterCommand::Pause | PresenterCommand::Resume => Ok(()),
+            PresenterCommand::Play { id } => {
+                self.lock().play(id)?;
+                self.lock_playback().play(id)?;
+                Ok(())
+            }
+            PresenterCommand::Pause => {
+                self.lock_playback().pause();
+                Ok(())
+            }
+            PresenterCommand::Resume => {
+                self.lock_playback().resume();
+                Ok(())
+            }
             PresenterCommand::Stop | PresenterCommand::Shutdown => {
+                self.lock_playback().stop();
                 self.lock().stop();
                 self.request_repaint();
                 Ok(())
             }
-            PresenterCommand::SetVolume(_) => Ok(()),
+            PresenterCommand::SetVolume(volume) => {
+                self.lock_playback().set_volume(volume);
+                Ok(())
+            }
         }
     }
 
     fn present(&mut self, frame: &FrameStamp, scene: &Scene) -> PresentStats {
-        let stats = self.lock().present(frame, scene);
-        self.request_repaint();
+        let advance = self.lock_playback().advance(frame.experiment_t);
+        let underruns = self.lock_playback().underrun();
+
+        let mut stats = match advance {
+            Some(advance) => {
+                let media_pts = advance.media_pts;
+                let audio_pts = advance.audio_pts;
+                let master = advance.master;
+                let dropped = advance.dropped;
+                let drift_ms = advance.drift_ms;
+                let mut state = self.lock();
+                let mut stats =
+                    state.present_frame(frame, scene, Some((advance.media, advance.image)));
+                drop(state);
+
+                stats.frame.media_pts = Some(media_pts);
+                stats.frame.audio_pts = audio_pts;
+                stats.frame.master = master;
+                stats.frame.dropped = dropped > 0;
+                stats.dropped_frames = stats.dropped_frames.saturating_add(dropped);
+                stats.audio_drift_ms = drift_ms;
+                stats
+            }
+            None => self.lock().present(frame, scene),
+        };
+        stats.audio_underruns = underruns;
+
+        if self.lock().needs_paint() {
+            self.request_repaint();
+        }
         stats
     }
 }
@@ -487,11 +582,13 @@ mod tests {
     #[test]
     fn an_unpainted_scene_is_reported_as_coalesced() {
         let mut presenter = EguiPresenter::new(PresenterConfig::default());
-        let mut scene = Scene::new();
-        scene.clear(yet_present::Color::WHITE);
+        let mut white = Scene::new();
+        white.clear(yet_present::Color::WHITE);
+        let mut black = Scene::new();
+        black.clear(yet_present::Color::BLACK);
 
-        let first = presenter.present(&frame_stamp(Duration::ZERO), &scene);
-        let second = presenter.present(&frame_stamp(Duration::from_millis(16)), &scene);
+        let first = presenter.present(&frame_stamp(Duration::ZERO), &white);
+        let second = presenter.present(&frame_stamp(Duration::from_millis(16)), &black);
 
         assert!(!first.frame.dropped);
         assert_eq!(first.dropped_frames, 0);
@@ -500,6 +597,27 @@ mod tests {
         assert_eq!(presenter.status().presents, 2);
         assert_eq!(presenter.status().coalesced, 1);
         assert_eq!(presenter.status().paints, 0);
+    }
+
+    #[test]
+    fn an_unchanged_scene_does_not_request_a_repaint() {
+        let mut presenter = EguiPresenter::new(PresenterConfig::default());
+        let mut scene = Scene::new();
+        scene.clear(yet_present::Color::WHITE);
+
+        let first = presenter.present(&frame_stamp(Duration::ZERO), &scene);
+        let ctx = eframe::egui::Context::default();
+        let mut output = ctx.run_ui(eframe::egui::RawInput::default(), |ui| {
+            presenter.lock().ui(ui);
+        });
+        output.textures_delta.clear();
+        assert_eq!(presenter.status().paints, 1);
+
+        let second = presenter.present(&frame_stamp(Duration::from_millis(16)), &scene);
+
+        assert!(!first.frame.dropped);
+        assert!(!second.frame.dropped);
+        assert_eq!(presenter.status().coalesced, 0);
     }
 
     #[test]

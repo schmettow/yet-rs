@@ -679,6 +679,46 @@ code and tests; time-to-first-trial and the pilot need an unlocked desktop and
 **Demo:** a 3 s clip with a beep at 1 s; show drift and underrun logs.
 **Gate:** drift p95 within the agreed budget; no UI blocking; deterministic last frame.
 
+**Implementation note (S8, 2026-10-25):** MED-1 to MED-4 are implemented for
+the Linux workstation. 218 workspace tests pass (three ignored hardware tests).
+
+- **Media separation:** the new `yet-media` crate owns PNG scanning/decoding
+  (`PngSequence`), WAV decoding (`WavAudio`) and rodio playback
+  (`RodioAudioPlayer`, `NullAudioPlayer`). It has no UI or experiment types;
+  `yet-present-egui` owns pacing and composition, and `yet-app` owns policy.
+- **Decoding off the UI thread:** `EguiPresenter::present` runs on the
+  controller thread. It decodes the selected frame *before* locking the painting
+  state, then hands the image over; the viewport reuses one GPU texture per
+  medium (`TextureHandle::set`). The UI thread never reads the disk. Unchanged
+  scenes no longer request a repaint, which removed redundant paints at 60 Hz.
+- **Audio master:** when a sequence has a WAV, frames are chosen from
+  `get_pos() + output_latency`; otherwise from experiment time. Pause/Resume now
+  emit `PresenterCommand::Pause`/`Resume` from the engine, so both clocks stop.
+  Each present reports `media_pts`, `audio_pts`, `ClockSource`, skipped frames,
+  drift and underruns.
+- **Measured (`examples/media-demo`, release):** 3 s / 90 frames / 30 fps with a
+  1 kHz beep at 1 s. At 2.1 s of experiment time the console showed
+  `media 2.10 s · audio drift +24.9 ms`; the beep and frame 30 therefore stay
+  within one frame. About 7–14 of 63 frames were skipped while the portrait
+  1440×2560 presenter painted; they are counted and non-blocking. With the
+  SPK-4 128 ms offset the drift read +128 ms, so the integrated default is 0 and
+  `audio.output_latency_ms` is an explicit per-device override. Pause froze both
+  the media position and the audio clock; Resume continued and finished the
+  trial 14.7 ms late. The ignored audio test opened the default device and its
+  clock advanced past 50 ms in 250 ms.
+- **Validation:** `yet-app media <dir>` reports frames, fps, duration, size and
+  WAV metadata and warns about a >100 ms duration mismatch. `prepare_media.sh`
+  produces frames plus a 48 kHz stereo WAV and fails clearly for a missing
+  input, FFmpeg errors, zero frames or audio extraction errors.
+- **Deferred:** frame decoding is just-in-time, not a background prefetch
+  worker; a looped clip does not restart its WAV; underruns are a best-effort
+  empty-queue signal. Windows/macOS playback and a screen-and-sound A/V
+  recording remain open.
+
+**Gate status:** partially met. No UI-thread disk I/O and deterministic last
+frames are tested; drift has a point measurement within budget but no p95
+series, and the Windows/macOS runtime is unverified.
+
 ### Sprint 9 — Overlay core
 
 **Goal:** the overlay works on Windows, macOS and a layer-shell Wayland compositor.

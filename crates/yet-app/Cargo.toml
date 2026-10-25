@@ -14,6 +14,7 @@ publish.workspace = true
 [dependencies]
 yet-core.workspace = true
 yet-present.workspace = true
+yet-media.workspace = true
 yet-present-egui.workspace = true
 yet-console.workspace = true
 thiserror.workspace = true

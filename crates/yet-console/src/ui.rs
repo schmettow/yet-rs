@@ -12,8 +12,32 @@ use yet_core::Phase;
 use crate::command::ExperimentCommand;
 use crate::state::{ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
 
-/// Number of monitor indices offered in the presenter-monitor selector.
+/// Fallback number of monitor choices when the platform reports no monitors.
 pub const MONITOR_CHOICES: usize = 4;
+
+/// One monitor as reported by the platform.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonitorChoice {
+    /// Zero-based index used by the configuration and the presenter.
+    pub index: usize,
+    /// Platform monitor name, when available.
+    pub name: Option<String>,
+    /// Monitor size in physical pixels.
+    pub size_px: (u32, u32),
+}
+
+impl MonitorChoice {
+    /// A one-based label with resolution and, when known, the output name.
+    pub fn label(&self) -> String {
+        let size = format!("{}×{}", self.size_px.0, self.size_px.1);
+        match &self.name {
+            Some(name) if !name.is_empty() => {
+                format!("{} · {size} · {name}", self.index + 1)
+            }
+            _ => format!("{} · {size}", self.index + 1),
+        }
+    }
+}
 
 /// Persistent console widget state.
 pub struct ConsoleUi {
@@ -48,6 +72,7 @@ impl ConsoleUi {
         ui: &mut egui::Ui,
         state: &mut ConsoleState,
         presenter: PresenterStatus,
+        monitors: &[MonitorChoice],
     ) -> Vec<ExperimentCommand> {
         let mut commands = Vec::new();
 
@@ -65,7 +90,7 @@ impl ConsoleUi {
         ui.separator();
         self.progress_panel(ui, state);
         ui.separator();
-        self.presenter_panel(ui, state, presenter);
+        self.presenter_panel(ui, state, presenter, monitors);
         self.preview_panel(ui, state);
         ui.separator();
         self.log_panel(ui, state);
@@ -377,6 +402,23 @@ impl ConsoleUi {
                 ui.label("no late trials");
             }
         });
+        if state.dropped_frames > 0 || state.audio_underruns > 0 || state.audio_drift_ms.is_some() {
+            ui.horizontal(|ui| {
+                ui.label(format!("frames dropped {}", state.dropped_frames));
+                if let Some(pts) = state.media_pts {
+                    ui.label(format!("media {:.2} s", pts.as_secs_f64()));
+                }
+                if let Some(drift) = state.audio_drift_ms {
+                    ui.label(format!("audio drift {drift:+.1} ms"));
+                }
+                if state.audio_underruns > 0 {
+                    ui.colored_label(
+                        egui::Color32::YELLOW,
+                        format!("underruns {}", state.audio_underruns),
+                    );
+                }
+            });
+        }
     }
 
     fn presenter_panel(
@@ -384,6 +426,7 @@ impl ConsoleUi {
         ui: &mut egui::Ui,
         state: &mut ConsoleState,
         presenter: PresenterStatus,
+        monitors: &[MonitorChoice],
     ) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Presenter").strong());
@@ -461,15 +504,30 @@ impl ConsoleUi {
         ui.horizontal(|ui| {
             ui.label("Presenter monitor");
             ui.add_enabled_ui(can_configure, |ui| {
+                let selected = monitors
+                    .iter()
+                    .find(|monitor| monitor.index == state.presenter_monitor)
+                    .map(MonitorChoice::label)
+                    .unwrap_or_else(|| format!("{} (unavailable)", state.presenter_monitor + 1));
                 egui::ComboBox::from_id_salt("yet-console-monitor")
-                    .selected_text(state.presenter_monitor.to_string())
+                    .selected_text(selected)
                     .show_ui(ui, |ui| {
-                        for index in 0..MONITOR_CHOICES {
-                            ui.selectable_value(
-                                &mut state.presenter_monitor,
-                                index,
-                                format!("{index}"),
-                            );
+                        if monitors.is_empty() {
+                            for index in 0..MONITOR_CHOICES {
+                                ui.selectable_value(
+                                    &mut state.presenter_monitor,
+                                    index,
+                                    format!("{} · unknown size", index + 1),
+                                );
+                            }
+                        } else {
+                            for monitor in monitors {
+                                ui.selectable_value(
+                                    &mut state.presenter_monitor,
+                                    monitor.index,
+                                    monitor.label(),
+                                );
+                            }
                         }
                     });
                 ui.checkbox(&mut state.fullscreen, "fullscreen");
@@ -584,8 +642,23 @@ mod tests {
     use eframe::egui;
     use yet_core::{GazePoint, Phase};
 
-    use super::{ConsoleUi, PresenterStatus};
+    use super::{ConsoleUi, MonitorChoice, PresenterStatus};
     use crate::state::{ConsoleState, PreviewFrame};
+
+    fn monitors() -> Vec<MonitorChoice> {
+        vec![
+            MonitorChoice {
+                index: 0,
+                name: Some("DP-1".to_owned()),
+                size_px: (2560, 1600),
+            },
+            MonitorChoice {
+                index: 1,
+                name: Some("DP-3".to_owned()),
+                size_px: (1440, 2560),
+            },
+        ]
+    }
 
     #[test]
     fn the_console_runs_a_frame_without_a_window() {
@@ -601,7 +674,7 @@ mod tests {
         let mut commands = Vec::new();
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            commands = console.ui(ui, &mut state, presenter);
+            commands = console.ui(ui, &mut state, presenter, &monitors());
         });
         output.textures_delta.clear();
 
@@ -618,7 +691,7 @@ mod tests {
         let mut commands = Vec::new();
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            commands = console.ui(ui, &mut state, PresenterStatus::default());
+            commands = console.ui(ui, &mut state, PresenterStatus::default(), &monitors());
         });
         output.textures_delta.clear();
 
@@ -643,10 +716,23 @@ mod tests {
         let mut console = ConsoleUi::default();
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            let _ = console.ui(ui, &mut state, PresenterStatus::default());
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &[]);
         });
         output.textures_delta.clear();
 
         assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn monitor_labels_are_one_based_and_show_the_output() {
+        let monitors = monitors();
+
+        assert_eq!(monitors[1].label(), "2 · 1440×2560 · DP-3");
+        let unnamed = MonitorChoice {
+            index: 0,
+            name: None,
+            size_px: (1920, 1080),
+        };
+        assert_eq!(unnamed.label(), "1 · 1920×1080");
     }
 }

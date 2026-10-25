@@ -24,6 +24,29 @@ pub fn viewport_id(monitor: usize) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(("yet-rs-presenter", monitor))
 }
 
+/// Build the stimulus viewport builder.
+///
+/// Always requesting fullscreen explicitly matters when the viewport already
+/// exists: `with_monitor` only sets the target monitor, so re-enabling
+/// fullscreen without a monitor change would otherwise be a no-op. When both
+/// are set, eframe creates the window borderless on that monitor.
+pub fn viewport_builder(monitor: usize, fullscreen: bool) -> egui::ViewportBuilder {
+    let builder = egui::ViewportBuilder::default()
+        .with_title("yet-rs stimulus")
+        .with_app_id("yet-rs-presenter")
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_fullscreen(fullscreen);
+
+    // A windowed presenter without monitor targeting arrives with the overlay
+    // sprint, which needs absolute window positions anyway.
+    if fullscreen {
+        builder.with_monitor(monitor)
+    } else {
+        builder
+    }
+}
+
 /// Ask the egui context to show (or update) the stimulus viewport.
 ///
 /// Call this once per console frame. The viewport's closure paints the current
@@ -37,18 +60,7 @@ pub fn show_viewport(ctx: &egui::Context, state: &Arc<Mutex<PresenterState>>) {
         (monitor, fullscreen, viewport)
     };
 
-    let mut builder = egui::ViewportBuilder::default()
-        .with_title("yet-rs stimulus")
-        .with_app_id("yet-rs-presenter")
-        .with_decorations(false)
-        .with_resizable(false);
-
-    // `with_monitor` requests borderless fullscreen on that monitor. A
-    // windowed presenter without monitor targeting arrives with the overlay
-    // sprint, which needs absolute window positions anyway.
-    if fullscreen {
-        builder = builder.with_monitor(monitor);
-    }
+    let builder = viewport_builder(monitor, fullscreen);
 
     let state = Arc::clone(state);
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
@@ -62,5 +74,21 @@ mod tests {
     fn each_monitor_has_its_own_viewport_identifier() {
         assert_ne!(super::viewport_id(0), super::viewport_id(1));
         assert_eq!(super::viewport_id(1), super::viewport_id(1));
+    }
+
+    #[test]
+    fn a_fullscreen_viewport_targets_the_monitor_explicitly() {
+        let builder = super::viewport_builder(1, true);
+
+        assert_eq!(builder.fullscreen, Some(true));
+        assert_eq!(builder.monitor, Some(1));
+    }
+
+    #[test]
+    fn a_windowed_viewport_can_leave_fullscreen() {
+        let builder = super::viewport_builder(1, false);
+
+        assert_eq!(builder.fullscreen, Some(false));
+        assert_eq!(builder.monitor, None);
     }
 }

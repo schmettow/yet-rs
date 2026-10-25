@@ -53,7 +53,39 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   for odd-sized patterns. `tests/cv4_parity.rs` checks them.
 - `docs/fixtures/CV-4.md`: the parity format, the canonical quadrant mapping
   and privacy handling for eye crops.
-- `yet-core`: camera capture behind `Camera`: `linuxvideo` 0.3.5 on Linux,
+- `yet-media`: a UI-free crate for pre-decoded media. `PngSequence` scans and
+  sorts PNG frames, validates the first frame, and maps elapsed time to frames
+  with loop and last-frame behavior. `WavAudio` decodes 8/16/32-bit integer and
+  32-bit float PCM with `hound`. `RodioAudioPlayer` feeds `f32` samples to
+  `rodio::buffer::SamplesBuffer`, validates default or named `cpal` devices,
+  exposes `get_pos()` plus `output_latency` and a best-effort underrun signal,
+  and `NullAudioPlayer` keeps headless runs silent.
+- `yet-present-egui`: sequence playback on the controller thread. Frames are
+  decoded outside the painting mutex, textures are reused per medium, the audio
+  clock is master when a WAV is present (monotonic otherwise), pause/resume
+  reaches both clocks, and each present reports `media_pts`, `audio_pts`, clock
+  source, skipped frames, drift and underruns. Unchanged scenes no longer force
+  a repaint.
+- `yet-app`: `yet-app media <dir>` validates every sequence and WAV, printing
+  frames, fps, duration, size, audio format and a duration-mismatch warning.
+  The console shows media position, dropped frames, drift and underruns, and
+  opens audio only when the plan actually uses a track.
+- `tools/prepare_media.sh`: one FFmpeg command produces a PNG directory and a
+  48 kHz stereo WAV, with explicit failures for missing FFmpeg/input, zero
+  frames or audio extraction errors, and a ready-to-edit `Stimuli.csv` row.
+- `examples/media-demo`: the SPK-4 3 s, 30 fps clip with a 1 kHz beep at 1 s and
+  a matching WAV, for interactive A/V validation.
+- `config.toml` `audio.output_latency_ms` (default `0`, maximum 1000) for
+  devices with a measured output-buffer offset.
+- Tests for PNG ordering/pacing/validation, WAV decoding and duration, sequence
+  decoding, loop and last-frame behavior, audio-master pacing with a fake audio
+  clock, pause behavior, rejected empty sequences and the no-repaint path.
+- `yet-core`: pause/resume now emits `PresenterCommand::Pause`/`Resume` so the
+  audio and media clocks stop with the engine.
+- `yet-present`: `MediaError::Decode`, `PresenterError::Audio`, and
+  `AudioPlayer::{underruns, output_latency, set_output_latency}` with neutral
+  defaults.
+- `yet-core` — camera capture behind `Camera`: `linuxvideo` on Linux,
   `nokhwa` 0.10.11 on macOS/Windows, a dedicated capture thread with a one-slot
   latest-frame mailbox, YUYV/GRAY/MJPEG conversion with explicit Rec. 601, format
   fallback, corrupt/dropped/error counters and normalized-ROI conversion.
@@ -167,6 +199,18 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - Linux audio is now verified with `libasound2-dev`; `get_pos()` measured
   ~128 ms behind wall clock, so S8 must compensate output latency.
 
+### Fixed
+
+- The presenter monitor selector now lists the monitors reported by the
+  platform, labelled from 1 with resolution and output name, instead of always
+  offering indices 0–3. An out-of-range `display.presenter_monitor` is clamped
+  to the last monitor with a console warning, so it no longer opens an 800×600
+  windowed stimulus. Fullscreen is requested explicitly on the viewport builder,
+  so re-enabling it or switching monitors no longer leaves the stimulus window
+  windowed.
+- The default presenter monitor is now the second monitor (zero-based index 1,
+  labelled **2**), matching the two-monitor experiment workstation.
+
 ### Known Issues
 
 - CV-4 (Python parity) is verified on committed synthetic fixtures. A
@@ -192,8 +236,20 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - The console shows the human calibration RMSE but applies no automatic quality
   threshold: a poor fit is visible, not rejected. Accuracy and latency budgets
   stay deferred to the end of the project as agreed.
-- Sequence stimuli are rejected by the presenter with a Sprint 8 message; audio
-  is accepted in the protocol but not played yet.
+- Sequence playback decodes PNG frames just-in-time on the controller thread
+  rather than in a prefetch worker. On the portrait 1440×2560 presenter, about
+  13 of 63 frames of the 3 s demo were skipped while the UI painted (counted and
+  reported); they never block the session. A background prefetch worker is a
+  follow-up if drops become a problem on slower machines.
+- Audio plays once per trial. A looped sequence loops its frames, but its WAV is
+  not restarted; the trial duration remains authoritative. Underruns are a
+  best-effort signal from an empty rodio queue and are not observable on every
+  backend.
+- The audio clock offset is device-dependent. SPK-4 measured −128 ms on its
+  harness, but the integrated S8 run showed `get_pos()` tracking wall time
+  (+8 ms drift with no offset), so the default `output_latency_ms` is 0. A
+  beep/flash screen-and-sound recording is needed before claiming a tight A/V
+  budget. Windows and macOS playback are compile-checked only.
 - A 60 Hz tick against 3 s deadlines produces sub-millisecond lateness on every
   trial (max 0.4 ms in the debug run). The console reports it with one decimal
   rather than truncating it to "0 ms".
@@ -204,5 +260,3 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   rows once a calibration is fitted.
 - The overlay runtime matrix on Windows, macOS, GNOME and KDE/Sway is still
   pending; the X11 proxy is not sufficient evidence for R11.
-- The audio clock offset is device-dependent and is not compensated yet; the
-  50 ms A/V target is not met uncompensated.

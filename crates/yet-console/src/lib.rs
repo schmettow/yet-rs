@@ -16,4 +16,4 @@ pub use state::{
     CalibrationStatus, ConsoleState, LogLevel, LogLine, PresenterStatus, PreviewFrame,
     PreviewState, MAX_LOG_LINES,
 };
-pub use ui::{ConsoleUi, MONITOR_CHOICES};
+pub use ui::{ConsoleUi, MonitorChoice, MONITOR_CHOICES};

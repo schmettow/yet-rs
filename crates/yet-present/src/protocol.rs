@@ -136,6 +136,9 @@ pub enum PresenterError {
     /// The command is not valid for this presenter.
     #[error("invalid presenter command: {0}")]
     InvalidCommand(String),
+    /// Audio playback or device setup failed.
+    #[error("audio: {0}")]
+    Audio(String),
 }
 
 /// Errors returned by an overlay backend.
@@ -158,6 +161,14 @@ pub enum MediaError {
     /// The media format is not supported.
     #[error("media format is not supported: {0}")]
     Unsupported(String),
+    /// A media file could not be decoded.
+    #[error("could not decode `{path}`: {message}")]
+    Decode {
+        /// File that failed.
+        path: PathBuf,
+        /// Decoder message.
+        message: String,
+    },
     /// The requested medium has not been loaded.
     #[error("media is not loaded: {0:?}")]
     NotLoaded(MediaId),
@@ -227,7 +238,7 @@ pub trait FrameSource {
 }
 
 /// A swappable audio playback backend.
-pub trait AudioPlayer {
+pub trait AudioPlayer: Send {
     /// Load a WAV file.
     fn load(&mut self, path: &Path) -> Result<(), AudioError>;
 
@@ -248,4 +259,30 @@ pub trait AudioPlayer {
 
     /// Current playback position.
     fn position(&self) -> Duration;
+
+    /// Number of buffered-audio underruns observed, for diagnostics.
+    ///
+    /// Backends that cannot observe underruns return zero. The presenter
+    /// reports `1` while an underrun is active and `0` once audio resumes.
+    fn underruns(&self) -> u32 {
+        0
+    }
+
+    /// Hardware output latency to add to [`Self::position`] for the clock the
+    /// listener actually hears. Backends without a measured value return zero.
+    fn output_latency(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    /// Whether this backend can advance an audio clock.
+    ///
+    /// `NullAudioPlayer` returns `false`, so the presenter falls back to the
+    /// monotonic clock even when a sequence carries a track.
+    fn is_silent(&self) -> bool {
+        false
+    }
+
+    /// Override the measured output latency. Backends that cannot change it
+    /// ignore the request.
+    fn set_output_latency(&mut self, _latency: Duration) {}
 }

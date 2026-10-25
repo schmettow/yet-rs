@@ -13,11 +13,13 @@ publish.workspace = true
 
 [dependencies]
 yet-present.workspace = true
+yet-media.workspace = true
 eframe.workspace = true
 image.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+hound.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,2 @@
+id,kind,path,fps,duration_ms,loop,audio,block
+clip,sequence,frames,30,3000,false,audio.wav,B1

@@ -26,6 +26,17 @@
 > trait replaceable. The S7 interactive desktop validation was blocked by a
 > locked session; no human calibration RMSE is recorded yet.
 
+> **Implementation note (S8, 2026-10-25):** pre-decoded PNG sequences and WAV
+> audio are implemented (`yet-media`), with the audio clock as master and the
+> monotonic experiment clock otherwise. Decoding runs on the controller thread
+> and the UI thread only uploads a reused texture. Two measurements changed the
+> plan: (1) the integrated `get_pos()` tracked wall time (+24.9 ms drift with no
+> offset), so SPK-4's −128 ms was a startup offset and `output_latency_ms`
+> defaults to 0; (2) the portrait 1440×2560 presenter skipped 7–14 of 63
+> frames while painting, so drops are counted and reported rather than queued.
+> A beep/flash screen-and-sound recording and a background prefetch worker are
+> follow-ups; Windows/macOS playback is compile-checked only.
+
 # UI & Graphics Crate Analysis — yet_zero → Rust
 
 **Status:** analysis revised after requirements confirmation, 2026-10-25; the

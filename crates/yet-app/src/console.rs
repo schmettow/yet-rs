@@ -21,7 +21,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use yet_console::{ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, PreviewFrame};
+use yet_console::{
+    ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, MonitorChoice, PreviewFrame,
+};
 use yet_core::layout::StimulusPlacement;
 use yet_core::{
     step, CalibrationGrid, CalibrationPhase, CalibrationRun, CameraConfig, ConsoleEvent, Effect,
@@ -95,15 +97,27 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
     let experiment_id = prepared.loaded.experiment.id.clone();
     let display = prepared.loaded.config.display.clone();
     let camera_config = prepared.loaded.config.camera.clone();
+    let audio_config = prepared.loaded.config.audio.clone();
     let trials = prepared.loaded.plan.trial_count();
     let participant = prepared.sink.identity().participant.clone();
 
-    let presenter = EguiPresenter::new(PresenterConfig::new(
-        display.presenter_monitor,
-        display.fullscreen,
-        (display.width, display.height),
-        1.0,
-    ));
+    let mut audio = yet_media::open_player(
+        audio_config.enabled && plan_has_audio(&prepared.loaded.plan),
+        &audio_config.device,
+    )?;
+    audio.set_output_latency(Duration::from_millis(u64::from(
+        audio_config.output_latency_ms,
+    )));
+    let presenter = EguiPresenter::with_audio(
+        PresenterConfig::new(
+            display.presenter_monitor,
+            display.fullscreen,
+            (display.width, display.height),
+            1.0,
+        ),
+        audio,
+        audio_config.volume,
+    );
     let shared = Arc::new(Mutex::new(ConsoleState::new(
         &experiment_id,
         participant,
@@ -186,9 +200,17 @@ struct ConsoleApp {
 }
 
 impl eframe::App for ConsoleApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let status = self.presenter.status();
+        let monitors = monitor_choices(frame);
+
+        if !monitors.is_empty() {
+            let mut console = lock_console(&self.shared);
+            if let Some(message) = console.adopt_monitors(monitors.len()) {
+                console.log(LogLevel::Warning, message);
+            }
+        }
 
         if status.ready && !self.logged_ready {
             self.logged_ready = true;
@@ -218,7 +240,7 @@ impl eframe::App for ConsoleApp {
                 media_count: status.media_count,
                 focused: status.focused,
             };
-            self.console.ui(ui, &mut console, presenter)
+            self.console.ui(ui, &mut console, presenter, &monitors)
         };
         for command in requested {
             let focus_presenter = matches!(
@@ -651,7 +673,16 @@ fn run_loop<G>(
         }
         if state.phase == Phase::Running {
             let experiment_t = SessionTime::from_duration(state.elapsed(at).unwrap_or_default());
-            runner.present(experiment_t, dt);
+            let stats = runner.present(experiment_t, dt);
+            let mut console = lock_console(shared);
+            if let Some(message) = console.record_present(
+                stats.dropped_frames,
+                stats.audio_drift_ms,
+                stats.audio_underruns,
+                stats.frame.media_pts,
+            ) {
+                console.log(LogLevel::Warning, message);
+            }
         }
 
         next_tick += TICK;
@@ -1157,6 +1188,31 @@ fn phase_label(phase: Phase) -> &'static str {
 
 fn session_time(start: Instant, now: Instant) -> SessionTime {
     SessionTime::from_duration(now.saturating_duration_since(start))
+}
+
+fn plan_has_audio(plan: &SessionPlan) -> bool {
+    plan.blocks
+        .iter()
+        .flat_map(|block| &block.trials)
+        .any(|planned| planned.trial.stimulus.audio.is_some())
+}
+
+fn monitor_choices(frame: &eframe::Frame) -> Vec<MonitorChoice> {
+    let Some(window) = frame.winit_window() else {
+        return Vec::new();
+    };
+    window
+        .available_monitors()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let size = monitor.size();
+            MonitorChoice {
+                index,
+                name: monitor.name(),
+                size_px: (size.width, size.height),
+            }
+        })
+        .collect()
 }
 
 fn lock_console(state: &Arc<Mutex<ConsoleState>>) -> MutexGuard<'_, ConsoleState> {

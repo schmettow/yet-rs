@@ -22,8 +22,9 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   calibration and a pilot session. The S7 console now runs full and quick
   calibration, shows a live camera preview and writes gaze rows once fitted;
   the interactive desktop validation and the 2–3-person pilot remain.
-- [ ] **M5 Media complete (S8)** — PNG sequences and WAV audio stay in sync;
-  drift and underruns are logged.
+- [x] **M5 Media complete (S8)** — PNG sequences and WAV audio play; the audio
+  clock is master, drift and skipped frames are shown, and FFmpeg is a setup
+  step only. A beep/flash A/V recording and the Windows/macOS runtime remain.
 - [ ] **M6 Overlay parity (S10)** — Windows, macOS, layer-shell Wayland and
   GNOME/XWayland are tested or explicitly documented.
 - [ ] **M7 v0.1.0 (S11)** — release checklist, pilot data and complete docs.
@@ -69,7 +70,14 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   run against the GEMBIRD Yet camera (10 frames, preview and quadrant means
   valid). The interactive desktop validation was blocked by a locked session,
   and the UX-4 pilot needs 2–3 people; the README documents the procedure.
-- **Next:** S8 media and audio (PNG sequences and WAV in sync).
+- **S8 Media and audio** — implemented: `yet-media` (`PngSequence`, `WavAudio`,
+  `RodioAudioPlayer`), controller-thread frame decoding with texture reuse,
+  audio-master pacing, pause/resume through the engine, console drift/drop/
+  underrun display, `yet-app media` validation, `tools/prepare_media.sh` and
+  `examples/media-demo`. 218 tests pass; audio and sequences were exercised on
+  the Linux workstation (`media 2.03 s · drift +8.2 ms` at 2.1 s). Windows/macOS
+  runtime, a beep/flash A/V measurement and background prefetch remain.
+- **Next:** S9 overlay core (Windows/macOS `EguiOverlay`, layer-shell Wayland).
 
 ## Post-v1
 

@@ -5,6 +5,7 @@
 //! Sprint 2 exposes the resolved experiment plan. Sprint 3 adds the headless
 //! runner; Sprint 6 adds the console and the stimulus presenter.
 
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::path::Path;
@@ -12,12 +13,14 @@ use std::process::ExitCode;
 
 use yet_app::live::{self, CalibrateOptions, CameraProbe};
 use yet_app::{run, run_console, ConsoleOptions, HeadlessOptions, RunReport};
-use yet_core::{load_experiment, LoadError};
+use yet_core::{load_experiment, LoadError, StimulusKind};
+use yet_media::{PngSequence, WavAudio};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.as_slice() {
         [command, path] if command == "plan" => run_plan(path),
+        [command, path] if command == "media" => run_media(path),
         [command, rest @ ..] if command == "run" => run_session(rest),
         [command, rest @ ..] if command == "camera" => run_camera(rest),
         [command, rest @ ..] if command == "calibrate" => run_calibrate(rest),
@@ -44,6 +47,7 @@ fn main() -> ExitCode {
 fn usage() {
     eprintln!(
         "usage:\n  yet-app plan <experiment-dir>\n  \
+         yet-app media <experiment-dir>\n  \
          yet-app run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>]\n  \
          yet-app camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
          yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]"
@@ -56,6 +60,7 @@ enum CliError {
     Plan(LoadError),
     Run(yet_app::RunError),
     Live(live::LiveError),
+    Media(String),
 }
 
 impl fmt::Display for CliError {
@@ -65,6 +70,7 @@ impl fmt::Display for CliError {
             Self::Plan(error) => error.fmt(f),
             Self::Run(error) => error.fmt(f),
             Self::Live(error) => error.fmt(f),
+            Self::Media(error) => f.write_str(error),
         }
     }
 }
@@ -119,6 +125,68 @@ fn run_plan(directory: &str) -> Result<(), CliError> {
         loaded.config.audio.enabled, loaded.config.audio.device, loaded.config.audio.volume
     );
     print!("{}", loaded.plan);
+    Ok(())
+}
+
+fn run_media(directory: &str) -> Result<(), CliError> {
+    let loaded = load_experiment(directory)?;
+    let mut seen = HashSet::new();
+    let mut sequences = 0;
+
+    for block in &loaded.plan.blocks {
+        for planned in &block.trials {
+            let stimulus = &planned.trial.stimulus;
+            if !seen.insert(stimulus.id.clone()) {
+                continue;
+            }
+            match stimulus.kind {
+                StimulusKind::Image => {
+                    println!("image {}: {}", stimulus.id, stimulus.path.display());
+                }
+                StimulusKind::Sequence => {
+                    let fps = stimulus.fps.ok_or_else(|| {
+                        CliError::Media(format!("stimulus `{}` has no frame rate", stimulus.id))
+                    })?;
+                    let sequence = PngSequence::open(&stimulus.path, fps)
+                        .map_err(|error| CliError::Media(format!("{}: {error}", stimulus.id)))?;
+                    let info = sequence
+                        .validate()
+                        .map_err(|error| CliError::Media(format!("{}: {error}", stimulus.id)))?;
+                    println!(
+                        "sequence {}: {} frames · {:.3} fps · {:.3} s · {}×{} px",
+                        stimulus.id,
+                        info.frames,
+                        info.fps,
+                        info.duration.as_secs_f64(),
+                        info.size_px.0,
+                        info.size_px.1
+                    );
+                    if let Some(audio) = &stimulus.audio {
+                        let wav = WavAudio::load(audio).map_err(|error| {
+                            CliError::Media(format!("{}: {error}", stimulus.id))
+                        })?;
+                        let delta = wav.duration().as_secs_f64() - info.duration.as_secs_f64();
+                        println!(
+                            "  audio: {} · {} Hz · {} ch · {:.3} s",
+                            audio.display(),
+                            wav.sample_rate(),
+                            wav.channels(),
+                            wav.duration().as_secs_f64()
+                        );
+                        if delta.abs() > 0.1 {
+                            println!(
+                                "  warning: audio is {delta:+.3} s longer than the frames; \
+                                 the trial duration is authoritative"
+                            );
+                        }
+                    }
+                    sequences += 1;
+                }
+            }
+        }
+    }
+
+    println!("Validated {sequences} sequence(s).");
     Ok(())
 }
 

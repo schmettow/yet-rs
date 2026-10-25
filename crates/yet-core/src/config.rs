@@ -179,6 +179,14 @@ pub struct AudioConfig {
     /// Output volume in `0.0..=1.0`.
     #[serde(default = "default_volume")]
     pub volume: f32,
+    /// Measured output-buffer latency added to the audio clock, in milliseconds.
+    ///
+    /// The default is 0: the integrated S8 run showed `get_pos()` tracking
+    /// wall time, while SPK-4's −128 ms included stream startup. Measure the
+    /// actual device with a beep/flash recording before setting this; values
+    /// above ~50 ms should be treated as suspicious.
+    #[serde(default = "default_audio_latency_ms")]
+    pub output_latency_ms: u32,
 }
 
 impl Default for AudioConfig {
@@ -187,6 +195,7 @@ impl Default for AudioConfig {
             enabled: true,
             device: default_device(),
             volume: default_volume(),
+            output_latency_ms: default_audio_latency_ms(),
         }
     }
 }
@@ -201,6 +210,10 @@ fn default_device() -> String {
 
 fn default_volume() -> f32 {
     1.0
+}
+
+fn default_audio_latency_ms() -> u32 {
+    0
 }
 
 /// Configuration loading and validation errors.
@@ -241,6 +254,12 @@ pub enum ConfigError {
     /// The audio device name is empty.
     #[error("audio device name must not be empty")]
     EmptyAudioDevice,
+    /// The audio latency is implausibly large.
+    #[error("audio output latency must be at most 1000 ms, got {milliseconds} ms")]
+    InvalidAudioLatency {
+        /// Requested latency in milliseconds.
+        milliseconds: u32,
+    },
     /// The requested camera resolution is empty.
     #[error("camera resolution must be positive, got {width}x{height}")]
     InvalidCameraResolution {
@@ -312,6 +331,11 @@ impl AppConfig {
         }
         if self.audio.device.trim().is_empty() {
             return Err(ConfigError::EmptyAudioDevice);
+        }
+        if self.audio.output_latency_ms > 1_000 {
+            return Err(ConfigError::InvalidAudioLatency {
+                milliseconds: self.audio.output_latency_ms,
+            });
         }
         Ok(())
     }

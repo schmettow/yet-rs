@@ -53,6 +53,7 @@ fn valid_config_loads_and_validates() {
     assert_eq!(config.presenter.overlay, yet_core::OverlayMode::Auto);
     assert_eq!(config.overlay.monitor, Some(1));
     assert_eq!(config.audio.volume, 0.8);
+    assert_eq!(config.audio.output_latency_ms, 0);
     config.validate_monitors(2).unwrap();
 }
 
@@ -187,6 +188,18 @@ fn monitor_index_is_validated_against_available_monitors() {
             index: 5,
             available: 2,
         }
+    ));
+}
+
+#[test]
+fn an_implausible_audio_latency_is_rejected() {
+    let (_dir, path) =
+        write_config(&VALID.replace("volume = 0.8", "volume = 0.8\noutput_latency_ms = 5000"));
+    let error = load_config(&path).unwrap_err();
+
+    assert!(matches!(
+        error,
+        ConfigError::InvalidAudioLatency { milliseconds: 5000 }
     ));
 }
 

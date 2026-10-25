@@ -18,6 +18,8 @@ struct MediaEntry {
     image: RgbaImage,
     texture: Option<(Filter, egui::TextureHandle)>,
     blur: Option<(u32, egui::TextureHandle)>,
+    /// The image changed since the last upload; reuse the texture handle.
+    pending: bool,
 }
 
 /// Images available to the presenter, keyed by the protocol's [`MediaId`].
@@ -36,9 +38,23 @@ impl MediaStore {
                     image,
                     texture: None,
                     blur: None,
+                    pending: true,
                 },
             )
             .is_some()
+    }
+
+    /// Replace the pixels of an existing medium, keeping its texture handle.
+    ///
+    /// Returns `false` when the medium is not loaded. Used for sequence frames.
+    pub fn replace_image(&mut self, id: MediaId, image: RgbaImage) -> bool {
+        let Some(entry) = self.entries.get_mut(&id) else {
+            return false;
+        };
+        entry.image = image;
+        entry.blur = None;
+        entry.pending = true;
+        true
     }
 
     /// Natural size of a loaded image.
@@ -64,14 +80,23 @@ impl MediaStore {
         filter: Filter,
     ) -> Option<egui::TextureId> {
         let entry = self.entries.get_mut(&id)?;
-        let handle = match &entry.texture {
-            Some((current, handle)) if *current == filter => handle.clone(),
-            _ => {
-                let handle = upload(ctx, id, &entry.image, filter);
-                entry.texture = Some((filter, handle.clone()));
-                handle
+        let options = texture_options(filter);
+
+        if let Some((current, handle)) = &mut entry.texture {
+            if *current == filter {
+                if entry.pending {
+                    let color = color_image(&entry.image);
+                    handle.set(color, options);
+                    entry.pending = false;
+                }
+                return Some(handle.id());
             }
-        };
+        }
+
+        let color = color_image(&entry.image);
+        let handle = ctx.load_texture(format!("yet-media-{}", id.get()), color, options);
+        entry.pending = false;
+        entry.texture = Some((filter, handle.clone()));
         Some(handle.id())
     }
 
@@ -91,26 +116,36 @@ impl MediaStore {
         }
 
         let blurred = box_blur_rgba(&entry.image, radius);
-        let handle = upload(ctx, id, &blurred, Filter::Linear);
+        let handle = upload(
+            ctx,
+            format!("yet-media-{}-blur-{radius}", id.get()),
+            &blurred,
+            Filter::Linear,
+        );
         entry.blur = Some((radius, handle.clone()));
         Some(handle.id())
     }
 }
 
+fn texture_options(filter: Filter) -> egui::TextureOptions {
+    match filter {
+        Filter::Linear => egui::TextureOptions::LINEAR,
+        Filter::Nearest => egui::TextureOptions::NEAREST,
+    }
+}
+
+fn color_image(image: &RgbaImage) -> egui::ColorImage {
+    let (width, height) = image.dimensions();
+    egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw())
+}
+
 fn upload(
     ctx: &egui::Context,
-    id: MediaId,
+    name: String,
     image: &RgbaImage,
     filter: Filter,
 ) -> egui::TextureHandle {
-    let (width, height) = image.dimensions();
-    let color =
-        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw());
-    let options = match filter {
-        Filter::Linear => egui::TextureOptions::LINEAR,
-        Filter::Nearest => egui::TextureOptions::NEAREST,
-    };
-    ctx.load_texture(format!("yet-media-{}", id.get()), color, options)
+    ctx.load_texture(name, color_image(image), texture_options(filter))
 }
 
 #[cfg(test)]

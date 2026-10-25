@@ -121,6 +121,12 @@ impl CalibrationStatus {
     }
 }
 
+/// Largest acceptable audio/video drift before the console logs a warning.
+pub const MAX_AUDIO_DRIFT_MS: f32 = 50.0;
+
+/// Minimum interval between audio warnings.
+pub const AUDIO_WARNING_INTERVAL: Duration = Duration::from_secs(2);
+
 /// One grayscale camera preview sent from the controller to the console.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewFrame {
@@ -178,6 +184,18 @@ pub struct ConsoleState {
     pub max_late: Duration,
     /// Number of gaze samples written.
     pub samples: usize,
+    /// Media frames dropped or coalesced since the session started.
+    pub dropped_frames: u64,
+    /// Latest audio/video clock drift in milliseconds.
+    pub audio_drift_ms: Option<f32>,
+    /// Latest media presentation timestamp.
+    pub media_pts: Option<Duration>,
+    /// Largest absolute drift seen in this session.
+    pub max_audio_drift_ms: Option<f32>,
+    /// Cumulative audio underrun transitions.
+    pub audio_underruns: u32,
+    /// When the last drift warning was logged, for rate limiting.
+    pub last_audio_warning: Option<Duration>,
     /// Active block.
     pub current_block: Option<BlockId>,
     /// Zero-based index of the active trial within its block.
@@ -225,6 +243,12 @@ impl ConsoleState {
             late_trials: 0,
             max_late: Duration::ZERO,
             samples: 0,
+            dropped_frames: 0,
+            audio_drift_ms: None,
+            media_pts: None,
+            max_audio_drift_ms: None,
+            audio_underruns: 0,
+            last_audio_warning: None,
             current_block: None,
             current_trial: None,
             current_stimulus: None,
@@ -268,6 +292,50 @@ impl ConsoleState {
         status.fitted = snapshot.fitted;
     }
 
+    /// Record presentation statistics from one frame.
+    ///
+    /// Returns a warning message when audio drift or an underrun should be
+    /// logged, rate-limited to one message every two seconds.
+    pub fn record_present(
+        &mut self,
+        dropped: u32,
+        drift_ms: Option<f32>,
+        underruns: u32,
+        media_pts: Option<Duration>,
+    ) -> Option<String> {
+        self.dropped_frames = self.dropped_frames.saturating_add(u64::from(dropped));
+        self.audio_underruns = self.audio_underruns.saturating_add(underruns);
+        if media_pts.is_some() {
+            self.media_pts = media_pts;
+        }
+        if let Some(drift) = drift_ms.filter(|drift| drift.is_finite()) {
+            self.audio_drift_ms = Some(drift);
+            let magnitude = drift.abs();
+            self.max_audio_drift_ms = Some(
+                self.max_audio_drift_ms
+                    .map_or(magnitude, |max| max.max(magnitude)),
+            );
+        }
+
+        let due = self
+            .last_audio_warning
+            .is_none_or(|last| self.log_elapsed.saturating_sub(last) >= AUDIO_WARNING_INTERVAL);
+        if !due {
+            return None;
+        }
+        let message = if underruns > 0 {
+            Some("audio underrun".to_owned())
+        } else {
+            self.audio_drift_ms
+                .filter(|drift| drift.abs() > MAX_AUDIO_DRIFT_MS)
+                .map(|drift| format!("audio drift {drift:+.0} ms"))
+        };
+        if message.is_some() {
+            self.last_audio_warning = Some(self.log_elapsed);
+        }
+        message
+    }
+
     /// Append a log line, dropping the oldest line beyond [`MAX_LOG_LINES`].
     pub fn log(&mut self, level: LogLevel, message: impl Into<String>) {
         if self.log.len() == MAX_LOG_LINES {
@@ -303,6 +371,24 @@ impl ConsoleState {
     /// Whether a session can start.
     pub fn can_start(&self) -> bool {
         self.phase == Phase::Idle && self.error.is_none() && !self.calibration.active
+    }
+
+    /// Clamp the presenter monitor to the monitors the platform reports.
+    ///
+    /// An out-of-range `display.presenter_monitor` would otherwise put the
+    /// presenter in a plain 800×600 window. Falls back to the last monitor (the
+    /// second one on a two-monitor desk) and returns a message for the log.
+    pub fn adopt_monitors(&mut self, available: usize) -> Option<String> {
+        if available == 0 || self.presenter_monitor < available {
+            return None;
+        }
+        let configured = self.presenter_monitor;
+        self.presenter_monitor = available - 1;
+        Some(format!(
+            "display.presenter_monitor {configured} is out of range for {available} monitors; \
+             using monitor {} (index {})",
+            available, self.presenter_monitor
+        ))
     }
 
     /// Whether the session can pause.
@@ -349,12 +435,68 @@ impl ConsoleState {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use yet_core::{CalibrationPhase, CalibrationReport, CalibrationSnapshot, Phase};
 
     use super::{ConsoleState, LogLevel, MAX_LOG_LINES};
 
     fn state() -> ConsoleState {
         ConsoleState::new("demo", "42", 1, 0, true, 4)
+    }
+
+    #[test]
+    fn an_out_of_range_presenter_monitor_falls_back_to_the_last_monitor() {
+        let mut state = state();
+        state.presenter_monitor = 2;
+
+        let message = state.adopt_monitors(2).expect("a warning");
+
+        assert_eq!(state.presenter_monitor, 1);
+        assert!(message.contains("out of range"), "{message}");
+        assert!(message.contains("monitor 2"), "{message}");
+        assert_eq!(state.adopt_monitors(2), None);
+    }
+
+    #[test]
+    fn a_valid_presenter_monitor_is_left_alone() {
+        let mut state = state();
+        state.presenter_monitor = 1;
+
+        assert_eq!(state.adopt_monitors(2), None);
+        assert_eq!(state.presenter_monitor, 1);
+        assert_eq!(state.adopt_monitors(0), None);
+    }
+
+    #[test]
+    fn presentation_stats_accumulate_and_warn_with_backpressure() {
+        let mut state = state();
+        state.log_elapsed = Duration::from_secs(10);
+
+        let warning = state.record_present(2, Some(80.0), 0, Some(Duration::from_millis(40)));
+        assert!(warning.unwrap().contains("drift"));
+        assert_eq!(state.dropped_frames, 2);
+        assert_eq!(state.max_audio_drift_ms, Some(80.0));
+
+        state.log_elapsed = Duration::from_secs(11);
+        assert_eq!(state.record_present(1, Some(90.0), 1, None), None);
+        assert_eq!(state.dropped_frames, 3);
+        assert_eq!(state.max_audio_drift_ms, Some(90.0));
+        assert_eq!(state.audio_underruns, 1);
+
+        state.log_elapsed = Duration::from_secs(12);
+        let warning = state.record_present(0, None, 1, None).unwrap();
+        assert!(warning.contains("underrun"));
+        assert_eq!(state.audio_underruns, 2);
+    }
+
+    #[test]
+    fn small_drift_is_displayed_without_a_warning() {
+        let mut state = state();
+
+        assert_eq!(state.record_present(0, Some(3.0), 0, None), None);
+        assert_eq!(state.audio_drift_ms, Some(3.0));
+        assert_eq!(state.max_audio_drift_ms, Some(3.0));
     }
 
     #[test]

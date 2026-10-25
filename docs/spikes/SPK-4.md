@@ -96,3 +96,15 @@ The playback binary polls `get_pos()` every 100 ms for 3 s. The stable offset wa
 - In S8, measure the output-latency offset per device and apply it to the audio clock; re-measure drift against the PNG frame index.
 - Decide whether audio failure before a session is fatal by default (plan default: fail before the session; abort a trial on mid-trial failure).
 - Recheck the `rodio` API and feature names before pinning; this spike verified 0.23.0.
+
+## S8 outcome (2026-10-25)
+
+The integrated presenter was measured with the same 3 s, 30 fps clip and beep at
+1 s. With the 128 ms compensation the console showed `audio drift +127.9 ms`; with
+no offset it showed `media 2.10 s · audio drift +24.9 ms` at 2.1 s of experiment
+time. `get_pos()` therefore tracks wall time once the stream is running, and the
+spike's −128 ms was stream startup, not a steady-state buffer offset. The
+default is now 0 (`audio.output_latency_ms`), and a per-device beep/flash
+screen-and-sound recording is still required before claiming tight A/V sync.
+Between 7 and 14 of 63 frames were skipped on the portrait presenter while it
+painted; drops are counted and reported, and a prefetch worker is a follow-up.

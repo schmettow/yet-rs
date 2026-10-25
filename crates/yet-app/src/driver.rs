@@ -20,8 +20,8 @@ use yet_core::{
     LoadedExperiment, Phase, SessionIdentity, Stimulus, StimulusId, StimulusKind,
 };
 use yet_present::{
-    ClockSource, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
-    Scene, SessionTime,
+    AudioError, ClockSource, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand,
+    PresenterError, Scene, SessionTime,
 };
 
 /// Default prefix of a result file.
@@ -76,6 +76,9 @@ pub enum RunError {
     /// The presenter rejected a command.
     #[error(transparent)]
     Presenter(#[from] PresenterError),
+    /// The audio backend could not be opened.
+    #[error(transparent)]
+    Audio(#[from] AudioError),
     /// The system clock is before the Unix epoch.
     #[error("the system clock is before the Unix epoch")]
     Clock,

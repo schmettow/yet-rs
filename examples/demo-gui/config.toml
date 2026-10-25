@@ -4,6 +4,7 @@
 # `yet-app run` opens the console; add `--headless` to run without a window.
 
 [display]
+# Zero-based: 1 is the second monitor (labelled "2" in the console).
 presenter_monitor = 1
 console_monitor = 0
 width = 1440

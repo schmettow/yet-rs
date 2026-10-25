@@ -319,7 +319,9 @@ fn pause(state: &mut EngineState, now: SessionTime) -> Vec<Effect> {
         Phase::Running => {
             state.phase = Phase::Paused;
             state.paused_at = Some(now);
-            notify(ConsoleEvent::PhaseChanged(Phase::Paused))
+            let mut effects = notify(ConsoleEvent::PhaseChanged(Phase::Paused));
+            effects.push(Effect::Presenter(PresenterCommand::Pause));
+            effects
         }
         Phase::Paused => notify(ConsoleEvent::Warning("engine is already paused".into())),
         Phase::Idle | Phase::Finished | Phase::Aborted => invalid(state.phase, "pause"),
@@ -337,7 +339,9 @@ fn resume(state: &mut EngineState, now: SessionTime) -> Vec<Effect> {
                 }
             }
             state.phase = Phase::Running;
-            notify(ConsoleEvent::PhaseChanged(Phase::Running))
+            let mut effects = notify(ConsoleEvent::PhaseChanged(Phase::Running));
+            effects.push(Effect::Presenter(PresenterCommand::Resume));
+            effects
         }
         Phase::Running => notify(ConsoleEvent::Warning("engine is not paused".into())),
         Phase::Idle | Phase::Finished | Phase::Aborted => invalid(state.phase, "resume"),
