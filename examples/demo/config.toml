@@ -9,6 +9,12 @@ fullscreen = true
 
 [camera]
 usb_index = 0
+width = 640
+height = 480
+fps = 30
+# The StreamCam sustained ~29 fps with MJPG; YUYV varied from 17.7 to 24.1 fps.
+format = "mjpeg"
+eye_region = [0.25, 0.25, 0.5, 0.5]
 
 [presenter]
 backend = "egui"

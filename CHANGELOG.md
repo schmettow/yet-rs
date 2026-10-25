@@ -41,6 +41,19 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   for odd-sized patterns. `tests/cv4_parity.rs` checks them.
 - `docs/fixtures/CV-4.md`: the parity format, the canonical quadrant mapping
   and privacy handling for eye crops.
+- `yet-core`: camera capture behind `Camera`: `linuxvideo` 0.3.5 on Linux,
+  `nokhwa` 0.10.11 on macOS/Windows, a dedicated capture thread with a one-slot
+  latest-frame mailbox, YUYV/GRAY/MJPEG conversion with explicit Rec. 601, format
+  fallback, corrupt/dropped/error counters and normalized-ROI conversion.
+- `yet-core`: `Calibration`, recording target/feature pairs, fitting and
+  refitting without a session restart, and reporting sample count and Euclidean
+  RMSE. `GrayFrame::crop` supports ROI uploads.
+- `yet-app`: `yet-app camera <dir>` measures a real camera, prints format, fps
+  and counters, and writes the raw eye ROI with `--save-roi`.
+- `yet-app`: `yet-app calibrate <dir>` walks the 3×3 grid in the terminal,
+  averages frames per target, supports `--quick` center recalibration and
+  prints live gaze predictions.
+- `docs/spikes/SPK-5.md`: Linux camera and calibration measurements.
 - `yet-app`: `yet-app run --headless <dir> [--participant <id>] [--output <csv>]`
   drives a complete experiment with a synthetic 10 ms clock and writes the
   result CSV. A library target makes the runner testable without a window.
@@ -52,6 +65,9 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- `config.toml` camera settings gained `width`, `height`, `fps`, `format` and a
+  normalized `eye_region`; all are optional with 640×480, 30 fps, `auto` and no
+  region defaults. The demo uses MJPG and a centered half-frame ROI.
 - `yet-core`: the tracker moved from a single `tracking.rs` into
   `tracking/{mod,frame,features,model,buffer}.rs`. Public re-exports are
   unchanged.
@@ -72,20 +88,31 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `nalgebra` 0.34 is now a `yet-core` dependency (MSRV 1.88 preserved); the gaze
   model uses SVD rather than normal equations because quadrant means are
   collinear.
+- `image` 0.25.10, `linuxvideo` 0.3.5 (Linux) and `nokhwa` 0.10.11
+  (macOS/Windows) are camera dependencies. `nokhwa` is compiled with only
+  `input-avfoundation`/`input-msmf`; its Linux backend and bindgen are excluded.
+- The Windows target compiles `yet-core` and `yet-app` with all targets; macOS
+  runtime and the TCC prompt remain untested.
 - Linux audio is now verified with `libasound2-dev`; `get_pos()` measured
   ~128 ms behind wall clock, so S8 must compensate output latency.
 
 ### Known Issues
 
 - CV-4 (Python parity) is verified on committed synthetic fixtures. A
-  real-camera eye-ROI run is still to be appended before Sprint 5; the format is
-  in `docs/fixtures/CV-4.md`. OpenCV's fixed-point luma can differ from the
-  Rec. 601 formula by one level on arbitrary colors.
-- There is no camera adapter yet, so a headless run writes the CSV header but
-  no gaze rows. The scheduler, presenter commands and sink are exercised; the
-  data path is not.
+  real-camera eye-ROI run is still to be appended before the live session path;
+  the format is in `docs/fixtures/CV-4.md`. OpenCV's fixed-point luma can differ
+  from the Rec. 601 formula by one level on arbitrary colors.
+- A valid human calibration RMSE is not recorded yet. The SPK-5 run exercised
+  the flow with a static scene and piped Enter presses, so its 447 px RMSE is a
+  plumbing result, not a tracking measurement. macOS and Windows camera runtime
+  are also untested.
+- The terminal calibration prints target coordinates but does not draw them; the
+  drawn grid arrives with the presenter/console.
+- The headless runner does not capture gaze yet, so it writes the CSV header
+  but no data rows. The scheduler, presenter commands and sink are exercised;
+  the live camera path is covered separately by `yet-app camera` and
+  `yet-app calibrate`.
 - The overlay runtime matrix on Windows, macOS, GNOME and KDE/Sway is still
   pending; the X11 proxy is not sufficient evidence for R11.
 - The audio clock offset is device-dependent and is not compensated yet; the
   50 ms A/V target is not met uncompensated.
-- macOS camera runtime and Xcode CLT behavior are not yet tested on hardware.

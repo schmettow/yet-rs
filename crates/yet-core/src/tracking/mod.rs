@@ -12,11 +12,13 @@
 //! conversion belongs at the data-import boundary.
 
 mod buffer;
+mod calibration;
 mod features;
 mod frame;
 mod model;
 
 pub use buffer::CalibrationBuffer;
+pub use calibration::{Calibration, CalibrationReport};
 pub use features::{quad_brightness, QuadBrightness};
 pub use frame::{rec601_luma, EyeRegion, FrameError, GrayFrame};
 pub use model::{

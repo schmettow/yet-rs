@@ -6,5 +6,6 @@
 //! binaries will share the same effect handling in later sprints.
 
 pub mod headless;
+pub mod live;
 
 pub use headless::{drive, run, HeadlessOptions, RunError, RunReport};

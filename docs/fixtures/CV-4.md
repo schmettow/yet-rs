@@ -14,9 +14,9 @@ contain no personal data.
   and coefficients/intercept within 1e-6;
 - every pixel of an odd 7×5 RGB image against OpenCV `BGR2GRAY` exactly.
 
-Remaining before Sprint 5: append a few **real** eye-ROI frames from the target
-camera and rerun the same test. The synthetic fixtures pin the algorithm; real
-frames add camera format, noise and illumination behavior.
+Remaining before the live session path: append a few **real** eye-ROI frames from
+the target camera and rerun the same test. The synthetic fixtures pin the
+algorithm; real frames add camera format, noise and illumination behavior.
 
 ## 1. Committed synthetic fixtures
 
@@ -44,8 +44,17 @@ identical numbers; only the solver differs.
 ## 2. Adding recorded eye-ROI frames
 
 Preferred format is raw 8-bit grayscale (`.gray`), because no image decoder is
-needed in the parity test. PNG is acceptable if the test gains an `image`
-dev-dependency.
+needed in the parity test. `yet-app camera` can write exactly this file:
+
+```sh
+cargo run --release -p yet-app -- camera examples/demo --save-roi /tmp/eye.gray
+```
+
+The command prints the negotiated frame size, the ROI rectangle and the
+canonical quadrant means for the last valid frame; the saved file contains that
+frame's ROI bytes. Append one line per dump to `features/features.csv`.
+
+For frames from another tool:
 
 1. Crop the **eye ROI only**, with no rescaling after the crop.
 2. Write the raw bytes and append a row to `features/features.csv`:
@@ -104,7 +113,7 @@ On the committed odd 7×5 fixture, `rec601_luma` matches OpenCV exactly. For
 arbitrary colors, OpenCV's 8-bit `BGR2GRAY` uses 15-bit fixed-point
 coefficients and can differ from the documented rounding formula by one level.
 Example: RGB `(0, 0, 250)` gives 28 in OpenCV and 29 from
-`(299R + 587G + 114B + 500) / 1000`. Sprint 5 parity must therefore allow a
+`(299R + 587G + 114B + 500) / 1000`. Camera parity must therefore allow a
 one-level luma difference, not bit equality.
 
 ## Privacy

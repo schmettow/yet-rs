@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::camera::{validate_eye_region, PreferredFormat};
+
 /// Machine configuration for one experiment directory.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,12 +51,52 @@ pub struct DisplayConfig {
 }
 
 /// Camera settings.
-#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraConfig {
     /// Zero-based USB camera index.
     #[serde(default)]
     pub usb_index: usize,
+    /// Requested capture width.
+    #[serde(default = "default_camera_width")]
+    pub width: u32,
+    /// Requested capture height.
+    #[serde(default = "default_camera_height")]
+    pub height: u32,
+    /// Requested frame rate.
+    #[serde(default = "default_camera_fps")]
+    pub fps: u32,
+    /// Format preference.
+    #[serde(default)]
+    pub format: PreferredFormat,
+    /// Normalized eye region `[x, y, width, height]` in `0..=1`.
+    #[serde(default)]
+    pub eye_region: Option<[f32; 4]>,
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            usb_index: 0,
+            width: default_camera_width(),
+            height: default_camera_height(),
+            fps: default_camera_fps(),
+            format: PreferredFormat::Auto,
+            eye_region: None,
+        }
+    }
+}
+
+fn default_camera_width() -> u32 {
+    640
+}
+
+fn default_camera_height() -> u32 {
+    480
+}
+
+fn default_camera_fps() -> u32 {
+    30
 }
 
 /// Presenter backend and overlay mode.
@@ -180,7 +222,7 @@ pub enum ConfigError {
         path: PathBuf,
         /// TOML parse error.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
     /// The requested resolution is empty.
     #[error("display resolution must be positive, got {width}x{height}")]
@@ -199,6 +241,28 @@ pub enum ConfigError {
     /// The audio device name is empty.
     #[error("audio device name must not be empty")]
     EmptyAudioDevice,
+    /// The requested camera resolution is empty.
+    #[error("camera resolution must be positive, got {width}x{height}")]
+    InvalidCameraResolution {
+        /// Requested width.
+        width: u32,
+        /// Requested height.
+        height: u32,
+    },
+    /// The requested camera frame rate is zero.
+    #[error("camera fps must be positive, got {fps}")]
+    InvalidCameraFps {
+        /// Requested frame rate.
+        fps: u32,
+    },
+    /// The normalized eye region is outside the unit square.
+    #[error(
+        "camera eye region must be a normalized [x, y, width, height] inside 0..=1, got {region:?}"
+    )]
+    InvalidEyeRegion {
+        /// Supplied region.
+        region: [f32; 4],
+    },
     /// No monitors are available for validation.
     #[error("no monitors are available")]
     NoMonitors,
@@ -224,6 +288,22 @@ impl AppConfig {
                 width: self.display.width,
                 height: self.display.height,
             });
+        }
+        if self.camera.width == 0 || self.camera.height == 0 {
+            return Err(ConfigError::InvalidCameraResolution {
+                width: self.camera.width,
+                height: self.camera.height,
+            });
+        }
+        if self.camera.fps == 0 {
+            return Err(ConfigError::InvalidCameraFps {
+                fps: self.camera.fps,
+            });
+        }
+        if let Some(region) = self.camera.eye_region {
+            if !validate_eye_region(region) {
+                return Err(ConfigError::InvalidEyeRegion { region });
+            }
         }
         if !self.audio.volume.is_finite() || !(0.0..=1.0).contains(&self.audio.volume) {
             return Err(ConfigError::InvalidVolume {
@@ -279,7 +359,7 @@ pub fn load(path: impl AsRef<Path>) -> Result<AppConfig, ConfigError> {
     })?;
     let config: AppConfig = toml::from_str(&text).map_err(|source| ConfigError::Toml {
         path: path.clone(),
-        source,
+        source: Box::new(source),
     })?;
     config.validate()?;
     Ok(config)

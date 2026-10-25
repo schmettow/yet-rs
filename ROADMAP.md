@@ -14,8 +14,9 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - [x] **M2 Headless experiment (S3)** — a two-block experiment runs without a
   window and writes a yet_zero-compatible CSV. The demo completes 5 of 5
   trials; without the camera the CSV contains the header and no gaze rows.
-- [ ] **M3 Eye tracking parity (S5)** — quadrant features match Python and
-  calibration works on the real camera.
+- [ ] **M3 Eye tracking parity (S5)** — quadrant features match Python and the
+  Linux camera path works (MJPG 26 fps on the lab StreamCam). A valid human
+  calibration RMSE and the macOS/Windows runtime are still pending.
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
   calibration and a pilot session.
 - [ ] **M5 Media complete (S8)** — PNG sequences and WAV audio stay in sync;
@@ -37,12 +38,15 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   sink, and `yet-app run --headless`. 89 tests passed at the end of the sprint.
 - **S4 CV features and model** — implemented and parity-checked: `GrayFrame`/`EyeRegion`,
   canonical quadrant means with the odd-dimension rule, Rec. 601 luma,
-  `LinearGazeModel` (SVD least squares), calibration buffer and RMSE. 114 tests
-  pass. CV-4 uses committed synthetic fixtures generated with NumPy, OpenCV and
-  scikit-learn; recorded eye-ROI frames remain to be appended before S5
-  ([`docs/fixtures/CV-4.md`](docs/fixtures/CV-4.md)).
-- **Next:** append recorded eye-ROI frames, then S5 camera and calibration on
-  hardware.
+  `LinearGazeModel` (SVD least squares), calibration buffer and RMSE. CV-4 uses
+  committed synthetic fixtures generated with NumPy, OpenCV and scikit-learn;
+  114 tests passed at the end of the sprint.
+- **S5 Camera and calibration** — implemented: `linuxvideo`/`nokhwa` behind
+  `Camera`, capture thread and latest-frame mailbox, YUYV/GRAY/MJPEG conversion,
+  calibration flow, `yet-app camera` and `yet-app calibrate`. 141 tests pass.
+  Linux hardware measured (MJPG 26 fps, YUYV 16 fps); macOS/Windows runtime and
+  a human calibration RMSE remain.
+- **Next:** S6 presenter and console shell.
 
 ## Post-v1
 

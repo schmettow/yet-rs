@@ -41,7 +41,19 @@ fn pixels_are_addressed_row_major() {
 }
 
 #[test]
-fn quadrant_means_use_the_canonical_north_west_to_south_east_order() {
+fn a_frame_crops_to_an_eye_region() {
+    let frame = frame(4, 4, (0..16).collect());
+
+    let crop = frame.crop(EyeRegion::new(1, 1, 2, 2)).unwrap();
+
+    assert_eq!(crop.width(), 2);
+    assert_eq!(crop.height(), 2);
+    assert_eq!(crop.data(), &[5, 6, 9, 10]);
+    assert_eq!(frame.crop(EyeRegion::new(3, 3, 2, 2)), None);
+}
+
+#[test]
+fn region_means_use_the_canonical_north_west_to_south_east_order() {
     // Four 2x2 quadrants: NW=10, NE=20, SW=30, SE=40.
     let data = vec![
         10, 10, 20, 20, //

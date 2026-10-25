@@ -498,6 +498,37 @@ live calibration path stay open.
 `cargo test -p yet-core --test cv4_parity` before trusting the adapters.
 **Demo:** live gaze printout at 30 Hz with a visible calibration error; re-run quick calibration.
 **Gate:** both platform adapters build; no UI dependencies in the camera modules.
+**Status (2026-10-25):** CV-5 and CV-6 implemented; CV-7 partially measured.
+
+- **CV-5:** `yet-core/src/camera/` adds `CaptureConfig`, `CameraInfo`,
+  `CameraStats`, `CameraError`, a dedicated capture thread with a one-slot
+  latest-frame mailbox, YUYV/GRAY/MJPEG conversion with explicit Rec. 601, and
+  format fallback. Linux uses `linuxvideo` 0.3.5; macOS/Windows use `nokhwa`
+  0.10.11 with `input-avfoundation`/`input-msmf` only. No bindgen or C/C++
+  toolchain on Linux. The camera is opened, read and dropped on one thread.
+  Unit tests cover YUYV stride, GRAY padding, truncation, MJPEG decode, the
+  mailbox, the capture loop and config validation. A Windows all-targets check
+  passes; macOS needs a real Mac.
+- **CV-6:** `Calibration` records target/feature pairs, fits or refits without
+  resetting the session, and reports sample count and Euclidean RMSE. The
+  `yet-app calibrate` command walks the 3×3 grid in the terminal, averages
+  frames per target, supports `--quick` center recalibration and prints live
+  predictions. The drawn target UX belongs to S7.
+- **CV-7:** measured on Linux with a Logitech StreamCam: MJPG 640×480 sustains
+  26.0 fps with 6 warm-up/corrupt frames in 3 s; YUYV only 16.0 fps with 35
+  corrupt frames. Release builds are required for MJPEG (debug: 12 fps). See
+  [`docs/spikes/SPK-5.md`](docs/spikes/SPK-5.md). A valid human calibration
+  RMSE, macOS runtime and Windows runtime are still pending.
+
+**Findings:** the lab camera must use MJPG; auto negotiation selects YUYV and
+loses nearly half the frame rate. Quadrant means drifted by ~6 levels during a
+static 10 s run under auto-exposure, confirming that absolute features plus
+quick recalibration are the right design. The first calibration plumbing run
+produced an invalid RMSE (447 px) because no one fixated the targets; this is a
+harness result, not a measurement of tracking quality.
+
+**Gate:** Linux builds and runs; Windows compiles; macOS is unverified. The gate
+stays open until a human calibration and the macOS/Windows runtime checks.
 
 ### Sprint 6 — Presenter and console shell
 

@@ -96,6 +96,27 @@ impl GrayFrame {
         let index = y as usize * self.width as usize + x as usize;
         self.data.get(index).copied()
     }
+
+    /// Copy a sub-rectangle into a new tightly packed frame.
+    ///
+    /// Returns `None` when the region is empty or outside the frame.
+    pub fn crop(&self, region: EyeRegion) -> Option<Self> {
+        if !region.is_inside(self) {
+            return None;
+        }
+
+        let mut data = Vec::with_capacity(region.width as usize * region.height as usize);
+        for row in region.y..region.y + region.height {
+            let start = row as usize * self.width as usize + region.x as usize;
+            data.extend_from_slice(&self.data[start..start + region.width as usize]);
+        }
+
+        Some(Self {
+            width: region.width,
+            height: region.height,
+            data,
+        })
+    }
 }
 
 /// A rectangular eye region in frame pixels.

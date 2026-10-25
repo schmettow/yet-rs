@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 csv = "1"
 nalgebra = "0.34"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

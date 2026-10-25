@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub mod calibration;
+pub mod camera;
 pub mod clock;
 pub mod config;
 pub mod data;
@@ -23,6 +24,10 @@ mod rng;
 pub mod tracking;
 
 pub use calibration::{CalibrationGrid, CalibrationTarget};
+pub use camera::{
+    validate_eye_region, Camera, CameraError, CameraInfo, CameraStats, CaptureConfig, PixelFormat,
+    PreferredFormat,
+};
 pub use clock::{Clock, TestClock};
 pub use config::{
     load as load_config, AppConfig, AudioConfig, CameraConfig, ConfigError, DisplayConfig,
@@ -38,9 +43,9 @@ pub use experiment::{
 };
 pub use plan::{PlannedBlock, PlannedTrial, SessionPlan};
 pub use tracking::{
-    quad_brightness, rec601_luma, CalibrationBuffer, CalibrationSample, EyeRegion, FrameError,
-    GazeModel, GazePoint, GrayFrame, LinearGazeModel, LinearParameters, ModelError, QuadBrightness,
-    MIN_CALIBRATION_SAMPLES,
+    quad_brightness, rec601_luma, Calibration, CalibrationBuffer, CalibrationReport,
+    CalibrationSample, EyeRegion, FrameError, GazeModel, GazePoint, GrayFrame, LinearGazeModel,
+    LinearParameters, ModelError, QuadBrightness, MIN_CALIBRATION_SAMPLES,
 };
 
 /// An experiment directory loaded into configuration, definition and plan.
