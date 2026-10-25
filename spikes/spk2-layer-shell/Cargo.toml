@@ -1,0 +1,9 @@
+[package]
+name = "spk2-layer-shell"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+smithay-client-toolkit = "0.21"
+wayland-client = "0.31"

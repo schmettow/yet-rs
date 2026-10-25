@@ -7,8 +7,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - [x] **M0 Foundations green (S0)** — workspace, protocols, pure engine skeleton,
   GPL-3.0-only license and CI definition. Local checks pass; the three-OS CI
   workflow has been added but not yet exercised in this environment.
-- [ ] **M1 Risks retired (S1)** — eframe presentation, overlay matrix, camera
-  build/parity and A/V spikes.
+- [x] **M1 Risks retired (S1)** — four spike reports in `docs/spikes/`.
+  SPK-1/3/4 were measured on this machine; SPK-2 is a conditional go and still
+  needs the Windows/macOS/GNOME/Wayland runtime matrix. Linux audio playback is
+  blocked until ALSA development metadata is installed.
 - [ ] **M2 Headless experiment (S3)** — a two-block experiment writes a
   yet_zero-compatible CSV without a window.
 - [ ] **M3 Eye tracking parity (S5)** — quadrant features match Python and

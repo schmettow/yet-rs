@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "spk1-eframe",
+    "spk2-egui-overlay",
+    "spk2-layer-shell",
+    "spk2-xwayland",
+    "spk3-camera",
+    "spk4-media",
+]
+resolver = "2"

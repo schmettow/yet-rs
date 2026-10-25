@@ -215,6 +215,8 @@ Video is orthogonal to this table: all viable toolkits can display decoded frame
 - `with_decorations(false)`, `with_taskbar(false)`, `with_active(false)` (the last is a no-op on Wayland; X11 is out of scope; see §7)
 - X11-specific `with_window_type(X11WindowType::…)` and `with_override_redirect(true)` are legacy; native X11 is out of scope.
 
+**SPK-1 correction (2026-10-25):** eframe 0.37's `App` trait requires `fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame)`. `App::update(&Context, …)` was removed; `logic(&Context, …)` is an optional pre-UI hook. `egui::CentralPanel::show` now takes `&mut Ui`, not `&Context`. The production presenter must implement `ui`.
+
 Multi-window comes in two flavours:
 
 - **Immediate viewports** (`Context::show_viewport_immediate`): simple, closure-based, but parent and child repaint together. N viewports can mean N× CPU work.
@@ -411,7 +413,7 @@ ffmpeg -i clip.mp4 -vn -ac 2 -ar 48000 -c:a pcm_s16le stimuli/t02/audio.wav
 Playback stack:
 
 - `rodio` 0.23 for playback, with `cpal` 0.18 underneath. `Player::get_pos()` provides the audio clock.
-- WAV-only: `rodio = { version = "0.23", default-features = false, features = ["playback", "hound"] }`. This avoids Symphonia/MPL and keeps the decoder surface small. If the current release does not expose the WAV decoder through the `hound` feature, fall back to `wav` (Symphonia) after a license check.
+- WAV-only: `rodio` 0.23 has **no `hound` feature**. Decode WAV with `hound` (MIT) into `f32` samples and feed `rodio::buffer::SamplesBuffer`; this avoids Symphonia/MPL and keeps the decoder surface small. The `wav` feature (Symphonia, MPL-2.0) is a fallback after a license check, not the default. Linux builds require ALSA development metadata (`alsa.pc`; `libasound2-dev`/`alsa-lib-devel`), because `alsa-sys` cannot build without it.
 - `AudioPlayer` trait in `yet-present`; `RodioAudioPlayer` in `yet-media`; `NullAudioPlayer` for headless tests.
 
 A/V sync model:
@@ -902,7 +904,7 @@ Not found:
 
 **Licensing decision (R8):** the binary is distributed under **GPL-3.0-only**. `yet_zero` is Apache-2.0, which is GPLv3-compatible; keep the Apache-2.0 notice for ported logic. GPL prior art (`ianny`, `scramblery`, `FusionMouse`, `wanderlay`) is now directly reusable, subject to GPL-3.0 obligations. Slint's GPL option is compatible. LGPL dependencies (GStreamer, an LGPL FFmpeg build) would still carry linking obligations, but neither is a v1 dependency.
 
-**Required follow-up:** replace `yet-rs/LICENSE` with GPL-3.0-only and set `license = "GPL-3.0-only"` in `Cargo.toml` when the crate is created. Confirm with all contributors before relicensing an existing repository; for a new repository this is straightforward. Audio dependencies are MIT/Apache-2.0 (`rodio`, `cpal`, `hound`); Symphonia is MPL-2.0 and can be avoided by using WAV.
+**Required follow-up:** replace `yet-rs/LICENSE` with GPL-3.0-only and set `license = "GPL-3.0-only"` in `Cargo.toml` when the crate is created. Confirm with all contributors before relicensing an existing repository; for a new repository this is straightforward. Audio dependencies are MIT/Apache-2.0 (`rodio`, `cpal`, `hound`); Symphonia is MPL-2.0 and can be avoided by using `hound` + `SamplesBuffer`.
 
 ---
 
@@ -982,7 +984,8 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 - `macroquad::window` and `miniquad::conf::{Conf, Platform}` (`swap_interval` is a hint; `high_dpi` default false).
 - `ggez::conf::{Conf, WindowMode}` 0.10 (no explicit vsync field; transparent flag).
 - `pixels::PixelsBuilder` 0.17 (`enable_vsync`, `present_mode`).
-- `rodio::Player` 0.23 (`get_pos()`, `play/pause/stop`, `set_volume`); rodio features `playback` and `hound`.
+- `rodio::Player` 0.23 (`get_pos()`, `play/pause/stop`, `set_volume`); `DeviceSinkBuilder::open_default_sink`, `Player::connect_new`, `rodio::buffer::SamplesBuffer`. Rodio 0.23 has `playback` but no `hound` feature; Linux `alsa-sys` requires ALSA development metadata.
+- `eframe::App` 0.37 (`ui`, `logic`); `egui::CentralPanel::show` takes `&mut Ui`.
 - `cpal` 0.18 device/output APIs.
 - crates.io metadata for `video-rs` 0.12, `ffmpeg-next` 9.0, `ffmpeg-sidecar` 2.7, `gstreamer` 0.25, `gtk4-layer-shell` 0.8, `egui-video` 0.9.
 - Upstream `gtk4-layer-shell` README: wlroots/Smithay/Mir/KDE supported; **GNOME-on-Wayland unsupported**.

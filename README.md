@@ -2,8 +2,9 @@
 
 A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
-> **Status:** Sprint 0 (foundations). The workspace contains the UI-free engine
-> and the presentation protocols. There is no runnable experiment binary yet.
+> **Status:** Sprints 0–1 (foundations and risk spikes). The workspace contains
+> the UI-free engine and presentation protocols. There is no runnable experiment
+> binary yet.
 
 ## What it will do
 
@@ -21,6 +22,8 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 - `yet-core` — a pure `step` engine with start/pause/resume/abort/tick,
   a `TestClock`, and the calibration data types.
 - CI for Linux, macOS and Windows, plus a Rust 1.88 MSRV check.
+- Sprint 1 risk reports in [`docs/spikes/`](docs/spikes/) covering eframe
+  presentation, the overlay matrix, camera capture/parity and media/audio.
 
 ## Build
 

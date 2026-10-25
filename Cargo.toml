@@ -2,6 +2,7 @@
 
 [workspace]
 members = ["crates/yet-present", "crates/yet-core"]
+exclude = ["spikes"]
 resolver = "2"
 
 [workspace.package]

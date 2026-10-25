@@ -183,7 +183,7 @@ This is exactly the kind of swap R3 asks for, and it keeps the build graph free 
 
 - `YUYV`: luma is byte `row*stride + 2*x` (4:2:2 packs Y0 U Y1 V).
 - `GRAY`: byte `row*stride + x`.
-- `MJPEG`: `image::load_from_memory_with_format(buf, ImageFormat::Jpeg)` then `.to_luma8()`; pure Rust through `zune-jpeg`.
+- `MJPEG`: `image::load_from_memory_with_format(buf, ImageFormat::Jpeg)` to RGB, then explicit Rec. 601 luma (see the correction in §4.1); pure Rust through `zune-jpeg`. Do **not** call `.to_luma8()`: it uses Rec. 709.
 
 At 640×480@30, YUYV is ~18 MB/s, comfortably within USB 2.0. At 1280×720@30 it is ~55 MB/s and may require MJPEG. The target camera is low-resolution, so YUYV is the preferred path; MJPEG stays available (R4).
 
@@ -192,6 +192,8 @@ At 640×480@30, YUYV is ~18 MB/s, comfortably within USB 2.0. At 1280×720@30 it
 **Threading (R14).** A dedicated capture thread owns the camera and sends `GrayFrame` over a bounded channel of capacity 1. If the channel is full, replace the stale frame rather than queueing. `crossbeam-channel` makes this clean; `std::sync::mpsc` is sufficient if an extra dependency is unwanted. Do not make the tracker async: a 30 fps camera is a blocking source, and an async runtime adds dependencies without improving latency.
 
 **Permissions:** macOS TCC (handled by `nokhwa_initialize`), Windows camera privacy settings, Linux `video` group membership. Document these in the README; they are the most common first-run failures.
+
+**SPK-3 build note (2026-10-25):** on macOS, `nokhwa` pulls `objc_exception`, which compiles an Objective-C file via `cc`. A real Mac needs Xcode Command Line Tools; cross-compiling from Linux fails at that build script. The Windows path uses pre-generated bindings and has no C build step. Test both on hardware; do not infer macOS from a Windows check.
 
 ### 3.4 Fallbacks if `linuxvideo` fails on the real camera
 
@@ -213,7 +215,9 @@ MIT/Apache-2.0, MSRV 1.88, 225M downloads. It provides the buffer types and pure
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ```
 
-`jpeg` covers MJPEG frames and JPEG stimuli; `png` covers the stimulus files. Add formats only when the stimulus set needs them.
+`image` covers MJPEG frames and JPEG stimuli; `png` covers the stimulus files. Add formats only when the stimulus set needs them.
+
+**SPK-3 correction (2026-10-25):** `image::DynamicImage::to_luma8()` uses **Rec. 709** coefficients. On the SPK-3 fixture it produced `(54, 182, 18)` for red/green/blue, while OpenCV `BGR2GRAY` and PIL `convert("L")` use **Rec. 601** and produce `(76, 150, 29)`. Convert RGB/MJPEG explicitly with `Y = round((299·R + 587·G + 114·B) / 1000)`. For YUYV/GRAY, use the camera's Y byte directly. Add a fixture parity test before building the camera adapter.
 
 ### 4.2 The blurred stimulus preview
 
@@ -409,6 +413,8 @@ This is the tracker-side layout; the presentation side keeps its own split in `U
 9. **Thread safety.** `nokhwa::Camera` is `Send` but not `Sync`; `linuxvideo` needs the same check. Keep the camera on one thread and assert `Send` at compile time in the adapter.
 10. **Licensing.** All recommended crates are permissive: `linuxvideo` 0BSD, `nokhwa` Apache-2.0, `image` MIT/Apache-2.0, `nalgebra` Apache-2.0, `thiserror`/`crossbeam` MIT/Apache-2.0. No Intel XML notice is needed because the cascade file is gone.
 11. **Open: how is the fixed ROI set?** Configuration file, a one-time setup screen, or full-frame? This is the only significant design question left by R6. A normalized ROI in the config is the most portable default; a setup screen is the most usable.
+12. **Luma coefficients.** `image::to_luma8()` is Rec. 709; OpenCV/PIL use Rec. 601. Use explicit Rec. 601 for RGB/MJPEG and a fixture test. See §4.1.
+13. **Camera format changes features.** YUYV and MJPG produced different quadrant means on the same scene; record format, resolution and ROI with calibration and refit on change. See `docs/spikes/SPK-3.md`.
 
 ---
 
@@ -419,6 +425,8 @@ This is the tracker-side layout; the presentation side keeps its own split in `U
 3. **Feature parity:** extract `QuadBrightness` from recorded frames and compare with the Python implementation on the same frames, including the NE/SW order. This validates the luma conversion and the ROI split before any model work.
 4. **Model loop:** implement `LinearGazeModel` with `nalgebra`, fit on a small sample set, and measure repeated fit/predict. Confirm that frequent recalibration is cheap enough (R7).
 5. **Only if `linuxvideo` fails:** evaluate `v4l` with the libclang cost, or `rscam` as a stale fallback. Do not switch to `cameras` yet.
+
+**SPK-3 result (2026-10-25):** `linuxvideo` capture works on a Logitech StreamCam. YUYV measured 17.7–24.1 fps with 6–21 corrupt warm-up frames; MJPG measured 28.9 fps with 1 corrupt frame. The Rec. 709/Rec. 601 luma mismatch was found and fixed with an explicit Rec. 601 conversion. See `docs/spikes/SPK-3.md`.
 
 ---
 
@@ -447,7 +455,7 @@ Notes:
 | `linuxvideo` | 0.3.5 | downloaded source (`Cargo.toml`: no `build`, only `libc`; `src/lib.rs`, `src/stream.rs`, `src/format.rs`) |
 | `nokhwa` | 0.10.11 | downloaded source (`Cargo.toml`, `src/camera.rs`, `src/threaded.rs`) |
 | `nokhwa-bindings-macos` | 0.2.4 | downloaded source (`build.rs` only links CoreMedia/AVFoundation/CoreVideo) |
-| `nokhwa-bindings-windows` | 0.4.1 | downloaded source (no `build.rs`; pre-generated `windows` bindings) |
+| `nokhwa-bindings-windows` | 0.4.6 | downloaded source (no `build.rs`; pre-generated `windows` bindings) |
 | `v4l` | 0.14.0 | downloaded `Cargo.toml` |
 | `v4l2-sys-mit` | 0.3.0 | downloaded `build.rs`: `bindgen::Builder::default().header("wrapper.h")` |
 | `cameras` | 0.3.2 | downloaded `Cargo.toml` (Linux `v4l` 0.14) |

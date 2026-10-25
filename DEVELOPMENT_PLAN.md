@@ -124,6 +124,8 @@ Target layout:
 
 The CV modules stay inside `yet-core` for v1 (CV R11). `yet-camera` and `yet-ml` are later mechanical splits; do not create them before the seams have tests.
 
+**Platform build prerequisites found in Sprint 1:** Linux audio needs ALSA development metadata (`alsa.pc`); the macOS `nokhwa` camera path needs Xcode Command Line Tools for `objc_exception`. Neither is a C/C++ dependency of our own code, but both must be documented. Confirm in §12.
+
 ### 3.2 The key design rule: pure transition + effects
 
 Yex's `run()` methods sleep and block. That makes timing untestable and couples the engine to a thread. Replace them with a pure step function:
@@ -356,6 +358,10 @@ flowchart TD
 | SPK-3 | Camera spike: `linuxvideo` and `nokhwa` build, formats, 640×480 capture, `GrayFrame` conversion | M | No bindgen/libclang; format list; captured frames; parity plan against Python |
 | SPK-4 | Media spike: FFmpeg PNG/WAV extraction, `rodio` playback, `get_pos()` clock, drift measurement | M | Script + report; measured A/V drift; failure modes documented |
 
+**Status (2026-10-25):** four reports written to `docs/spikes/`. SPK-1 was measured on X11; SPK-2 ran the X11 proxy and compile-checked Windows/macOS/layer-shell; SPK-3 captured real frames and matched the Python Rec. 601 fixture; SPK-4 prepared exact media and validated the rodio API on Windows/macOS. Linux audio playback remains blocked by missing ALSA development metadata. Target-platform runtime checks remain.
+
+**Findings:** eframe 0.37 uses `App::ui`, not `App::update`; monitor targeting settles after a few frames; `image::to_luma8()` is Rec. 709 and must not be used for OpenCV parity; YUYV capture was unstable on the test camera (MJPG was stable); rodio 0.23 has no `hound` feature; Linux `alsa-sys` requires ALSA development metadata; the X11 overlay proxy showed focus stealing and whole-desktop geometry.
+
 **Prior work:** `Yex/examples/quad_bright.rs` for camera enumeration only; UI §14 and CV §10 for spike checklists.
 **Demo:** four spike reports with measurements and explicit recommendations.
 **Gate:** if SPK-2 fails on GNOME, decide between a GNOME Shell extension and a documented limitation **before** S9. If SPK-3 fails, decide on the `v4l` fallback and update CV analysis. If SPK-1 shows jank, keep the traits and choose the fallback presenter backend.
@@ -398,7 +404,7 @@ flowchart TD
 | CV-1 | `GrayFrame`, `EyeRegion`, `QuadBrightness`, `quad_brightness` with odd-dimension handling | M | Property tests for sums; canonical `(nw, ne, sw, se)`; documented remainder rule |
 | CV-2 | `LinearGazeModel` with `nalgebra` SVD/QR and centering | M | Synthetic linear data recovered within tolerance; repeated fit is cheap; `reset` tested |
 | CV-3 | Calibration buffer, grid geometry and error metric | M | 3×3 grid generated in physical pixels; fit after calibration; RMSE computed |
-| CV-4 | Python parity fixtures from recorded frames | M | Same frames through Python and Rust; per-quadrant differences within an agreed tolerance; order documented |
+| CV-4 | Python parity fixtures from recorded frames, including the odd-sized Rec. 601 fixture | M | Same frames through Python and Rust; per-quadrant differences within an agreed tolerance; canonical `(nw, ne, sw, se)` and explicit Rec. 601 documented |
 
 **Prior work:** Yex `yet.rs` L19–L50 for calibration state; `quad_bright.rs` only as a slicing reference. Do **not** use its RGB-average numbers as ground truth.
 **Demo:** print gaze at 30 Hz and calibration RMSE from a recorded sequence.
@@ -410,7 +416,7 @@ flowchart TD
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
-| CV-5 | Camera adapters: `linuxvideo` (Linux) and `nokhwa` (macOS/Windows); format negotiation, stride, YUYV/GRAY/MJPEG to `GrayFrame`; capture thread with latest-frame mailbox | L | Real camera on Linux and at least one of macOS/Windows; no bindgen; camera stays on one thread; `Send` asserted; permissions documented; mock source for tests |
+| CV-5 | Camera adapters: `linuxvideo` (Linux) and `nokhwa` (macOS/Windows); format negotiation, stride, YUYV/GRAY/MJPEG to `GrayFrame` with explicit Rec. 601; capture thread with latest-frame mailbox; corrupt-frame counter and format fallback | L | Real camera on Linux and at least one of macOS/Windows; no bindgen; camera stays on one thread; `Send` asserted; permissions documented; mock source for tests |
 | CV-6 | Calibration flow and quick recalibration | M | Grid → samples → fit → validate; quick recalibration refits without restarting the session |
 | CV-7 | Hardware-in-the-loop smoke test on the lab machine | S | Test record: OS, camera, format, fps, calibration RMSE, notes |
 
@@ -456,7 +462,7 @@ flowchart TD
 |---|---|---|---|
 | MED-1 | FFmpeg preparation script and manifest validation | S | One command prepares frames + WAV; bad/missing output fails with a clear message; docs updated |
 | MED-2 | Sequence `FrameSource`: preload, prefetch, pacing, late-frame drop, last-frame behavior | L | Generated sequence test; no UI-thread disk blocking; drop counts logged |
-| MED-3 | `RodioAudioPlayer`: load, play, pause, resume, stop, volume, `get_pos()`, device validation | M | Audio clock exposed; device failure before session; underruns logged |
+| MED-3 | Audio player: `hound` WAV decode into `rodio::buffer::SamplesBuffer`; load, play, pause, resume, stop, volume, `get_pos()`, device validation | M | Audio clock exposed; device failure before session; underruns logged; no Symphonia/MPL dependency |
 | MED-4 | A/V integration and failure policy | S | Audio master when present; monotonic master otherwise; drift log; mid-trial failure aborts the trial |
 
 **Prior work:** UI §6.6–§6.7; Yex has no media pipeline to reuse.
@@ -533,12 +539,14 @@ Ordered by value, not commitment.
 
 | Risk | Likelihood / impact | Trigger | Mitigation | Story |
 |---|---|---|---|---|
-| XWayland overlay fails on GNOME | High / high | SPK-2 or OVL-5 fails on multi-monitor, z-order or click-through | GNOME Shell extension or documented limitation; decide at M1/M6 | SPK-2, OVL-5, OVL-6 |
-| `linuxvideo` fails on the real camera | Medium / high | SPK-3 or CV-5 cannot negotiate a format | Fall back to `v4l` with libclang cost; update CV analysis | SPK-3, CV-5 |
-| eframe timing is visibly janky | Medium / medium | SPK-1 or UI-4 misses p99 budget | Keep traits; switch presenter to `winit + wgpu`/`pixels` | SPK-1, UI-4 |
-| A/V drift or audio device failure | Medium / medium | SPK-4/MED-3 drift above budget | Constant offset, fail-fast device validation, abort trial on mid-trial failure | SPK-4, MED-3, MED-4 |
-| HiDPI/multi-monitor coordinate bug | Medium / high | Placement differs at 150% or across monitors | Physical-pixel canonical model; golden tests at both scales | UI-1, REL-2 |
-| `rodio` `hound` feature does not expose WAV | Low / medium | Build or decode failure | Use `wav`/Symphonia after license check; keep `AudioPlayer` boundary | MED-3 |
+| XWayland overlay fails on GNOME | High / high | SPK-2 X11 proxy passes the empty input region but shows focus stealing; GNOME/Wayland still untested | Test the GNOME matrix at S10; use a GNOME Shell extension or a documented limitation; never treat the X11 proxy as R11 evidence | SPK-2, OVL-5, OVL-6 |
+| YUYV capture is unstable on the target camera | High / medium | SPK-3 measured 17.7–24.1 fps with 6–21 corrupt warm-up frames; MJPG was stable at 28.9 fps | Prefer YUYV only if it sustains the rate; add MJPG fallback and a corrupt-frame counter; record format in calibration | CV-5, CV-7 |
+| eframe timing is visibly janky | Medium / medium | SPK-1 measured 17.57 ms p99 on X11; Wayland/Windows/macOS untested | Keep traits; retest in UI-4; switch to `winit + wgpu`/`pixels` if needed | SPK-1, UI-4 |
+| A/V drift or audio device failure | Medium / medium | SPK-4 media prep exact, but Linux playback is blocked by ALSA and no drift was measured | Add ALSA dev to CI; measure `get_pos` drift in S8; apply a constant offset if needed | SPK-4, MED-3, MED-4 |
+| HiDPI/multi-monitor coordinate bug | Medium / high | SPK-1 passed 1.167 and 1.75 ppp; SPK-2 showed whole-desktop X11 geometry | Physical-pixel canonical model; golden tests; monitor-specific geometry | UI-1, OVL-5, REL-2 |
+| Rec. 709 vs Rec. 601 luma mismatch | High / high | SPK-3 `image::to_luma8` produced 54/182/18 vs Python 76/150/29 | Explicit Rec. 601 conversion and fixture test; never use `to_luma8` | CV-1, CV-4 |
+| Linux audio build needs ALSA dev metadata | High / high | SPK-4 `alsa-sys` cannot find `alsa.pc` | Document `libasound2-dev`/`alsa-lib-devel`; add to CI; or provide an audio-off feature | MED-3, REL-1 |
+| macOS `nokhwa` needs Xcode CLT | Medium / medium | SPK-3 macOS cross-check fails in `objc_exception` | Document Xcode CLT; test on a real Mac; do not infer from Windows | CV-5, REL-1 |
 | Cross-platform CI cannot exercise hardware | High / medium | CI green but lab behavior differs | Manual HIL matrix each sprint; record OS/compositor versions | Every HIL story |
 | Data format diverges from yet_zero | Low / high | R pipeline cannot read the CSV | Keep column names, append new columns; golden file test | ENG-6, REL-4 |
 | Scope creep from Yex features | High / medium | New “while we are here” stories | Non-goals and post-v1 backlog; WIP limit | All sprints |
@@ -613,6 +621,8 @@ These are starting points, not scientific claims. Confirm or revise after S1–S
 | CSV completeness | 100% of started trials have a row; timestamps monotonic | ENG-6, REL-4 |
 | Soak | 60 min, no crash, RSS growth < 10% | REL-2 |
 
+**Sprint 1 evidence (environment-specific, not release guarantees):** SPK-1 measured 17.57 ms p99 after warm-up at ~60 Hz on X11; SPK-3 measured YUYV 17.7–24.1 fps vs MJPG 28.9 fps and found the Rec. 709/601 mismatch; SPK-4 produced 90 frames/3.000 s with the beep at 1000.1 ms (frame 30). SPK-2 is a conditional go pending the target-platform matrix; SPK-4 Linux playback is blocked by ALSA.
+
 ---
 
 ## 12. Decisions needed now
@@ -628,9 +638,11 @@ These are starting points, not scientific claims. Confirm or revise after S1–S
 | 7 | Do we need Yex's participant/consent/demographics flow in v1? | No; post-v1 | S2 |
 | 8 | Is the release target source builds only, or installers too? | Source builds + CI artifacts for `v0.1.0` | S11 |
 | 9 | Which hardware is available for HIL: camera, second monitor, Windows/macOS machines, GNOME and KDE/Sway? | Assume all are available at least once per milestone | S1 |
+| 10 | Accept `libasound2-dev`/`alsa-lib-devel` on Linux and Xcode CLT on macOS as documented build prerequisites? | Yes; add them to CI/docs and keep audio/camera enabled | Now |
+| 11 | Adopt the SPK-3 corrections: explicit Rec. 601 luma, format-aware calibration, and MJPG fallback? | Yes; implement in S4/S5 | S4 |
 
 ---
 
 ## 13. First action
 
-Start with **FND-1**. Before writing engine code, fix the license and prove the three-OS build. Then run **SPK-2** as early as possible: the overlay is the only requirement that can fail outright, and its result shapes S9–S10.
+Sprint 0 is complete. Sprint 1 reports are in `docs/spikes/`; Sprint 2 can start with ENG-1/ENG-2. Ask the owner to confirm the build prerequisites in §12 #10, and run the overlay matrix on the lab machines before S9. The next technical step is the experiment model and configuration (Sprint 2).
