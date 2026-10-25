@@ -2,9 +2,10 @@
 
 A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
-> **Status:** Sprints 0–2 (foundations, risk spikes, experiment model). The
-> workspace contains the UI-free engine, presentation protocols, experiment
-> loading and a plan command. There is no runnable experiment session yet.
+> **Status:** Sprints 0–3 (foundations, risk spikes, experiment model,
+> scheduler and headless slice). The workspace runs a two-block experiment
+> without a window and writes a yet_zero-compatible result CSV. There is no
+> camera, no console and no presenter window yet.
 
 ## What it will do
 
@@ -20,11 +21,18 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 - `yet-present` — `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`,
   presenter/overlay/media/audio traits, and a `RecordingPresenter`.
 - `yet-core` — a pure `step` engine with start/pause/resume/abort/tick,
-  a `TestClock`, and the calibration data types.
+  absolute trial deadlines, late-tick accounting, a `TestClock`, and the
+  calibration data types.
 - `yet-core` — experiment/config loading from `config.toml`, `Experiment.csv`
   and `Stimuli.csv`, typed validation, resolved media paths and deterministic
   per-block trial planning.
+- `yet-core` — a calibration grid (3×3 at 0.125/0.5/0.875), stimulus placement
+  and golden scenes, plus a yet_zero-compatible CSV data sink with flush per
+  trial.
 - `yet-app` — `yet-app plan <experiment-dir>` prints the resolved session plan.
+- `yet-app` — `yet-app run --headless <experiment-dir>` drives a full session
+  with a synthetic monotonic clock and writes the result CSV. Without a camera
+  there are no gaze samples yet, so the file contains the header only.
 - CI for Linux, macOS and Windows, plus a Rust 1.88 MSRV check.
 - Sprint 1 risk reports in [`docs/spikes/`](docs/spikes/) covering eframe
   presentation, the overlay matrix, camera capture/parity and media/audio.
@@ -38,7 +46,35 @@ cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
 cargo run -p yet-app -- plan examples/demo
+cargo run -p yet-app -- run --headless examples/demo --participant demo01
 ```
+
+## Headless runs
+
+`yet-app run --headless` needs no window and no display. It walks the plan
+with a 10 ms synthetic clock: each tick jumps to the next frame step or trial
+deadline, so a five-trial demo finishes in milliseconds. Output:
+
+```text
+Result: examples/demo/yet1_demoMartin_demo01.csv
+Trials: 5 of 5 completed
+Samples: 0
+```
+
+Use `--output <csv>` to choose the result path. `--participant` defaults to
+the Unix time at session start, as in the Python prototype. Until Sprint 5
+adds the camera there is no gaze data, so the result file contains only the
+schema header; the trial scheduler and protocol wiring are still exercised
+end to end.
+
+### Result CSV
+
+Columns are exactly `Exp,Part,Stim,time,x,y,x_pro,y_pro`, matching yet_zero.
+`Exp` concatenates the experiment id and the experimenter, `Part` is the
+participant id, `x`/`y` are gaze coordinates in stimulus pixels, and
+`x_pro`/`y_pro` are normalized to the stimulus size. Times are epoch seconds
+with microsecond precision. Every trial boundary flushes the file, so an
+aborted session keeps the completed trials.
 
 ## Experiment format
 

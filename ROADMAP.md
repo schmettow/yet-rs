@@ -11,8 +11,9 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   SPK-1/3/4 were measured on this machine; SPK-2 is a conditional go and still
   needs the Windows/macOS/GNOME/Wayland runtime matrix. Linux audio now runs;
   `get_pos()` measured ~128 ms behind wall clock and needs compensation in S8.
-- [ ] **M2 Headless experiment (S3)** — a two-block experiment writes a
-  yet_zero-compatible CSV without a window.
+- [x] **M2 Headless experiment (S3)** — a two-block experiment runs without a
+  window and writes a yet_zero-compatible CSV. The demo completes 5 of 5
+  trials; without the camera the CSV contains the header and no gaze rows.
 - [ ] **M3 Eye tracking parity (S5)** — quadrant features match Python and
   calibration works on the real camera.
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
@@ -31,7 +32,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - **S2 Experiment model and configuration** — complete: `config.toml`,
   `Experiment.csv`, `Stimuli.csv`, typed validation, resolved paths and a
   deterministic per-block plan; `yet-app plan examples/demo` prints it.
-- **Next:** S3 scheduler, data sink and headless slice.
+- **S3 Scheduler and headless slice** — complete: absolute-deadline scheduling
+  with late-tick accounting, calibration and placement golden scenes, the CSV
+  sink, and `yet-app run --headless`. 89 tests pass.
+- **Next:** S4 CV features and the linear gaze model.
 
 ## Post-v1
 

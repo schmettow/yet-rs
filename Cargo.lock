@@ -315,7 +315,10 @@ dependencies = [
 name = "yet-app"
 version = "0.1.0"
 dependencies = [
+ "tempfile",
+ "thiserror",
  "yet-core",
+ "yet-present",
 ]
 
 [[package]]

@@ -393,8 +393,41 @@ flowchart TD
 | ENG-7 | `yet-app --headless` CLI | S | Runs a 2-block, 6-trial experiment from config to CSV |
 
 **Prior work:** Yex `mod.rs` L84–L132 for the event shape; replace `YexRecord(Instant, …)` with `SessionTime`.
-**Demo:** run headless, show the CSV and a scene log, then `cargo test`.
-**Gate:** no sleeps, no UI dependencies, no unwrap on runtime paths; all state transitions covered.
+**Demo:** `cargo run -p yet-app -- run --headless examples/demo --participant demo01`.
+**Gate:** met; see status below.
+**Status (2026-10-25):** implemented. 89 workspace tests pass, including 22 engine
+scheduler tests, 11 golden-scene tests, 7 data-sink tests and 7 headless/CLI tests.
+
+- **ENG-4:** `step` schedules by absolute deadline. A late tick records `late_by`,
+  completes the overdue trial at the tick time and starts the next trial there;
+  no trial is skipped and no `dt` error accumulates. Pause/resume shifts the
+  deadline by the pause duration. Aborting mid-trial emits a record with
+  `completed: false`.
+- **ENG-5:** `CalibrationGrid` reproduces the Python 3×3 proportions
+  (0.125/0.5/0.875), radius 20, stroke 10, grey `(160,160,160)` and active
+  orange `(255,120,0)`. Targets are row-major; Python's `itertools.product(x,y)`
+  visits the same points column-major. `StimulusPlacement` reproduces
+  `scale = min(surface/media)` and centering, rounded to the nearest pixel
+  (Python truncates, so a placement can differ by one pixel). Instruction text
+  uses the Python `(0.1, 0.9)` anchor and `min(surface)/60` size.
+- **ENG-6:** `DataSink` writes exactly the eight yet_zero columns and nothing
+  else; new columns, if needed, will be appended. Gaze/frame observations
+  become rows; trial records drive flushing and the run report, because the
+  yet_zero schema has no trial row. Times are
+  `epoch_start + SessionTime`, formatted with microsecond precision; pixel
+  coordinates use two decimals and normalized coordinates four. Header on
+  creation, flush at every `AppendTrial`, so an aborted session keeps the rows
+  up to the abort.
+- **ENG-7:** `yet-app run --headless <dir>` uses a 10 ms synthetic clock and
+  jumps to trial deadlines; the demo completes 5 of 5 trials in milliseconds.
+  The result file defaults to the experiment directory as
+  `yet1_<Exp>_<Part>.csv`. Without a camera the CSV has the header but no gaze
+  rows; the gaze closure in `drive` is the injection point for Sprint 5.
+
+**Findings:** the first headless demo exposed a loop guard that counted ticks
+instead of simulated time; the guard now derives from the sum of planned
+stimulus durations. Building `yet-app` as a library plus binary made the runner
+and the CLI testable through `CARGO_BIN_EXE_yet-app` without a window.
 
 ### Sprint 4 — CV features and model
 
