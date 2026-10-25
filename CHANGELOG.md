@@ -27,6 +27,20 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `yet-core`: `DataSink` writing the yet_zero columns
   `Exp,Part,Stim,time,x,y,x_pro,y_pro`, with a header at creation and flush per
   trial.
+- `yet-core`: `GrayFrame`, `EyeRegion`, canonical `quad_brightness` with the
+  odd-dimension split rule, and `rec601_luma` matching OpenCV `BGR2GRAY`.
+- `yet-core`: `GazeModel` trait and `LinearGazeModel`, a centered SVD least-squares
+  fit from four quadrant means to two monitor coordinates, with typed
+  `ModelError`s and repeatable refits.
+- `yet-core`: `CalibrationBuffer` with fit and Euclidean RMSE, for quick
+  recalibration and calibration-quality reporting.
+- `yet-core`: `LinearGazeModel::parameters`, exposing the fitted coefficient and
+  intercept matrices for calibration diagnostics.
+- `tools/cv4_fixtures.py` and committed synthetic Python-oracle fixtures:
+  NumPy quadrant means, scikit-learn predictions/coefficients, and OpenCV luma
+  for odd-sized patterns. `tests/cv4_parity.rs` checks them.
+- `docs/fixtures/CV-4.md`: the parity format, the canonical quadrant mapping
+  and privacy handling for eye crops.
 - `yet-app`: `yet-app run --headless <dir> [--participant <id>] [--output <csv>]`
   drives a complete experiment with a synthetic 10 ms clock and writes the
   result CSV. A library target makes the runner testable without a window.
@@ -38,6 +52,9 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- `yet-core`: the tracker moved from a single `tracking.rs` into
+  `tracking/{mod,frame,features,model,buffer}.rs`. Public re-exports are
+  unchanged.
 - `EngineState` can carry a `SessionPlan`; `step` now schedules trials by
   absolute deadline instead of accumulating `dt`. `TrialRecord` and
   `FrameRecord` carry block, trial index and stimulus identifiers.
@@ -52,11 +69,18 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   and the macOS `objc_exception` build step in `nokhwa`.
 - `DEVELOPMENT_PLAN.md`: recorded Sprint 1 findings, risks and the build-prerequisite
   decision; recorded Sprint 2 as implemented.
+- `nalgebra` 0.34 is now a `yet-core` dependency (MSRV 1.88 preserved); the gaze
+  model uses SVD rather than normal equations because quadrant means are
+  collinear.
 - Linux audio is now verified with `libasound2-dev`; `get_pos()` measured
   ~128 ms behind wall clock, so S8 must compensate output latency.
 
 ### Known Issues
 
+- CV-4 (Python parity) is verified on committed synthetic fixtures. A
+  real-camera eye-ROI run is still to be appended before Sprint 5; the format is
+  in `docs/fixtures/CV-4.md`. OpenCV's fixed-point luma can differ from the
+  Rec. 601 formula by one level on arbitrary colors.
 - There is no camera adapter yet, so a headless run writes the CSV header but
   no gaze rows. The scheduler, presenter commands and sink are exercised; the
   data path is not.

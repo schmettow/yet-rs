@@ -37,7 +37,11 @@ pub use experiment::{
     Block, BlockId, Experiment, ExperimentError, Stimulus, StimulusId, StimulusKind, Trial,
 };
 pub use plan::{PlannedBlock, PlannedTrial, SessionPlan};
-pub use tracking::{CalibrationSample, GazePoint, QuadBrightness};
+pub use tracking::{
+    quad_brightness, rec601_luma, CalibrationBuffer, CalibrationSample, EyeRegion, FrameError,
+    GazeModel, GazePoint, GrayFrame, LinearGazeModel, LinearParameters, ModelError, QuadBrightness,
+    MIN_CALIBRATION_SAMPLES,
+};
 
 /// An experiment directory loaded into configuration, definition and plan.
 #[derive(Debug)]

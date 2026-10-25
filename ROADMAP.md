@@ -34,8 +34,15 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   deterministic per-block plan; `yet-app plan examples/demo` prints it.
 - **S3 Scheduler and headless slice** — complete: absolute-deadline scheduling
   with late-tick accounting, calibration and placement golden scenes, the CSV
-  sink, and `yet-app run --headless`. 89 tests pass.
-- **Next:** S4 CV features and the linear gaze model.
+  sink, and `yet-app run --headless`. 89 tests passed at the end of the sprint.
+- **S4 CV features and model** — implemented and parity-checked: `GrayFrame`/`EyeRegion`,
+  canonical quadrant means with the odd-dimension rule, Rec. 601 luma,
+  `LinearGazeModel` (SVD least squares), calibration buffer and RMSE. 114 tests
+  pass. CV-4 uses committed synthetic fixtures generated with NumPy, OpenCV and
+  scikit-learn; recorded eye-ROI frames remain to be appended before S5
+  ([`docs/fixtures/CV-4.md`](docs/fixtures/CV-4.md)).
+- **Next:** append recorded eye-ROI frames, then S5 camera and calibration on
+  hardware.
 
 ## Post-v1
 

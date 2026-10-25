@@ -443,6 +443,44 @@ and the CLI testable through `CARGO_BIN_EXE_yet-app` without a window.
 **Prior work:** Yex `yet.rs` L19–L50 for calibration state; `quad_bright.rs` only as a slicing reference. Do **not** use its RGB-average numbers as ground truth.
 **Demo:** print gaze at 30 Hz and calibration RMSE from a recorded sequence.
 **Gate:** parity and refit budget; if parity fails, fix the feature definition before building the camera adapter.
+**Status (2026-10-25):** CV-1–CV-4 implemented; parity checked against the Python
+oracle on committed synthetic fixtures. 25 new tests; 114 workspace tests pass
+on stable and MSRV 1.88.
+
+- **CV-1:** `GrayFrame` validates its buffer length; `EyeRegion` is checked at the
+  boundary; `quad_brightness` uses canonical `(nw, ne, sw, se)` and splits at
+  `width/2`/`height/2`, with the remainder pixel in the east/south quadrants.
+  Tests cover 4×4 quadrants, a 5×5 odd frame, a cropped region, and every
+  invalid-region shape. `rec601_luma` reproduces the SPK-3 OpenCV values
+  (red/green/blue → 76/150/29).
+- **CV-2:** `LinearGazeModel` centers features and targets and solves by SVD via
+  `nalgebra` 0.34. Tests recover a known 4→2 map on held-out features to within
+  0.01 px, replace a previous map on refit, reject fewer than four samples, keep
+  the old fit after a failed fit, handle a rank-deficient calibration by
+  predicting the mean target, and clear on `reset`.
+- **CV-3:** the physical-pixel grid was already implemented in S3.
+  `CalibrationBuffer` now collects samples, fits a `dyn GazeModel`, and reports
+  Euclidean RMS error in target units. Tests pin the RMSE definition and the
+  empty/unfitted cases.
+- **CV-4:** the parity harness is in place. `tools/cv4_fixtures.py` generated
+  committed fixtures with NumPy 2.2.6, OpenCV 4.11.0 and scikit-learn 1.7.2:
+  four raw grayscale patterns (7×5, 5×7, 8×6, 103×77), 12 calibration rows
+  (9 training, 3 held out), and an odd 7×5 RGB/luma pair.
+  `tests/cv4_parity.rs` checks canonical quadrant means within 1e-3, sklearn
+  predictions within 0.5 px, coefficients and intercepts within 1e-6, and every
+  luma pixel exactly. Features and targets are quantized to `f32` before
+  sklearn fits, so both sides consume identical numbers. Remaining: append real
+  eye-ROI frames from the target camera and rerun the same test; the format is
+  in [`docs/fixtures/CV-4.md`](docs/fixtures/CV-4.md).
+
+**Findings:** the prototype virtualenv contains NumPy, OpenCV and scikit-learn,
+so a genuine oracle could be generated locally instead of waiting for a
+recording. OpenCV's 8-bit `BGR2GRAY` uses fixed-point coefficients and can
+differ from the Rec. 601 rounding formula by one level on arbitrary colors;
+Sprint 5 parity must allow ±1, while the committed odd fixture matches exactly.
+The refit budget is guarded by a test: 1000 fits of the 9-sample calibration
+must finish within one second. Real-frame parity and a timing measurement on the
+live calibration path stay open.
 
 ### Sprint 5 — Camera and calibration on real hardware
 
@@ -455,6 +493,9 @@ and the CLI testable through `CARGO_BIN_EXE_yet-app` without a window.
 | CV-7 | Hardware-in-the-loop smoke test on the lab machine | S | Test record: OS, camera, format, fps, calibration RMSE, notes |
 
 **Prior work:** `Yex/examples/quad_bright.rs` L45–L60 for camera setup; replace `input-native` and RGB averaging.
+**Carry-over from S4:** append real eye-ROI frames to
+`crates/yet-core/tests/fixtures/cv4/features/` and rerun
+`cargo test -p yet-core --test cv4_parity` before trusting the adapters.
 **Demo:** live gaze printout at 30 Hz with a visible calibration error; re-run quick calibration.
 **Gate:** both platform adapters build; no UI dependencies in the camera modules.
 
