@@ -165,14 +165,15 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         controller: Some(controller),
         console: ConsoleUi::new(),
         logged_ready: false,
+        sized: false,
     };
 
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("yet-rs console · {experiment_id}"))
             .with_app_id("yet-rs-console")
-            .with_inner_size([560.0, 820.0])
-            .with_min_inner_size([420.0, 480.0]),
+            .with_inner_size([1400.0, 860.0])
+            .with_min_inner_size([900.0, 620.0]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: eframe::WgpuConfiguration::default()
             .with_surface_config(eframe::SurfaceConfig::LOW_LATENCY),
@@ -197,11 +198,23 @@ struct ConsoleApp {
     controller: Option<JoinHandle<()>>,
     console: ConsoleUi,
     logged_ready: bool,
+    sized: bool,
 }
 
 impl eframe::App for ConsoleApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.sized {
+            if let Some(monitor) = ctx.input(|input| input.viewport().monitor_size) {
+                let target = egui::vec2(1400.0, 860.0).min(monitor * 0.92);
+                let origin = ((monitor - target) * 0.5).max(egui::Vec2::ZERO);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    origin.x, origin.y,
+                )));
+                self.sized = true;
+            }
+        }
         let status = self.presenter.status();
         let monitors = monitor_choices(frame);
 

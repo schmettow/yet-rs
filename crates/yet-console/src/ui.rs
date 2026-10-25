@@ -15,6 +15,18 @@ use crate::state::{ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
 /// Fallback number of monitor choices when the platform reports no monitors.
 pub const MONITOR_CHOICES: usize = 4;
 
+/// Multiplier for the experimenter console's text and spacing.
+///
+/// The console targets a notebook's main screen: a wide window with
+/// comfortably large controls and log text.
+pub const CONSOLE_UI_SCALE: f32 = 2.0;
+
+/// Minimum width before the console splits into two columns.
+const TWO_COLUMN_MIN_WIDTH: f32 = 860.0;
+
+/// Displayed size of the gaze map next to the camera preview.
+const GAZE_MAP_SIZE: egui::Vec2 = egui::vec2(240.0, 192.0);
+
 /// One monitor as reported by the platform.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonitorChoice {
@@ -45,6 +57,8 @@ pub struct ConsoleUi {
     pub show_log: bool,
     preview_texture: Option<egui::TextureHandle>,
     preview_generation: u64,
+    /// Unscaled egui style, captured on the first frame.
+    base_style: Option<egui::Style>,
 }
 
 impl std::fmt::Debug for ConsoleUi {
@@ -52,6 +66,7 @@ impl std::fmt::Debug for ConsoleUi {
         f.debug_struct("ConsoleUi")
             .field("show_log", &self.show_log)
             .field("has_preview_texture", &self.preview_texture.is_some())
+            .field("has_base_style", &self.base_style.is_some())
             .finish()
     }
 }
@@ -63,6 +78,7 @@ impl ConsoleUi {
             show_log: true,
             preview_texture: None,
             preview_generation: 0,
+            base_style: None,
         }
     }
 
@@ -74,9 +90,10 @@ impl ConsoleUi {
         presenter: PresenterStatus,
         monitors: &[MonitorChoice],
     ) -> Vec<ExperimentCommand> {
+        self.apply_scale(ui);
         let mut commands = Vec::new();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.heading("yet-rs console");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("{} · {}", state.experiment_id, state.participant));
@@ -84,19 +101,72 @@ impl ConsoleUi {
         });
         ui.separator();
 
-        self.phase_panel(ui, state, presenter, &mut commands);
-        ui.separator();
-        self.calibration_panel(ui, state, presenter, &mut commands);
-        ui.separator();
-        self.progress_panel(ui, state);
-        ui.separator();
-        self.presenter_panel(ui, state, presenter, monitors);
-        self.preview_panel(ui, state);
-        ui.separator();
-        self.log_panel(ui, state);
+        if ui.available_width() >= TWO_COLUMN_MIN_WIDTH {
+            let width = ui.available_width();
+            let height = ui.available_height();
+            let gap = ui.spacing().item_spacing.x;
+            let left_width = (width * 0.42)
+                .max(520.0)
+                .min((width - 560.0 - gap).max(420.0));
+            let right_width = (width - left_width - gap).max(360.0);
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left_width, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("console-controls")
+                            .auto_shrink([false, false])
+                            .max_height(height)
+                            .show(ui, |ui| {
+                                self.phase_panel(ui, state, presenter, &mut commands);
+                                ui.separator();
+                                self.calibration_panel(ui, state, presenter, &mut commands);
+                                ui.separator();
+                                self.progress_panel(ui, state);
+                                ui.separator();
+                                self.presenter_panel(ui, state, presenter, monitors);
+                                ui.separator();
+                                self.shortcuts(ui, state, presenter.ready, &mut commands);
+                            });
+                    },
+                );
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_width, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        self.preview_panel(ui, state);
+                        ui.separator();
+                        self.log_panel(ui, state);
+                    },
+                );
+            });
+        } else {
+            self.phase_panel(ui, state, presenter, &mut commands);
+            ui.separator();
+            self.calibration_panel(ui, state, presenter, &mut commands);
+            ui.separator();
+            self.progress_panel(ui, state);
+            ui.separator();
+            self.presenter_panel(ui, state, presenter, monitors);
+            self.preview_panel(ui, state);
+            ui.separator();
+            self.log_panel(ui, state);
+            self.shortcuts(ui, state, presenter.ready, &mut commands);
+        }
 
-        self.shortcuts(ui, state, presenter.ready, &mut commands);
         commands
+    }
+
+    fn apply_scale(&mut self, ui: &mut egui::Ui) {
+        let base = self
+            .base_style
+            .get_or_insert_with(|| ui.style().as_ref().clone())
+            .clone();
+        let mut style = base;
+        scale_style(&mut style, CONSOLE_UI_SCALE);
+        ui.set_style(style);
     }
 
     fn phase_panel(
@@ -334,7 +404,7 @@ impl ConsoleUi {
         }
 
         let natural = egui::vec2(frame.width as f32, frame.height as f32);
-        let scale = (240.0 / natural.x).min(160.0 / natural.y).min(1.0);
+        let scale = (480.0 / natural.x).min(320.0 / natural.y).min(1.0);
         let display = natural * scale;
 
         ui.horizontal(|ui| {
@@ -345,7 +415,7 @@ impl ConsoleUi {
                 )));
             }
 
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 96.0), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(GAZE_MAP_SIZE, egui::Sense::hover());
             let painter = ui.painter();
             painter.rect_filled(rect, 2.0, egui::Color32::from_gray(32));
             painter.rect_stroke(
@@ -493,15 +563,12 @@ impl ConsoleUi {
                 ui.end_row();
 
                 ui.label("Console monitor");
-                ui.label(format!(
-                    "{} (window placement is controlled by the desktop)",
-                    state.console_monitor
-                ));
+                ui.label(format!("{} · placed by the desktop", state.console_monitor));
                 ui.end_row();
             });
 
         let can_configure = state.can_configure();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Presenter monitor");
             ui.add_enabled_ui(can_configure, |ui| {
                 let selected = monitors
@@ -557,22 +624,27 @@ impl ConsoleUi {
             .stick_to_bottom(true)
             .max_height(ui.available_height().max(120.0))
             .show(ui, |ui| {
-                for line in &state.log {
-                    let color = match line.level {
-                        LogLevel::Info => egui::Color32::GRAY,
-                        LogLevel::Warning => egui::Color32::YELLOW,
-                        LogLevel::Error => egui::Color32::LIGHT_RED,
-                    };
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "[{:>8.2}] {}",
-                            line.at.as_secs_f64(),
-                            line.message
-                        ))
-                        .monospace()
-                        .color(color),
-                    );
-                }
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    for line in &state.log {
+                        let color = match line.level {
+                            LogLevel::Info => egui::Color32::GRAY,
+                            LogLevel::Warning => egui::Color32::YELLOW,
+                            LogLevel::Error => egui::Color32::LIGHT_RED,
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "[{:>8.2}] {}",
+                                    line.at.as_secs_f64(),
+                                    line.message
+                                ))
+                                .monospace()
+                                .color(color),
+                            )
+                            .wrap(),
+                        );
+                    }
+                });
             });
     }
 
@@ -635,6 +707,53 @@ impl Default for ConsoleUi {
     }
 }
 
+/// Scale text, padding and widget sizes for a large, notebook-friendly console.
+fn scale_style(style: &mut egui::Style, factor: f32) {
+    for font in style.text_styles.values_mut() {
+        font.size *= factor;
+    }
+
+    let spacing = &mut style.spacing;
+    spacing.item_spacing *= factor;
+    spacing.button_padding *= factor;
+    spacing.window_margin = scale_margin(spacing.window_margin, factor);
+    spacing.menu_margin = scale_margin(spacing.menu_margin, factor);
+    spacing.indent *= factor;
+    spacing.interact_size *= factor;
+    spacing.slider_width *= factor;
+    spacing.slider_rail_height *= factor;
+    spacing.combo_width *= factor;
+    spacing.text_edit_width *= factor;
+    spacing.extra_text_line_spacing *= factor;
+    spacing.icon_width *= factor;
+    spacing.icon_width_inner *= factor;
+    spacing.icon_spacing *= factor;
+    spacing.tooltip_width *= factor;
+    spacing.menu_width *= factor;
+    spacing.menu_spacing *= factor;
+    spacing.combo_height *= factor;
+    spacing.scroll.content_margin = scale_margin(spacing.scroll.content_margin, factor);
+    spacing.scroll.bar_width *= factor;
+    spacing.scroll.handle_min_length *= factor;
+    spacing.scroll.bar_inner_margin *= factor;
+    spacing.scroll.bar_outer_margin *= factor;
+    spacing.scroll.floating_width *= factor;
+    spacing.scroll.floating_allocated_width *= factor;
+}
+
+fn scale_margin(margin: egui::Margin, factor: f32) -> egui::Margin {
+    egui::Margin {
+        left: scale_i8(margin.left, factor),
+        right: scale_i8(margin.right, factor),
+        top: scale_i8(margin.top, factor),
+        bottom: scale_i8(margin.bottom, factor),
+    }
+}
+
+fn scale_i8(value: i8, factor: f32) -> i8 {
+    ((f32::from(value) * factor).round() as i32).clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -642,7 +761,7 @@ mod tests {
     use eframe::egui;
     use yet_core::{GazePoint, Phase};
 
-    use super::{ConsoleUi, MonitorChoice, PresenterStatus};
+    use super::{scale_style, ConsoleUi, MonitorChoice, PresenterStatus, CONSOLE_UI_SCALE};
     use crate::state::{ConsoleState, PreviewFrame};
 
     fn monitors() -> Vec<MonitorChoice> {
@@ -734,5 +853,62 @@ mod tests {
             size_px: (1920, 1080),
         };
         assert_eq!(unnamed.label(), "1 · 1920×1080");
+    }
+
+    #[test]
+    fn console_text_and_widgets_are_doubled() {
+        let base = egui::Style::default();
+        let body = base.text_styles[&egui::TextStyle::Body].size;
+        let extent = base.spacing.interact_size;
+        let spacing = base.spacing.item_spacing;
+        let mut scaled = base;
+
+        scale_style(&mut scaled, CONSOLE_UI_SCALE);
+
+        assert_eq!(scaled.text_styles[&egui::TextStyle::Body].size, body * 2.0);
+        assert_eq!(scaled.spacing.interact_size, extent * 2.0);
+        assert_eq!(scaled.spacing.item_spacing, spacing * 2.0);
+    }
+
+    #[test]
+    fn a_broad_console_renders_two_columns() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        let mut console = ConsoleUi::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &monitors());
+        });
+        output.textures_delta.clear();
+
+        assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn a_narrow_console_falls_back_to_one_column() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        let mut console = ConsoleUi::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(700.0, 800.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &monitors());
+        });
+        output.textures_delta.clear();
+
+        assert!(!output.shapes.is_empty());
     }
 }

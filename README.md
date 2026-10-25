@@ -163,6 +163,13 @@ The deferred viewport only repaints when a scene changes. The console repaints
 about ten times per second for its clock, and that leaves the stimulus window
 untouched; the console therefore cannot cause timing jitter in the stimulus.
 
+The console targets a notebook's main screen. It opens at 1400×860 logical
+points, clamped to 92% of the monitor, and scales text, padding and controls 2×.
+A wide window uses two columns: controls, calibration, progress and presenter
+statistics on the left, camera preview and the log on the right. Narrow windows
+fall back to one column, and the left column scrolls independently. Log lines
+wrap instead of being clipped. The camera preview is served at up to 480×320.
+
 Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
 is enabled), **Abort** (F8), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
 center target; requires an existing fit), **Cancel calibration** (Esc) and the

@@ -148,6 +148,12 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- The experimenter console targets a notebook's main screen: text, padding and
+  controls are scaled 2×, the window opens at 1400×860 logical points clamped
+  to 92% of the monitor, and wide windows use a two-column layout (controls and
+  presenter on the left, camera preview and log on the right). Narrow windows
+  fall back to one column, the left column scrolls independently, log lines
+  wrap instead of clipping, and the camera preview is served at up to 480×320.
 - `config.toml` camera settings gained `width`, `height`, `fps`, `format` and a
   normalized `eye_region`; all are optional with 640×480, 30 fps, `auto` and no
   region defaults. `display.presenter_origin` was removed again in S6: eframe

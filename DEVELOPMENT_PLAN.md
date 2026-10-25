@@ -680,7 +680,7 @@ code and tests; time-to-first-trial and the pilot need an unlocked desktop and
 **Gate:** drift p95 within the agreed budget; no UI blocking; deterministic last frame.
 
 **Implementation note (S8, 2026-10-25):** MED-1 to MED-4 are implemented for
-the Linux workstation. 218 workspace tests pass (three ignored hardware tests).
+the Linux workstation. 221 workspace tests pass (three ignored hardware tests).
 
 - **Media separation:** the new `yet-media` crate owns PNG scanning/decoding
   (`PngSequence`), WAV decoding (`WavAudio`) and rodio playback
@@ -710,6 +710,11 @@ the Linux workstation. 218 workspace tests pass (three ignored hardware tests).
   WAV metadata and warns about a >100 ms duration mismatch. `prepare_media.sh`
   produces frames plus a 48 kHz stereo WAV and fails clearly for a missing
   input, FFmpeg errors, zero frames or audio extraction errors.
+- **The console:** 2× text and controls, a 1400×860 default window clamped to
+  92% of the monitor, and a wide two-column layout (controls/presenter left,
+  preview/log right; single column below 860 points). Log lines wrap. This is
+  the notebook-oriented layout requested after S8; the same console remains
+  usable maximized on the lab's 2560×1600 monitor.
 - **Deferred:** frame decoding is just-in-time, not a background prefetch
   worker; a looped clip does not restart its WAV; underruns are a best-effort
   empty-queue signal. Windows/macOS playback and a screen-and-sound A/V

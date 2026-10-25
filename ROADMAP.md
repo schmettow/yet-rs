@@ -74,7 +74,7 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   `RodioAudioPlayer`), controller-thread frame decoding with texture reuse,
   audio-master pacing, pause/resume through the engine, console drift/drop/
   underrun display, `yet-app media` validation, `tools/prepare_media.sh` and
-  `examples/media-demo`. 218 tests pass; audio and sequences were exercised on
+  `examples/media-demo`. 221 tests pass; audio and sequences were exercised on
   the Linux workstation (`media 2.03 s · drift +8.2 ms` at 2.1 s). Windows/macOS
   runtime, a beep/flash A/V measurement and background prefetch remain.
 - **Next:** S9 overlay core (Windows/macOS `EguiOverlay`, layer-shell Wayland).

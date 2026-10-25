@@ -16,10 +16,10 @@ use yet_core::{
 use crate::live::{capture_config, eye_region, LiveError};
 
 /// Maximum preview width in pixels.
-pub const PREVIEW_MAX_WIDTH: u32 = 240;
+pub const PREVIEW_MAX_WIDTH: u32 = 480;
 
 /// Maximum preview height in pixels.
-pub const PREVIEW_MAX_HEIGHT: u32 = 160;
+pub const PREVIEW_MAX_HEIGHT: u32 = 320;
 
 /// One fresh camera frame and its quadrant features.
 #[derive(Clone, Debug)]
