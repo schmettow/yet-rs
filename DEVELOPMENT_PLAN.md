@@ -341,6 +341,7 @@ flowchart TD
 | FND-3 | Implement the pure engine skeleton (`EngineState`, `EngineEvent`, `Effect`, `step`, `TestClock`) | M | Start/pause/resume/abort/tick tests; no sleeps; no UI dependency |
 
 **Prior work:** Yex's hierarchy (`exp.rs`) and event log (`mod.rs` L84–L132); rewrite the runtime.
+**Status (2026-10-25):** implemented. Local `fmt`, `check`, `test`, `clippy`, `doc` and MSRV 1.88 checks pass; the three-OS CI workflow is defined and awaits its first run.
 **Demo:** workspace builds, tests pass, license and CI evidence.
 **Gate:** do not start overlay work until the license is GPL-3.0-only.
 

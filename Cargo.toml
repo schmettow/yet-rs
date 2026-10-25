@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[workspace]
+members = ["crates/yet-present", "crates/yet-core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "GPL-3.0-only"
+authors = ["Martin Schmettow <schmettow@web.de>"]
+repository = "https://github.com/schmettow/yet-rs"
+publish = false
+
+[workspace.dependencies]
+yet-present = { path = "crates/yet-present" }
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
