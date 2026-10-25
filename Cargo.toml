@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 [workspace]
-members = ["crates/yet-present", "crates/yet-core"]
+members = ["crates/yet-present", "crates/yet-core", "crates/yet-app"]
 exclude = ["spikes"]
 resolver = "2"
 
@@ -16,7 +16,11 @@ publish = false
 
 [workspace.dependencies]
 yet-present = { path = "crates/yet-present" }
+yet-core = { path = "crates/yet-core" }
 thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+csv = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

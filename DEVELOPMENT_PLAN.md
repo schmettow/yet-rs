@@ -35,7 +35,7 @@ A researcher can, on Windows, macOS and Linux:
 
 ### 1.2 Success criteria
 
-- All three desktop OSes build from source without a C/C++ toolchain, OpenCV or a system media framework; any Linux windowing packages are documented.
+- All three desktop OSes build from source without a C/C++ compiler in our code, OpenCV or a media framework; ALSA development metadata on Linux and Xcode Command Line Tools for the macOS camera backend are documented prerequisites.
 - `yet-core` and `yet-present` contain **no UI types**.
 - The experiment engine is testable headlessly, with no sleeps and no window.
 - A full session can be run without a terminal or a mouse.
@@ -124,7 +124,7 @@ Target layout:
 
 The CV modules stay inside `yet-core` for v1 (CV R11). `yet-camera` and `yet-ml` are later mechanical splits; do not create them before the seams have tests.
 
-**Platform build prerequisites found in Sprint 1:** Linux audio needs ALSA development metadata (`alsa.pc`); the macOS `nokhwa` camera path needs Xcode Command Line Tools for `objc_exception`. Neither is a C/C++ dependency of our own code, but both must be documented. Confirm in §12.
+**Platform build prerequisites found in Sprint 1:** Linux audio needs ALSA development metadata (`alsa.pc`), now installed and verified; the macOS `nokhwa` camera path needs Xcode Command Line Tools for `objc_exception`. Neither is a C/C++ dependency of our own code, but both must be documented.
 
 ### 3.2 The key design rule: pure transition + effects
 
@@ -358,9 +358,9 @@ flowchart TD
 | SPK-3 | Camera spike: `linuxvideo` and `nokhwa` build, formats, 640×480 capture, `GrayFrame` conversion | M | No bindgen/libclang; format list; captured frames; parity plan against Python |
 | SPK-4 | Media spike: FFmpeg PNG/WAV extraction, `rodio` playback, `get_pos()` clock, drift measurement | M | Script + report; measured A/V drift; failure modes documented |
 
-**Status (2026-10-25):** four reports written to `docs/spikes/`. SPK-1 was measured on X11; SPK-2 ran the X11 proxy and compile-checked Windows/macOS/layer-shell; SPK-3 captured real frames and matched the Python Rec. 601 fixture; SPK-4 prepared exact media and validated the rodio API on Windows/macOS. Linux audio playback remains blocked by missing ALSA development metadata. Target-platform runtime checks remain.
+**Status (2026-10-25):** four reports written to `docs/spikes/`. SPK-1 was measured on X11; SPK-2 ran the X11 proxy and compile-checked Windows/macOS/layer-shell; SPK-3 captured real frames and matched the Python Rec. 601 fixture; SPK-4 prepared exact media, validated the rodio API on Windows/macOS, and ran Linux playback after `libasound2-dev` was installed. Target-platform overlay/camera runtime checks remain.
 
-**Findings:** eframe 0.37 uses `App::ui`, not `App::update`; monitor targeting settles after a few frames; `image::to_luma8()` is Rec. 709 and must not be used for OpenCV parity; YUYV capture was unstable on the test camera (MJPG was stable); rodio 0.23 has no `hound` feature; Linux `alsa-sys` requires ALSA development metadata; the X11 overlay proxy showed focus stealing and whole-desktop geometry.
+**Findings:** eframe 0.37 uses `App::ui`, not `App::update`; monitor targeting settles after a few frames; `image::to_luma8()` is Rec. 709 and must not be used for OpenCV parity; YUYV capture was unstable on the test camera (MJPG was stable); rodio 0.23 has no `hound` feature; Linux `alsa-sys` requires ALSA development metadata; `get_pos()` measured ~128 ms behind wall clock; the X11 overlay proxy showed focus stealing and whole-desktop geometry.
 
 **Prior work:** `Yex/examples/quad_bright.rs` for camera enumeration only; UI §14 and CV §10 for spike checklists.
 **Demo:** four spike reports with measurements and explicit recommendations.
@@ -372,13 +372,14 @@ flowchart TD
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
-| ENG-1 | `Session`/`Block`/`Trial`/`Stimulus` model with serde and validation | M | Invalid monitor, missing file, empty block and bad duration produce typed, actionable errors |
+| ENG-1 | `Experiment`/`Block`/`Trial`/`Stimulus` model with serde and validation (runtime `Session` belongs to S3) | M | Invalid monitor, missing file, empty block and bad duration produce typed, actionable errors |
 | ENG-2 | Load `config.toml` and `Stimuli.csv`; resolve media IDs and paths | M | Golden tests for valid and invalid files; no panics; paths relative to the experiment file |
 | ENG-3 | Generate the trial order, including shuffle and seed, with a reproducible test | M | Same seed produces the same order; order is logged |
 
 **Prior work:** Yex `exp.rs` L14–L174, L454–L518; drop `Participant`/`Consent` for v1.
-**Demo:** load a sample experiment and print the resolved session plan.
-**Gate:** the CSV schema is stable enough for the data sink.
+**Status (2026-10-25):** implemented. `yet-core` loads `config.toml`, optional `Experiment.csv` and `Stimuli.csv`, validates typed errors, resolves media paths, and builds a deterministic per-block plan. `yet-app plan <dir>` prints it. 55 tests pass. The `block` column is optional and defaults to `default`; block `i` uses `seed + i` for an independent deterministic stream.
+**Demo:** `cargo run -p yet-app -- plan examples/demo`.
+**Gate:** met; the CSV schema is stable enough for the Sprint 3 data sink.
 
 ### Sprint 3 — Scheduler, data sink and headless slice
 
@@ -463,7 +464,7 @@ flowchart TD
 | MED-1 | FFmpeg preparation script and manifest validation | S | One command prepares frames + WAV; bad/missing output fails with a clear message; docs updated |
 | MED-2 | Sequence `FrameSource`: preload, prefetch, pacing, late-frame drop, last-frame behavior | L | Generated sequence test; no UI-thread disk blocking; drop counts logged |
 | MED-3 | Audio player: `hound` WAV decode into `rodio::buffer::SamplesBuffer`; load, play, pause, resume, stop, volume, `get_pos()`, device validation | M | Audio clock exposed; device failure before session; underruns logged; no Symphonia/MPL dependency |
-| MED-4 | A/V integration and failure policy | S | Audio master when present; monotonic master otherwise; drift log; mid-trial failure aborts the trial |
+| MED-4 | A/V integration and failure policy | S | Audio master when present; monotonic master otherwise; drift log; compensate the measured output-latency offset; mid-trial failure aborts the trial |
 
 **Prior work:** UI §6.6–§6.7; Yex has no media pipeline to reuse.
 **Demo:** a 3 s clip with a beep at 1 s; show drift and underrun logs.
@@ -542,10 +543,10 @@ Ordered by value, not commitment.
 | XWayland overlay fails on GNOME | High / high | SPK-2 X11 proxy passes the empty input region but shows focus stealing; GNOME/Wayland still untested | Test the GNOME matrix at S10; use a GNOME Shell extension or a documented limitation; never treat the X11 proxy as R11 evidence | SPK-2, OVL-5, OVL-6 |
 | YUYV capture is unstable on the target camera | High / medium | SPK-3 measured 17.7–24.1 fps with 6–21 corrupt warm-up frames; MJPG was stable at 28.9 fps | Prefer YUYV only if it sustains the rate; add MJPG fallback and a corrupt-frame counter; record format in calibration | CV-5, CV-7 |
 | eframe timing is visibly janky | Medium / medium | SPK-1 measured 17.57 ms p99 on X11; Wayland/Windows/macOS untested | Keep traits; retest in UI-4; switch to `winit + wgpu`/`pixels` if needed | SPK-1, UI-4 |
-| A/V drift or audio device failure | Medium / medium | SPK-4 media prep exact, but Linux playback is blocked by ALSA and no drift was measured | Add ALSA dev to CI; measure `get_pos` drift in S8; apply a constant offset if needed | SPK-4, MED-3, MED-4 |
+| A/V drift or audio device failure | Medium / medium | SPK-4 measured `get_pos()` −100…−151 ms behind wall clock uncompensated | Add ALSA dev to CI; measure a per-device offset in S8; apply it before claiming the 50 ms budget | SPK-4, MED-3, MED-4 |
 | HiDPI/multi-monitor coordinate bug | Medium / high | SPK-1 passed 1.167 and 1.75 ppp; SPK-2 showed whole-desktop X11 geometry | Physical-pixel canonical model; golden tests; monitor-specific geometry | UI-1, OVL-5, REL-2 |
 | Rec. 709 vs Rec. 601 luma mismatch | High / high | SPK-3 `image::to_luma8` produced 54/182/18 vs Python 76/150/29 | Explicit Rec. 601 conversion and fixture test; never use `to_luma8` | CV-1, CV-4 |
-| Linux audio build needs ALSA dev metadata | High / high | SPK-4 `alsa-sys` cannot find `alsa.pc` | Document `libasound2-dev`/`alsa-lib-devel`; add to CI; or provide an audio-off feature | MED-3, REL-1 |
+| Linux audio build needs ALSA dev metadata | Medium / high | A fresh Linux machine or CI image lacks `alsa.pc`; `alsa-sys` fails | Document `libasound2-dev`/`alsa-lib-devel`; add to CI; or provide an audio-off feature | MED-3, REL-1 |
 | macOS `nokhwa` needs Xcode CLT | Medium / medium | SPK-3 macOS cross-check fails in `objc_exception` | Document Xcode CLT; test on a real Mac; do not infer from Windows | CV-5, REL-1 |
 | Cross-platform CI cannot exercise hardware | High / medium | CI green but lab behavior differs | Manual HIL matrix each sprint; record OS/compositor versions | Every HIL story |
 | Data format diverges from yet_zero | Low / high | R pipeline cannot read the CSV | Keep column names, append new columns; golden file test | ENG-6, REL-4 |
@@ -615,13 +616,13 @@ These are starting points, not scientific claims. Confirm or revise after S1–S
 | Dropped frames | ≤ 0.5% per trial | SPK-1, REL-2 |
 | Calibration RMSE | ≤ Python baseline + 10% per axis | CV-4, CV-7 |
 | Refit time | ≤ 5 ms per calibration | CV-2, CV-6 |
-| A/V drift p95 | ≤ 50 ms | SPK-4, MED-4 |
+| A/V drift p95 | ≤ 50 ms after output-latency compensation; SPK-4 measured ~128 ms uncompensated | SPK-4, MED-4 |
 | Time to first trial | ≤ 5 min for a trained experimenter | UX-4 |
 | Terminal use during a session | None | UX-4 |
 | CSV completeness | 100% of started trials have a row; timestamps monotonic | ENG-6, REL-4 |
 | Soak | 60 min, no crash, RSS growth < 10% | REL-2 |
 
-**Sprint 1 evidence (environment-specific, not release guarantees):** SPK-1 measured 17.57 ms p99 after warm-up at ~60 Hz on X11; SPK-3 measured YUYV 17.7–24.1 fps vs MJPG 28.9 fps and found the Rec. 709/601 mismatch; SPK-4 produced 90 frames/3.000 s with the beep at 1000.1 ms (frame 30). SPK-2 is a conditional go pending the target-platform matrix; SPK-4 Linux playback is blocked by ALSA.
+**Sprint 1 evidence (environment-specific, not release guarantees):** SPK-1 measured 17.57 ms p99 after warm-up at ~60 Hz on X11; SPK-3 measured YUYV 17.7–24.1 fps vs MJPG 28.9 fps and found the Rec. 709/601 mismatch; SPK-4 produced 90 frames/3.000 s with the beep at 1000.1 ms (frame 30) and measured `get_pos()` ~128 ms behind wall clock. SPK-2 is a conditional go pending the target-platform matrix; Linux playback now runs with ALSA installed.
 
 ---
 
@@ -638,11 +639,11 @@ These are starting points, not scientific claims. Confirm or revise after S1–S
 | 7 | Do we need Yex's participant/consent/demographics flow in v1? | No; post-v1 | S2 |
 | 8 | Is the release target source builds only, or installers too? | Source builds + CI artifacts for `v0.1.0` | S11 |
 | 9 | Which hardware is available for HIL: camera, second monitor, Windows/macOS machines, GNOME and KDE/Sway? | Assume all are available at least once per milestone | S1 |
-| 10 | Accept `libasound2-dev`/`alsa-lib-devel` on Linux and Xcode CLT on macOS as documented build prerequisites? | Yes; add them to CI/docs and keep audio/camera enabled | Now |
+| 10 | Accept `libasound2-dev`/`alsa-lib-devel` on Linux and Xcode CLT on macOS as documented build prerequisites? | **Linux confirmed** (`libasound2-dev` installed; playback measured). macOS Xcode CLT still to confirm on hardware. | S5 |
 | 11 | Adopt the SPK-3 corrections: explicit Rec. 601 luma, format-aware calibration, and MJPG fallback? | Yes; implement in S4/S5 | S4 |
 
 ---
 
 ## 13. First action
 
-Sprint 0 is complete. Sprint 1 reports are in `docs/spikes/`; Sprint 2 can start with ENG-1/ENG-2. Ask the owner to confirm the build prerequisites in §12 #10, and run the overlay matrix on the lab machines before S9. The next technical step is the experiment model and configuration (Sprint 2).
+Sprints 0–2 are complete. Sprint 3 starts with ENG-4/ENG-5: the absolute-deadline scheduler and `RecordingPresenter` assertions. Linux ALSA is confirmed and the audio offset is measured; macOS Xcode CLT and the overlay runtime matrix still need hardware. Run the overlay matrix before S9.

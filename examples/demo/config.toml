@@ -1,0 +1,23 @@
+# Demo experiment for `yet-app plan`.
+
+[display]
+presenter_monitor = 1
+console_monitor = 0
+width = 1920
+height = 1080
+fullscreen = true
+
+[camera]
+usb_index = 0
+
+[presenter]
+backend = "egui"
+overlay = "auto"
+
+[overlay]
+monitor = 1
+
+[audio]
+enabled = true
+device = "default"
+volume = 0.8

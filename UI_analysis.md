@@ -422,7 +422,7 @@ A/V sync model:
 - **Audio absent: monotonic clock is master.**
 - Pause/resume pauses/resumes both the audio player and the frame clock. Stop stops audio and clears the sequence.
 - Validate that the WAV duration and the frame count/fps agree; log a warning if they do not, and let the trial `duration_ms` be authoritative.
-- `get_pos()` reports the position of the sound being played; it does not include the hardware output-buffer latency. For R2 this is acceptable. If A/V sync is visibly off, measure output latency (loopback or `cpal` callback timestamps) and apply a constant offset.
+- `get_pos()` reports the position of the sound being played; it does not include the hardware output-buffer latency. For R2 this is acceptable, but SPK-4 measured a stable offset of about −128 ms (range −151…−101 ms) on the test system. Compensate with a measured per-device offset (or loopback/`cpal` timestamps) before claiming the 50 ms A/V budget. If the offset is not compensated, video selected from `get_pos()` lags the heard audio visibly.
 - Log `audio_pts`, `video_pts`, drift, and underruns in `PresentStats`.
 
 Device policy:
@@ -819,13 +819,27 @@ volume = 1.0
 `Stimuli.csv` holds the experiment and stimulus table:
 
 ```csv
-id,kind,path,fps,duration_ms,loop,audio
-t01,image,stimuli/t01.png,,3000,false,
-t02,sequence,stimuli/t02/,30,5000,false,stimuli/t02/audio.wav
+id,kind,path,fps,duration_ms,loop,audio,block
+t01,image,stimuli/t01.png,,3000,false,,B1
+t02,image,stimuli/t02.png,,3000,false,,B1
+t03,sequence,stimuli/t03/,30,5000,false,stimuli/t03/audio.wav,B2
 ```
 
+`Experiment.csv` is optional key/value metadata:
+
+```csv
+key,value
+id,demo
+experimenter,Martin
+instructions,Look at the stimuli
+shuffle,true
+seed,42
+```
+
+The `block` column is optional; rows without it form a `default` block. Blocks appear in first-seen order, and trials are shuffled within each block. A shuffle requires a seed, and block `i` uses `seed + i` so blocks receive independent deterministic orders.
+
 - No XLSX. `config.toml` is only machine configuration per R9; experiment metadata, trial order, stimulus list and durations stay in CSV (`Stimuli.csv` and, if needed, `Experiment.csv`).
-- Mapping from the old `Config.csv`: `WIDTH`, `HEIGHT`, `USB` → `config.toml`; `EXP_ID`, `EXPERIMENTER`, `SLIDE_TIME`, `STIM_FILE`, `SHUFFLE` → `Experiment.csv`.
+- Mapping from the old `Config.csv`: `WIDTH`, `HEIGHT`, `USB` → `config.toml`; `EXP_ID` → `Experiment.csv` `id`; `EXPERIMENTER` → `experimenter`; `SHUFFLE` → `shuffle` plus a required `seed`; `SLIDE_TIME` → each stimulus's `duration_ms`; `STIM_FILE` → `Stimuli.csv` `path`.
 - If `audio` is set, the WAV must exist and the configured audio device must be available at startup; otherwise fail before the session.
 - `audio` is valid only for `kind=sequence`; image rows must leave it empty. Image+audio can be added later if needed.
 - Validate monitor index/name, resolution, camera index, and file paths at startup. Return typed errors, not panics.

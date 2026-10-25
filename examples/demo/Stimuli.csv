@@ -1,0 +1,6 @@
+id,kind,path,fps,duration_ms,loop,audio,block
+t01,image,stimuli/t01.png,,3000,false,,B1
+t02,image,stimuli/t02.png,,3000,false,,B1
+t03,image,stimuli/t03.png,,3000,false,,B1
+t04,image,stimuli/t04.png,,3000,false,,B1
+t05,sequence,stimuli/t05/,30,5000,false,,B2

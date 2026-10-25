@@ -1,0 +1,6 @@
+key,value
+id,demo
+experimenter,Martin
+instructions,Look at the stimuli
+shuffle,true
+seed,42

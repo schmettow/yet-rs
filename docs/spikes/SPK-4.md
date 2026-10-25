@@ -1,6 +1,6 @@
 # SPK-4 — pre-decoded media and audio clock
 
-**Status:** Media preparation go. Rodio API validated by Windows/macOS compile checks. Linux playback is blocked by the missing ALSA development package, which is a build-prerequisite decision.
+**Status:** Media preparation and Linux playback go. Rodio API validated by Windows/macOS compile checks and a Linux run. `get_pos()` runs ~128 ms behind wall clock on this system; S8 must compensate output latency.
 
 **Question:** Can FFmpeg prepare a reproducible PNG sequence plus WAV, can Rust verify the manifest, and can `rodio` provide a usable audio clock for A/V pacing?
 
@@ -59,38 +59,40 @@ player.play();
 
 | Target | Command | Result |
 |---|---|---|
-| Linux | `cargo check -p spk4-media --features rodio --bin playback` | **Blocked:** `alsa-sys` build script cannot find `alsa.pc`; `libasound2-dev` is missing. |
+| Linux | `cd spikes/spk4-media && cargo run --release -p spk4-media --features rodio --bin playback` | **Pass** after installing `libasound2-dev` (`alsa` 1.2.11). Playback and `get_pos()` measured. |
 | Windows | `cargo check --target x86_64-pc-windows-msvc -p spk4-media --features rodio --bin playback` | **Compile pass.** Runtime untested. |
 | macOS | `cargo check --target x86_64-apple-darwin -p spk4-media --features rodio --bin playback` | **Compile pass.** Runtime untested. |
 
-The Linux failure is in the build script, before any Rust code is checked:
+The earlier Linux failure was in `alsa-sys`'s build script: `pkg-config` could not find `alsa.pc`. The `-dev` package is required to build, even when the runtime library is present. With `libasound2-dev` installed, the Linux build and playback succeed.
 
-```text
-The system library `alsa` required by crate `alsa-sys` was not found.
-The file `alsa.pc` needs to be installed ...
-```
+## Linux playback measurement
 
-The runtime ALSA library may be present on a desktop; the `-dev` package is required to build because `alsa-sys` needs `pkg-config` metadata.
+The playback binary polls `get_pos()` every 100 ms for 3 s. The stable offset was:
+
+| Metric | Value |
+|---|---:|
+| Samples | 29 |
+| Mean drift (audio − wall) | −127.9 ms |
+| Median drift | −127.8 ms |
+| Range | −150.9 … −100.5 ms |
+
+`get_pos()` excludes the hardware output-buffer latency, exactly as the UI analysis warned. If video frames are selected directly from `get_pos()`, they lag the heard audio by roughly 0.13 s. This exceeds the proposed 50 ms A/V budget before compensation. S8 should measure a per-device offset and add it to `get_pos()` (or use a loopback/callback timestamp), then re-measure.
 
 ## Decision
 
 - **Adopt** `hound` + `rodio::buffer::SamplesBuffer` instead of the `wav`/Symphonia feature or the nonexistent `hound` feature.
-- **Keep** `Player::get_pos()` as the audio clock, with the known caveat that it excludes hardware output-buffer latency.
-- **Decide** how to treat ALSA on Linux:
-  1. **Recommended:** document `libasound2-dev` (Debian/Ubuntu), `alsa-lib-devel` (Fedora), `alsa-lib` (Arch) as an OS-level audio build prerequisite, and add it to the Linux CI image. This is analogous to OS camera APIs and does not add a C/C++ compiler invocation to our code.
-  2. Add an `audio` feature that can be disabled for Linux builds without ALSA; the session then runs silently and reports audio unavailable.
-  3. Use an external `aplay`/`ffplay` process; rejected because it weakens the audio clock and adds a runtime dependency.
-- **Do not** use the `wav`/Symphonia path unless the ALSA prerequisite is rejected and the MPL-2.0 license is accepted after review.
+- **Accept** ALSA development metadata as a documented Linux build prerequisite; it was installed and the Linux playback run succeeded. Add it to the Linux CI image.
+- **Keep** `Player::get_pos()` as the audio clock, but compensate the measured output latency. Do not assume `get_pos()` is the heard audio position.
 
 ## Not measured here
 
-- Real Linux playback, `get_pos()` drift, and underruns: blocked by the missing ALSA build metadata.
 - Windows/macOS playback: compile-checked only.
 - Observable A/V synchronization: requires the presenter integration in S8.
+- Per-device output latency: measured on one device only; repeat on the lab machines.
 
 ## Follow-ups
 
-- Add ALSA dev to the Linux build/CI environment and rerun `playback`.
-- Measure `get_pos()` vs wall clock and vs the PNG frame index on the generated fixture.
+- Add ALSA dev to the Linux CI image.
+- In S8, measure the output-latency offset per device and apply it to the audio clock; re-measure drift against the PNG frame index.
 - Decide whether audio failure before a session is fatal by default (plan default: fail before the session; abort a trial on mid-trial failure).
 - Recheck the `rodio` API and feature names before pinning; this spike verified 0.23.0.
