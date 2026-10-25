@@ -11,19 +11,21 @@ These supersede the earlier assumptions and are the basis for the conclusions be
 
 | ID | Requirement | Consequence |
 |---|---|---|
-| **R1** | Windows, macOS and Linux are equally supported. | Wayland is first-class. Core app, console and presenter must work on all three. The desktop overlay needs a platform-specific Wayland backend; see R11 and §7.5. |
+| **R1** | Windows, macOS and Linux are equally supported. | Wayland is the Linux target. Native X11 is deprecated and not a supported target. Core app, console and presenter must work on Windows/macOS/Wayland; the overlay needs platform backends (see R11/§7.5). |
 | **R2** | Presentation timing must be reasonable, not extreme. | Stable frame pacing, low latency and frame logging; no photodiode or hard-real-time guarantee required. `eframe` is acceptable. |
 | **R3** | The overlay covers a whole monitor. | One fullscreen overlay per monitor; no window-following or real-time AOIs required. |
 | **R4** | The console controls experiment flow; the presenter only presents. | Controller/presenter split. The console issues experiment commands, `yet-core` owns the state machine, and the `Presenter` trait must be replaceable and must not own state transitions. |
-| **R5** | Stimuli are static images and video clips. | Video decode and frame pacing are in scope; the canvas must accept a stream of frames. |
+| **R5** | Stimuli are static images and video clips. | Video clips are **pre-decoded to image sequences** at setup; the runtime presenter only handles frames. No runtime H.264 decoder in v1. |
 | **R6** | Multi-monitor and HiDPI are required. | Canonical physical-pixel geometry, per-monitor targeting, scale-factor handling. |
 | **R7** | Desktop only for v1; a simplified browser version may come later. | No WASM requirement now; keep `yet-core` UI-free so it can be reused later. |
-| **R8** | GPL is acceptable. | Slint is no longer license-excluded. If GPL code is linked or copied, the distributed work must be GPL-compatible; see §11. |
+| **R8** | The binary is distributed under GPL-3.0. | GPL dependencies and GPL prior art are allowed; Slint is license-compatible. |
 | **R9** | TOML for machine config (screens, screen size, USB port); CSV for experiment/stimuli; no XLSX. | Split `config.toml` from `Stimuli.csv`/experiment CSV; add typed validation. |
 | **R10** | The draw-command facade is sufficient for now. | No full Pygame `Surface`/`blit` API; keep `DrawCommand`/`Scene` small. |
-| **R11** | The overlay must work on all three platforms. | **Conflict:** GNOME Wayland has no reliable native client-side always-on-top/click-through overlay. Options are a GNOME Shell extension or an XWayland fallback (as `wanderlay` does). See §7.5; this needs a spike/decision. |
+| **R11** | The overlay must work on all three platforms. | Windows/macOS use `EguiOverlay`. Linux uses native Wayland `LayerShellOverlay` (KDE/wlroots/Sway) and an **XWayland fallback first** for GNOME. Native X11 is deprecated and not a target. See §7.5. |
 
-**Still open (see §12):** final project license if GPL code is used; the GNOME/Wayland overlay strategy; the video decode pipeline; audio in video clips; the overlay interaction model.
+**Resolved after the follow-up (2026-10-25):** R5 = pre-decoded video; R8 = GPL-3.0; R11 = XWayland first for GNOME, native Wayland layer-shell in parallel, native X11 deprecated.
+
+**Still open (see §12):** XWayland details on GNOME (multi-monitor/z-order), the pre-decoded frame format/manifest, GPL-3.0-only vs or-later, audio, overlay interaction, presenter deployment, monitor identity, CSV compatibility, and the XWayland helper lifetime.
 
 ---
 
@@ -32,13 +34,13 @@ These supersede the earlier assumptions and are the basis for the conclusions be
 **Recommendation: keep `egui` + `eframe` as the console/presenter UI substrate, but treat the desktop overlay as a separate, platform-backed subsystem.**
 
 - `egui`/`eframe` still wins for the console plus a windowed/fullscreen presenter: pure Rust, mature, native multi-viewport, custom canvas, and low-latency `wgpu` configuration.
-- It does **not** satisfy R1/R11 natively on GNOME Wayland. No client-side stack does. Use an `EguiOverlay` on Windows/macOS/X11, a `LayerShellOverlay` (Smithay client toolkit) on KDE/wlroots, and either an XWayland fallback or a separate GNOME Shell extension for GNOME.
+- It does **not** provide a native Wayland overlay. Use `EguiOverlay` on Windows/macOS, `LayerShellOverlay` (Smithay client toolkit) on KDE/wlroots/Sway Wayland, and `XwaylandOverlay` as the first GNOME fallback. Native X11 is deprecated.
 - The console drives the experiment, `yet-core` owns the state machine, and the presenter is a dumb, replaceable media renderer. This matches R4 and makes a later `macroquad`/`winit`/SDL presenter possible.
-- Video: there is no mature pure-Rust H.264 decoder. Choose pre-decoded image sequences (pure Rust, simple) or `video-rs`/`ffmpeg-next`/`gstreamer` (C dependency). See §6.6.
-- GPL is now acceptable; Slint is no longer rejected on license, but remains a weaker fit for canvas and overlay.
+- Video: clips are **pre-decoded to image sequences** at setup. The presenter only uploads and paces frames; no runtime H.264 decoder is required. See §6.6.
+- GPL: the project is **GPL-3.0**; Slint and GPL prior art (including `wanderlay`'s XWayland/layer-shell overlay) are reusable.
 - Timing: `eframe` is sufficient for R2. Keep frame logs; do not make a photodiode a release gate.
 
-**Main remaining risk:** R11. Equal support is achievable for the core app, console and presenter. For the overlay, Windows/macOS/X11 and KDE/wlroots Wayland are covered; GNOME Wayland needs an XWayland fallback or a GNOME Shell extension, and that choice must be spiked.
+**Main remaining risk:** the XWayland overlay on GNOME (multi-monitor geometry, z-order, click-through). Native Wayland layer-shell is the strategic path; the XWayland path is the pragmatic GNOME fallback and needs a spike.
 
 **Important caveat:** `eframe` is not a hard-real-time stimulus presenter. It can be configured for low latency, and it exposes the underlying `winit` window and `wgpu` surface. Keep the `Presenter` boundary so the canvas backend can later be swapped to `winit + wgpu`, `pixels`, `macroquad`, or SDL3 without touching the tracker or experiment logic.
 
@@ -75,7 +77,7 @@ Derived functional requirements:
 - **F6** Keyboard and window-close events.
 - **F7** Timed state machine with automatic transitions, owned by the experiment controller; the console only issues commands.
 - **F8** Per-frame timestamp logging, tied to trial and stimulus.
-- **F9** Video clips: preload, play/stop/loop, PTS-based frame pacing, and a drop-late policy.
+- **F9** Pre-decoded video sequences: preload, play/stop/loop, PTS/frame-rate pacing, and a drop-late policy.
 - **F10** Typed configuration: `config.toml` for machine/display/camera settings; CSV for experiment/stimuli; no XLSX.
 - **F11** Console controls: load experiment/stimuli, start/pause/abort, select the presenter monitor, run calibration, show live camera/gaze feedback, and display status/logs.
 - **F12** Console validation: surface bad monitor/camera/stimulus configuration as actionable errors before a session starts.
@@ -90,9 +92,9 @@ Derived non-functional requirements:
 - **N6** Strict separation of tracking and experiment logic from graphics via traits/enums.
 - **N7** Lean dependency graph and acceptable compile time.
 - **N8** Headless testability of experiment logic (a recording presenter, no window needed).
-- **N9** Windows/macOS/Linux parity for the core app, console and presenter; the Wayland overlay backend is selected per compositor capability.
+- **N9** Windows/macOS/Linux parity via Wayland for Linux; native X11 is deprecated and not a supported target.
 - **N10** Presenter replaceability: no `egui` types in the trait; in-process and out-of-process implementations must both be conceivable.
-- **N11** A GPL-compatible distribution if GPL crates or GPL prior art are linked or copied.
+- **N11** GPL-3.0-compatible distribution; GPL dependencies and prior art are allowed.
 
 ---
 
@@ -104,7 +106,7 @@ Sources:
 - **docs.rs** for the actual API surface of the shortlisted crates.
 - **GitHub search API** and repository metadata for prior art, activity, and licenses.
 
-This revision incorporates the confirmed requirements of 2026-10-25 (R1–R11 above), in particular platform parity, video stimuli, GPL acceptance, and the TOML/CSV split.
+This revision incorporates the confirmed requirements of 2026-10-25 (R1–R11) and the follow-up decisions: XWayland-first GNOME overlay with native Wayland layer-shell in parallel, pre-decoded video, GPL-3.0, and the TOML/CSV split.
 
 Queries included: `egui`, `eframe`, `macroquad`, `ggez`, `bevy`, `pixels`, `minifb`, `softbuffer`, `speedy2d`, `nannou`, `slint`, `iced`, `sdl2`, `raylib`, `tauri`, `winit`, `wgpu`, `smithay-client-toolkit`, `gtk4-layer-shell`, `tiny-skia`, `cosmic-text`, `overlay`, `click-through window`, `layer-shell`, `always-on-top`, `psychophysics`, `eye tracking`, `stimulus`, `stimulus presentation`, `experiment framework`, `pygame`, `psychtoolbox`, `video-rs`, `ffmpeg-next`, `ffmpeg-sidecar`, `gstreamer`, `egui-video`, `toml`, `csv`.
 
@@ -125,11 +127,11 @@ The numbers below are a **snapshot**; re-check before pinning versions. Most can
 
 | Crate / version | Model | Pure Rust | License | Multi-window | Overlay: transparent / on-top / click-through | Custom canvas | Weight | Verdict |
 |---|---|---|---|---|---|---|---|---|
-| **`egui` 0.37 + `eframe` 0.37** | Immediate mode | Yes | MIT/Apache-2.0 | **Yes**, native viewports | **Yes / Yes / Yes** on Windows/macOS/X11; Wayland needs layer-shell | `Painter`, `TextureHandle`, `ColorImage`, custom `wgpu` callback | Medium (default `wgpu`); lower with `glow` | **Adopt** |
+| **`egui` 0.37 + `eframe` 0.37** | Immediate mode | Yes | MIT/Apache-2.0 | **Yes**, native viewports | **Yes / Yes / Yes** on Windows/macOS; Wayland needs layer-shell; native X11 deprecated | `Painter`, `TextureHandle`, `ColorImage`, custom `wgpu` callback | Medium (default `wgpu`); lower with `glow` | **Adopt** |
 | `iced` 0.14 | Elm architecture | Yes | MIT | Yes | No / limited / no | `Canvas` widget | Medium | **Hold** (UI alternative) |
 | `slint` 1.18.1 | Declarative | Runtime is Rust | **GPL-3.0-only OR royalty-free/commercial** (acceptable per R8) | Yes | No / limited / no | Image/path elements, custom renderer | Medium | **Hold** (weaker canvas/overlay) |
 | `bevy` 0.20 + `bevy_egui` 0.43.1 | ECS game engine | Yes | MIT/Apache-2.0 | Yes | Yes / Yes / **No** (platform code needed) | Sprites, meshes, materials | Heavy; MSRV 1.97.1 | **Hold** (canvas grows) |
-| `tauri` 2.12.5 | Webview shell | No (webview) | MIT/Apache-2.0 | Yes | Yes / Yes / Yes on Win/macOS/X11; Wayland compositor-dependent | HTML canvas (bad for timing) | Heavy | **Reject for presentation**; possible companion console |
+| `tauri` 2.12.5 | Webview shell | No (webview) | MIT/Apache-2.0 | Yes | Yes / Yes / Yes on Windows/macOS; Wayland compositor-dependent; X11 deprecated | HTML canvas (bad for timing) | Heavy | **Reject for presentation**; possible companion console |
 | GPUI forks | Retained/GPU UI | Yes | Varies | Yes | Limited | Custom | Heavy | Not stable; skip |
 
 Video is orthogonal to this table: all viable toolkits can display decoded frames as textures. The hard part is the decoder and frame pacing, covered in §6.6.
@@ -153,14 +155,14 @@ Video is orthogonal to this table: all viable toolkits can display decoded frame
 
 | Crate / approach | Platform | What it gives | Verdict |
 |---|---|---|---|
-| **`eframe` viewport** | Windows, macOS, X11 | Transparent + always-on-top + mouse passthrough + non-activating + monitor targeting | **Adopt** for Windows/macOS/X11; insufficient alone for GNOME Wayland |
+| **`eframe` viewport** | Windows, macOS; native X11 deprecated | Transparent + always-on-top + mouse passthrough + non-activating + monitor targeting | **Adopt** for Windows/macOS; insufficient for Wayland |
 | **`smithay-client-toolkit` 0.21.1 + layer-shell** | Wayland (KDE, wlroots, Sway) | `zwlr_layer_shell_v1`: top/overlay layer, anchor, exclusive zone, input region | **Adopt** as the Wayland overlay backend |
-| XWayland + `x11rb`/`winit` | GNOME Wayland fallback | Override-redirect X11 window; click-through via input shape; `wanderlay --x11` reports this works on GNOME | **Trial** for GNOME (position/z-order spike required) |
+| XWayland + `x11rb` | GNOME Wayland fallback | Override-redirect X11 window; click-through via input shape; `wanderlay --x11` reports this works on GNOME | **Trial** for GNOME (position/z-order spike required) |
 | `gtk4-layer-shell` 0.8.1 | Wayland (wlroots/KDE) | GTK4 wrapper around layer-shell | Alternative, but pulls GTK4/C dependencies; GNOME still unsupported |
 | `winit` + platform code | All (with per-OS work) | Full control: `WS_EX_LAYERED/TRANSPARENT`, input regions, `NSWindow` level | Fallback / advanced |
 | `tauri` 2.12.5 | All | Multi-window, transparent, always-on-top, `set_ignore_cursor_events` | Companion app only; Wayland compositor-dependent |
 | `procmod-overlay` 3.0.1 | **Windows only** (D3D11) | Exactly the game-overlay pattern; MIT | **Reference only** |
-| `wanderlay` 0.3 | GNOME Wayland claim; `--x11` fallback | Click-through always-on-top text overlay | Investigate technique; upstream layer-shell docs say GNOME-on-Wayland is unsupported |
+| `wanderlay` 0.3 | GTK4 + gtk4-layer-shell + XWayland | Click-through always-on-top text overlay | Direct starting point for the GNOME XWayland path (GPL-3.0) |
 | `see-the-arrow` 0.2 | Windows/Linux | Click-through, non-focusing overlay | Reference only |
 | `rightkit-overlay-win` 0.1 | Windows | Layered-window painter, DWM pacing | Reference only |
 | `tristim-display` 0.3 | Wayland | Layer-shell RGB patches + color management | Reference for color calibration |
@@ -173,11 +175,12 @@ Video is orthogonal to this table: all viable toolkits can display decoded frame
 | `winit` 0.30.13 | Window/event loop foundation; escape hatch from eframe |
 | `wgpu` 30.0.1 | GPU API; present modes, custom canvas |
 | `egui-winit` 0.37, `egui-wgpu` 0.37 | Build a custom multi-window shell if eframe becomes limiting |
-| `image` 0.25 | Decode/scale images (also an eframe dependency); animated GIF/WebP/APNG via `AnimationDecoder` |
-| `video-rs` 0.12 | High-level FFmpeg-based video decoding; not pure Rust |
-| `ffmpeg-next` 9.0 | Lower-level FFmpeg bindings; not pure Rust |
-| `ffmpeg-sidecar` 2.7 | Drives a standalone `ffmpeg` binary; avoids linking FFmpeg, adds an external runtime dependency |
-| `gstreamer` 0.25 | LGPL GStreamer bindings; robust pipeline/appsink, C dependencies |
+| `image` 0.25 | Decode/scale images (also an eframe dependency); frame-sequence loading |
+| FFmpeg CLI (external) | Setup-time extraction of video clips into PNG/JPEG frame sequences; not linked into the app |
+| `video-rs` 0.12 | Future runtime decode only; not v1 |
+| `ffmpeg-next` 9.0 | Future runtime decode only; not v1 |
+| `ffmpeg-sidecar` 2.7 | Future runtime decode only; not v1 |
+| `gstreamer` 0.25 | Future runtime decode only; not v1 |
 | `calloop` | Event loop used by `smithay-client-toolkit` for the Wayland overlay |
 | `x11rb` | Pure Rust X11 bindings; GNOME XWayland overlay fallback |
 | `egui-video` 0.9 | Stale egui video widget (last updated 2024-10); do not depend on it |
@@ -196,12 +199,12 @@ Video is orthogonal to this table: all viable toolkits can display decoded frame
 `eframe` 0.37 documents native multi-viewport support, and `egui::ViewportBuilder` exposes exactly the window features this project needs:
 
 - `with_fullscreen(true)`
-- `with_monitor(index)` — borderless fullscreen on a chosen monitor; works on Windows, macOS, Linux X11 and Wayland; takes precedence over position/fullscreen.
+- `with_monitor(index)` — borderless fullscreen on a chosen monitor; works on Windows, macOS and Wayland; takes precedence over position/fullscreen. Native X11 is legacy.
 - `with_transparent(true)`
 - `with_window_level(WindowLevel::AlwaysOnTop)` / `with_always_on_top()`
 - `with_mouse_passthrough(true)` — desktop click-through for non-interactable overlays.
-- `with_decorations(false)`, `with_taskbar(false)`, `with_active(false)` (the last is a no-op on X11/Wayland; see §7)
-- X11-specific `with_window_type(X11WindowType::…)` and `with_override_redirect(true)`
+- `with_decorations(false)`, `with_taskbar(false)`, `with_active(false)` (the last is a no-op on Wayland; X11 is out of scope; see §7)
+- X11-specific `with_window_type(X11WindowType::…)` and `with_override_redirect(true)` are legacy; native X11 is out of scope.
 
 Multi-window comes in two flavours:
 
@@ -267,12 +270,13 @@ Do not mix logical points and physical pixels in the tracker. This is the most l
 - Pre-1.0 API churn: pin `egui`/`eframe` exactly (or rely on a committed `Cargo.lock`) and keep all egui-specific code in `yet-console`, `yet-present-egui`, and `yet-overlay`.
 - Default `eframe` pulls `wgpu`; compile time and binary size are medium, not tiny. `glow` is an option, but verify its swap-interval controls before relying on it.
 - For a lean build, disable unused `eframe` defaults deliberately (`accesskit`, `persistence`, `system_fonts`, `clipboard`, `links`). For deterministic text, disable `system_fonts` and bundle the exact font via `FontDefinitions`.
+- On Linux, enable the `wayland` feature and leave `x11` off; native X11 is deprecated. The GNOME overlay fallback uses `x11rb` against XWayland, not winit's X11 backend.
 - Color is handled in sRGB. For luminance-controlled experiments, pre-linearize and calibrate outside egui; do not assume `Color32` is linear.
 - `NativeOptions::dithering` defaults to `true`; disable it for flat-color stimuli if exact pixel values matter.
 - No exclusive fullscreen (eframe uses borderless fullscreen).
 - Per-frame tessellation is unnecessary for a static stimulus but usually cheap at this scale.
 - Text metrics differ from Pygame; bundle the same font and accept small layout differences.
-- No built-in video decode. Pair it with a decoder thread and texture upload (see §6.6); `egui-video` is stale and should not be used.
+- No built-in video decode. The chosen path is pre-decoded frame sequences (see §6.6); `egui-video` is stale and should not be used.
 - Overlay support is platform- and compositor-dependent; eframe alone does not solve GNOME Wayland (see §7.5).
 
 ---
@@ -353,26 +357,36 @@ It is pure Rust, MIT/Apache-2.0, compact, fast to compile (the project advertise
 - Not pure Rust, adds a C build/runtime dependency. SDL2 itself is zlib-licensed; bindings are MIT.
 - Worth keeping as a "break glass" option if the pure-Rust overlay path fails on the lab's OS.
 
-### 6.6 Video stimuli
+### 6.6 Video stimuli (resolved: pre-decoded)
 
-R5 changes the canvas from static images to a frame stream. The display side is easy: upload each decoded frame into a texture and draw it. The hard part is decoding and pacing.
+R5 is resolved: **video clips are pre-decoded to image sequences at setup time**. The runtime never decodes H.264; the presenter only loads and paces frames.
 
-| Option | Pure Rust | Formats | Integration | Tradeoff |
-|---|---|---|---|---|
-| `image` animation decoder | Yes | GIF/WebP (APNG depends on decoder) | Trivial | No H.264/MP4 |
-| Pre-decode to image sequence (FFmpeg at setup time) | Yes at runtime | Any format FFmpeg supports | Presenter only sees images | Disk size and preprocessing step |
-| `video-rs` 0.12 | No (FFmpeg) | Broad | Worker thread → RGB frames → texture | FFmpeg libs and build complexity |
-| `ffmpeg-next` 9.0 | No (FFmpeg) | Broad | Lower-level FFmpeg API | Same, more code |
-| `ffmpeg-sidecar` 2.7 | Rust crate, external `ffmpeg` binary | Broad | Iterator over raw frames | Requires FFmpeg installed at runtime |
-| `gstreamer` 0.25 | No (LGPL C libraries) | Broad | `appsink` → frames | Robust but heavy |
-| `egui-video` 0.9 | — | — | Stale egui widget | Do not use (last update 2024-10) |
+Pipeline:
 
-**Recommendation for R5:**
+1. At stimulus preparation time, use the FFmpeg CLI (external tool) to extract frames at the target rate into a directory, e.g. `stimuli/s02/frame_00001.png`.
+2. `Stimuli.csv` records the sequence: `kind=sequence`, `path=stimuli/s02/`, `fps=30`, `duration_ms=5000`, `loop=false`.
+3. The presenter preloads the first frame before the trial, uploads each frame to one reusable texture, and paces frames by `fps`/PTS.
+4. The `image` crate decodes frames at runtime; no C media dependency is linked into the app.
 
-- **v1: pre-decode video clips to an image sequence**, or use the `image` animation decoder for simple GIF/WebP clips. The presenter stays a frame presenter, and timing is based on frame timestamps or a fixed frame rate. This keeps the runtime pure Rust and avoids a decoder in the render loop.
-- If arbitrary MP4/H.264 playback at runtime is mandatory, use `video-rs` (preferred) or `ffmpeg-next` on a decoder thread with a bounded frame queue. GPL is acceptable per R8, so FFmpeg/GStreamer licensing is not a blocker.
-- Do **not** use `egui-video`; it is stale relative to egui 0.37.
-- Video timing: preload the first frame before the trial starts, schedule frames by presentation timestamp, drop late frames instead of blocking, and let the console issue play/stop/loop commands. Audio is out of scope unless confirmed in §12.
+Tradeoffs and guidance:
+
+- **Disk size is the main cost.** A 1920×1080 PNG frame is roughly 1–3 MB; a 10 s clip at 30 fps can be several hundred MB. Use JPEG/WebP if disk becomes a problem, or store frames at the stimulus resolution rather than the monitor resolution.
+- **Format:** PNG for fidelity, JPEG/WebP for size. Keep the choice per clip in the CSV.
+- **Pacing:** preload frame 0, drive by `fps`/PTS, drop late frames, and log `media_pts` plus dropped-frame counts. Do not block the UI thread on disk I/O; prefetch the next few frames.
+- **Preprocessing is a build/setup step, not a runtime dependency.** This keeps the runtime pure Rust and cross-platform; it also avoids FFmpeg/GStreamer packaging on Windows/macOS/Linux.
+- **Audio:** out of scope unless confirmed in §12.
+
+Alternatives, kept for future requirements only:
+
+| Option | Runtime pure Rust | Formats | Status |
+|---|---|---|---|
+| Pre-decoded image sequence | Yes | Any format FFmpeg can extract | **Chosen** |
+| `image` animation decoder | Yes | GIF/WebP (APNG depends on decoder) | Optional for simple clips |
+| `video-rs` 0.12 | No (FFmpeg) | Broad | Not v1 |
+| `ffmpeg-next` 9.0 | No (FFmpeg) | Broad | Not v1 |
+| `ffmpeg-sidecar` 2.7 | Rust crate, external binary | Broad | Not v1 |
+| `gstreamer` 0.25 | No (LGPL C libraries) | Broad | Not v1 |
+| `egui-video` 0.9 | — | — | Stale; do not use |
 
 ---
 
@@ -380,19 +394,21 @@ R5 changes the canvas from static images to a frame stream. The display side is 
 
 ### 7.1 Capability matrix
 
-| Capability | Windows | macOS | Linux X11 | Linux Wayland |
-|---|---|---|---|---|
-| Transparent window | Yes (`with_transparent`) | Yes + `with_has_shadow(false)` | Yes (compositor required) | Compositor-dependent |
-| Always-on-top | Yes | Yes | Yes (`_NET_WM_STATE_ABOVE`) | **Only via layer-shell**; normal toplevels are usually ignored |
-| Click-through | Yes (`mouse_passthrough`) | Yes | Yes (input shape) | **Only via layer-shell** input region (or compositor-specific) |
-| Non-activating / no focus steal | Yes (`with_active(false)`) | Yes | Not via `with_active`; use override-redirect/WM hints | Layer-shell with no keyboard interactivity |
-| Position/size known | Yes | Yes | Yes | Monitor-local fullscreen: yes; global position: no |
-| Target a specific monitor | Yes | Yes | Yes | Yes via `with_monitor(index)` or one layer-shell surface per output |
-| Whole-monitor overlay (R3) | Yes | Yes | Yes | Yes on layer-shell compositors (KDE, wlroots, Sway) |
-| Robust overlay above fullscreen apps | Usually | Special collection behavior | Yes | Layer-shell top/overlay layer |
-| Follow another app's window | Not required by R3 | Not required | Not required | Not required |
+| Capability | Windows | macOS | Linux Wayland |
+|---|---|---|---|
+| Transparent window | Yes (`with_transparent`) | Yes + `with_has_shadow(false)` | Compositor-dependent |
+| Always-on-top | Yes | Yes | **Only via layer-shell**; normal toplevels are usually ignored |
+| Click-through | Yes (`mouse_passthrough`) | Yes | **Only via layer-shell** input region (or compositor-specific) |
+| Non-activating / no focus steal | Yes (`with_active(false)`) | Yes | Layer-shell with no keyboard interactivity |
+| Position/size known | Yes | Yes | Monitor-local fullscreen: yes; global position: no |
+| Target a specific monitor | Yes | Yes | Yes via `with_monitor(index)` or one layer-shell surface per output |
+| Whole-monitor overlay (R3) | Yes | Yes | Yes on layer-shell compositors (KDE, wlroots, Sway); GNOME via XWayland fallback |
+| Robust overlay above fullscreen apps | Usually | Special collection behavior | Layer-shell top/overlay layer; XWayland to be tested |
+| Follow another app's window | Not required by R3 | Not required | Not required |
 
-### 7.2 Overlay construction: `EguiOverlay` (Windows/macOS/X11)
+Native X11 is deprecated and not a target. XWayland is used only for the GNOME fallback, not as a general X11 desktop strategy.
+
+### 7.2 Overlay construction: `EguiOverlay` (Windows/macOS)
 
 Use a dedicated viewport:
 
@@ -404,7 +420,7 @@ ViewportBuilder::default()
     .with_always_on_top()
     .with_mouse_passthrough(true)
     .with_taskbar(false)
-    .with_active(false) // no-op on X11/Wayland; use override-redirect/WM hints there
+    .with_active(false) // no-op on Wayland; native X11 is out of scope
     .with_monitor(monitor_index)
     .with_fullscreen(true)
 ```
@@ -414,10 +430,9 @@ Set `App::clear_color` to transparent, draw only the gaze dot/heatmap, and keep 
 Caveats:
 
 - **Click-through means no keyboard.** Control the overlay from the console window or a global hotkey. Do not expect the overlay to receive keys.
-- **X11 non-activation:** `with_active(false)` is documented as unsupported on X11/Wayland. For a non-activating X11 overlay, use `with_override_redirect(true)` plus an appropriate `X11WindowType`, or set WM hints yourself via `Frame::winit_window()`.
 - **macOS:** may need `NSWindowCollectionBehavior::CanJoinAllSpaces` for full-screen apps; use `Frame::winit_window()` + `objc2` if egui does not expose it.
-- **X11:** compositing must be enabled for transparency. `with_override_redirect(true)` + an appropriate `X11WindowType` can help for non-managed overlays.
-- **Wayland:** not handled by this backend. `EguiOverlay` is for Windows/macOS/X11; use `LayerShellOverlay` for KDE/wlroots Wayland (see §7.5).
+- **Wayland:** not handled by this backend. `EguiOverlay` is for Windows/macOS; use `LayerShellOverlay` for KDE/wlroots Wayland and `XwaylandOverlay` for GNOME (see §7.5).
+- **X11:** deprecated and out of scope. Do not add `override_redirect`/X11 window-type code unless a legacy deployment forces it.
 
 ### 7.3 Whole-monitor overlay for "website navigation" tasks
 
@@ -439,37 +454,37 @@ For web-page experiments, also consider that browser chrome (tabs, URL bar) is n
 ### 7.4 Existing overlay code worth reading
 
 - `procmod/overlay` (MIT): Windows `WS_EX_LAYERED | WS_EX_TRANSPARENT`, target-window tracking, D3D11. Excellent Win32 reference, not cross-platform.
-- `zefr0x/ianny` (GPL-3.0): egui/winit overlay on Wayland; reusable if yet-rs adopts GPL, otherwise reference only.
-- `wanderlay` (GPL-3.0): claims a GNOME Wayland overlay, but also ships an `--x11` fallback. Upstream `gtk4-layer-shell` documentation explicitly lists GNOME-on-Wayland as **unsupported**, so treat the GNOME claim as unproven until spiked.
+- `zefr0x/ianny` (GPL-3.0): egui/winit overlay on Wayland; directly reusable under GPL-3.0.
+- `wanderlay` (GPL-3.0): claims a GNOME Wayland overlay and ships an `--x11` fallback. Upstream `gtk4-layer-shell` documentation explicitly lists GNOME-on-Wayland as **unsupported**, so the XWayland path is the relevant one. Since yet-rs is GPL-3.0, this is a direct starting point for the GNOME overlay.
 - `see-the-arrow` (Windows/Linux), `rightkit-overlay-win` (Win32): small, focused overlay implementations. Verify licenses before reuse.
 - `smithay-client-toolkit` / `gtk4-layer-shell`: layer-shell implementations for KDE/wlroots/Sway.
 - `tristim-display`: Wayland layer-shell and color-management reference.
 
 ### 7.5 Platform parity and the GNOME Wayland conflict (R11)
 
-This is the one place where R1 and R11 cannot both be met natively by a Wayland client. An XWayland fallback or a GNOME Shell extension is required.
+This is the one place where R1 and R11 cannot both be met natively by a Wayland client. The chosen strategy is: **XWayland fallback first for GNOME, native Wayland layer-shell in parallel, native X11 deprecated.**
 
 | Platform | Overlay strategy | Status |
 |---|---|---|
 | Windows | `EguiOverlay`: transparent + always-on-top + `mouse_passthrough` + no taskbar/focus | Full support |
 | macOS | `EguiOverlay` + `with_has_shadow(false)`; `NSWindowCollectionBehavior::CanJoinAllSpaces` via `Frame::winit_window()` + `objc2` | Full support, needs a small platform shim |
-| Linux X11 | `EguiOverlay` + override-redirect/WM hints; compositor for transparency | Full support |
-| Linux Wayland (KDE, wlroots, Sway) | `LayerShellOverlay` via `smithay-client-toolkit` + `zwlr_layer_shell_v1`; one surface per output; empty input region | Full support |
-| Linux Wayland (GNOME/Mutter) | Native: no reliable always-on-top/click-through protocol; layer-shell is not supported by upstream `gtk4-layer-shell`/GNOME-on-Wayland. XWayland fallback: reported working by `wanderlay --x11`. | **Needs an XWayland spike or a GNOME Shell extension** |
+| Linux Wayland (KDE, wlroots, Sway) | `LayerShellOverlay` via `smithay-client-toolkit` + `zwlr_layer_shell_v1`; one surface per output; empty input region | Full support; strategic Wayland path |
+| Linux Wayland (GNOME/Mutter) | Native layer-shell unsupported. `XwaylandOverlay` via `x11rb`; `wanderlay --x11` is the reference. | **XWayland first; spike multi-monitor/z-order/click-through** |
+| Linux X11 (legacy) | Not a target; may work incidentally through `EguiOverlay`/XWayland | **Deprecated; do not invest** |
 
 Upstream `gtk4-layer-shell` (checked 2026-10-25) lists wlroots, Smithay, Mir, and KDE Plasma as supported, and explicitly lists **GNOME-on-Wayland** as unsupported. `wanderlay`'s GNOME claim is therefore likely its `--x11` fallback, not native GNOME Wayland.
 
-Windows/macOS/X11 support depends on `winit`'s cursor hit-test and window-level implementations; the overlay spike must confirm it on the target OS versions.
+Windows/macOS support depends on `winit`'s cursor hit-test and window-level implementations; the overlay spike must confirm it on the target OS versions.
 
-Options for GNOME Wayland:
+GNOME Wayland options, in order:
 
-1. **Document the limitation** and scope the overlay to Windows/macOS/X11 + layer-shell compositors. Lowest-risk, but fails strict R11.
-2. **Ship a small GNOME Shell extension** that creates a topmost, click-through actor controlled by the app (D-Bus). This adds a non-Rust component, a separate install path, and GNOME-version maintenance.
-3. **Use an XWayland fallback.** `wanderlay` ships `--x11` and claims it works on GNOME. Test multi-monitor positioning, z-order, and click-through before relying on it; if it passes, it is the cheapest way to meet R11 without an extension.
+1. **XWayland fallback (chosen first).** `wanderlay` ships `--x11` and claims it works on GNOME. Test multi-monitor positioning, z-order, and click-through; if it passes, it meets R11 without an extension. Since yet-rs is GPL-3.0, `wanderlay` (GPL-3.0) can be used directly as the starting point.
+2. **GNOME Shell extension** only if XWayland fails. It creates a topmost, click-through actor controlled by the app (D-Bus), but adds a non-Rust component, a separate install path, and GNOME-version maintenance.
+3. **Document the limitation** only as a last resort; it fails strict R11.
 
 **Implementation note:** a layer-shell surface is **not** a `winit` window, so it cannot be an eframe viewport. `LayerShellOverlay` needs its own Wayland event loop (`calloop` + `smithay-client-toolkit`) and a small renderer (`softbuffer`/`tiny-skia` or `wgpu`). It can run as a separate thread or process, controlled by the console. This is why the overlay is a separate `OverlayBackend` trait, not just another eframe viewport. The presenter itself can still use eframe `with_monitor` for fullscreen stimulus windows on Wayland. `OverlayBackend` hides whether the implementation is an eframe viewport, an in-process SCTK loop, or an IPC client to a separate overlay process.
 
-**Recommendation:** implement `EguiOverlay` and `LayerShellOverlay` behind an `OverlayBackend` trait, and add an XWayland overlay backend for GNOME if the spike passes. If strict R11 parity is non-negotiable and XWayland fails, treat the GNOME extension as a separate deliverable and spike it before committing. This is the main unresolved requirement.
+**Recommendation:** implement `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots/Sway Wayland), and `XwaylandOverlay` (GNOME) behind an `OverlayBackend` trait. Develop the native Wayland backend in parallel; use XWayland to cover GNOME now. Native X11 is not a target. If XWayland fails on GNOME, fall back to a GNOME Shell extension or a documented limitation. The main remaining risk is XWayland behavior on GNOME (multi-monitor geometry, z-order, click-through).
 
 ---
 
@@ -522,7 +537,7 @@ eframe does not expose a direct post-present callback. Record `requested_at` at 
 - Prefer `Fifo`/`AutoVsync` for tear-free presentation unless latency measurements justify `Mailbox`.
 - Set `desired_maximum_frame_latency = Some(1)` for low latency.
 - Disable OS animations, notifications, and display scaling changes during a session.
-- **Video pacing:** drive frames by presentation timestamp, not decode speed; preload the first frame before trial start; drop late frames instead of blocking the UI thread; log `media_pts` and the number of dropped frames.
+- **Video pacing:** pre-decoded frames are paced by `fps`/PTS, not by disk-read speed; preload the first frame and prefetch the next few; drop late frames instead of blocking the UI thread; log `media_pts` and the number of dropped frames.
 - Validate visually and with frame logs. A photodiode/high-speed-camera measurement is optional, not a release gate for R2.
 
 **Decision gate:** if the frame log shows visible jank, repeated late frames, or dropped frames above the agreed budget, move the stimulus window to a `winit + wgpu`/`pixels` backend (or SDL3) behind the same `Presenter` trait. Do not change the tracker or experiment state machine.
@@ -543,10 +558,10 @@ flowchart TD
     C -->|Scene + FrameStamp| E
     E --> F[EguiPresenter / yet-present-egui]
     F --> G[Stimulus viewport fullscreen monitor N]
-    H[Video decoder / yet-media] -->|VideoFrame| F
+    H[Frame sequence loader / yet-media] -->|Frame| F
     E -->|Load Play Stop| H
     C -->|OverlayState| I[OverlayBackend / yet-overlay]
-    I --> J[EguiOverlay Win/macOS/X11]
+    I --> J[EguiOverlay Win/macOS]
     I --> K[LayerShellOverlay Wayland]
     C -->|TrialRecord| L[CSV data sink]
 ```
@@ -558,18 +573,18 @@ The experiment controller (`yet-core`) is the only component that decides state 
 | Crate | Responsibility | UI dependencies |
 |---|---|---|
 | `yet-core` | Experiment controller/state machine, tracker traits, calibration, regression, data model | **None** |
-| `yet-present` | `Presenter`, `OverlayBackend` and `VideoSource` traits; `Scene`/`DrawCommand`, `PresenterCommand`, `ScreenGeometry`, `FrameStamp` | **None** |
+| `yet-present` | `Presenter`, `OverlayBackend` and `FrameSource` traits; `Scene`/`DrawCommand`, `PresenterCommand`, `ScreenGeometry`, `FrameStamp` | **None** |
 | `yet-console` | egui experimenter console; sends commands; never renders the stimulus | `egui` / `eframe` |
-| `yet-present-egui` | `EguiPresenter`; viewport, textures, text/shapes, video-frame upload | `egui` / `eframe` |
-| `yet-overlay` | `EguiOverlay` (Windows/macOS/X11), `LayerShellOverlay` (KDE/wlroots Wayland), `XwaylandOverlay` (GNOME fallback) | `egui` / `eframe`, `smithay-client-toolkit`, `x11rb` |
-| `yet-media` | Image/video decode, preloading, frame mailbox; `VideoSource` implementation | decoder crates |
+| `yet-present-egui` | `EguiPresenter`; viewport, textures, text/shapes, frame upload | `egui` / `eframe` |
+| `yet-overlay` | `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots Wayland), `XwaylandOverlay` (GNOME fallback) | `egui` / `eframe`, `smithay-client-toolkit`, `x11rb` |
+| `yet-media` | Frame-sequence loading, preloading, frame mailbox; `FrameSource` implementation | `image` |
 | `yet-app` | Binary: config, camera, tracker, wiring | all |
 | `yet-camera` (later) | Camera capture, frame mailbox | None |
 | `yet-ml` (later) | Regression/model | None |
 
 The important rule: **no `egui` types in `yet-core` or `yet-present`.** If the tracker or experiment logic imports `egui`, the separation has failed.
 
-`LayerShellOverlay` is not an eframe viewport: it owns a Wayland event loop and renders to a layer-shell surface. Treat it as a separate overlay service controlled by the console.
+`LayerShellOverlay` is not an eframe viewport: it owns a Wayland event loop and renders to a layer-shell surface. `XwaylandOverlay` is likewise a separate X11 client (via `x11rb`) connected to the XWayland server; it is not part of eframe. Treat both as overlay services controlled by the console.
 
 Console scope (F11–F12): experiment load/start/pause/abort, calibration triggers, presenter-monitor selection, live camera preview, gaze trace, status/logs, and config editing. The console may display a camera texture, but it is not the stimulus presentation path.
 
@@ -583,7 +598,7 @@ eframe = "0.37"   # start with defaults; trim features after the spike
 image = "0.25"    # stimulus decode/scale; already in eframe's tree
 ```
 
-Add `serde`, `toml`, `csv`, `thiserror`, `tracing`, and `crossbeam-channel` when the corresponding spike needs them. Do not add `macroquad` or a video decoder until the optional backend is actually evaluated.
+Add `serde`, `toml`, `csv`, `thiserror`, `tracing`, and `crossbeam-channel` when the corresponding spike needs them. Do not add `macroquad` or a runtime video decoder; video is pre-decoded (R5).
 
 ### 9.2 Trait and display-list sketch
 
@@ -622,7 +637,7 @@ pub enum ExperimentCommand {
 
 pub enum PresenterCommand {
     LoadImage { id: MediaId, path: PathBuf },
-    LoadVideo { id: MediaId, path: PathBuf, looped: bool },
+    LoadSequence { id: MediaId, dir: PathBuf, fps: f32, looped: bool },
     ShowMonitor { monitor: usize, fullscreen: bool },
     Play { id: MediaId },
     Stop,
@@ -635,9 +650,9 @@ pub trait OverlayBackend {
     fn set_passthrough(&mut self, enabled: bool) -> Result<(), OverlayError>;
 }
 
-pub trait VideoSource {
+pub trait FrameSource {
     fn preload(&mut self) -> Result<(), MediaError>;
-    fn next_frame(&mut self, now: Duration) -> Option<VideoFrame>;
+    fn frame_at(&mut self, t: Duration) -> Option<Frame>;
 }
 
 pub enum DrawCommand<'a> {
@@ -717,7 +732,7 @@ usb_index = 1
 
 [presenter]
 backend = "egui"      # later: "macroquad", "wgpu"
-overlay = "auto"      # auto | off | egui | layer-shell
+overlay = "auto"      # auto | off | egui | layer-shell | xwayland
 
 [overlay]
 monitor = 1
@@ -726,9 +741,9 @@ monitor = 1
 `Stimuli.csv` holds the experiment and stimulus table:
 
 ```csv
-id,kind,path,duration_ms
-t01,image,stimuli/t01.png,3000
-t02,video,stimuli/t02.mp4,5000
+id,kind,path,fps,duration_ms,loop
+t01,image,stimuli/t01.png,,3000,false
+t02,sequence,stimuli/t02/,30,5000,false
 ```
 
 - No XLSX. `config.toml` is only machine configuration per R9; experiment metadata, trial order, stimulus list and durations stay in CSV (`Stimuli.csv` and, if needed, `Experiment.csv`).
@@ -736,7 +751,7 @@ t02,video,stimuli/t02.mp4,5000
 - Validate monitor index/name, resolution, camera index, and file paths at startup. Return typed errors, not panics.
 - Use `serde` + `toml` for reads and `serde` + `csv` for tables. If the console writes `config.toml` back, use `toml_edit` to preserve comments; plain `toml` serialization will drop them.
 - Store monitor identity by index **and** name/EDID; indices can change when monitors are hot-plugged or reordered.
-- `overlay = "auto"` selects `EguiOverlay` on Windows/macOS/X11, `LayerShellOverlay` on layer-shell Wayland compositors, and `XwaylandOverlay` on GNOME Wayland; report a clear error if the selected backend is unavailable.
+- `overlay = "auto"` selects `EguiOverlay` on Windows/macOS, `LayerShellOverlay` on layer-shell Wayland compositors, and `XwaylandOverlay` on GNOME Wayland; report a clear error if the selected backend is unavailable.
 
 ### 9.7 Presenter deployment (R4)
 
@@ -761,11 +776,11 @@ Weights reflect this project: stimulus correctness, platform parity and overlay 
 | Timing control | 10% | 3 | 4 | 4 | 5 | 5 | 3 | 3 | 1 |
 | **Weighted score** | 100% | **3.90** | **3.05** | **3.85** | **2.75** | **3.40** | **3.35** | **3.20** | **2.75** |
 
-Scores are judgment calls for this project, not general rankings. The overlay score for every candidate drops because R11 includes Wayland; only layer-shell-capable backends score well there.
+Scores are judgment calls for this project, not general rankings. The overlay score for every candidate drops because R11 includes Wayland; only layer-shell-capable backends or a working XWayland fallback score well there.
 
 Ranking:
 
-1. **egui/eframe — 3.90.** Best overall integration of console, presenter and Windows/macOS/X11 overlay; a `LayerShellOverlay` covers KDE/wlroots Wayland. GNOME Wayland needs the XWayland fallback or an extension.
+1. **egui/eframe — 3.90.** Best overall integration of console, presenter and Windows/macOS overlay; `LayerShellOverlay` covers KDE/wlroots Wayland and `XwaylandOverlay` covers GNOME. Native X11 is not a target.
 2. **Bevy — 3.85.** Best pure-Rust canvas and animation; a serious alternative if video/animation complexity grows. Weaker click-through overlay and a heavy ECS dependency.
 3. **SDL2 — 3.40.** Best functional match for windows/overlay; still not pure Rust and still constrained on GNOME Wayland.
 4. **iced — 3.35.** Good UI, weak overlay/timing for this use case.
@@ -783,22 +798,22 @@ Ranking:
 | `emilk/egui` — `examples/multiple_viewports` | egui/eframe | MIT/Apache-2.0 | Active | Canonical multi-viewport pattern |
 | `emilk/eframe_template` | eframe | MIT/Apache-2.0 | Active | Project skeleton, build setup |
 | `altunenes/weber_fechner` | Bevy | MIT | Last push 2023-11 | Psychophysics state/timing patterns; Bevy canvas reference |
-| `altunenes/scramblery` | Slint | **GPL-3.0** | Active | Stimulus-generation ideas; reusable if yet-rs adopts GPL, otherwise reference only |
-| `zefr0x/ianny` | egui/winit | **GPL-3.0** | Active | Wayland overlay technique; reusable if yet-rs adopts GPL, otherwise reference only |
+| `altunenes/scramblery` | Slint | **GPL-3.0** | Active | Stimulus-generation ideas; directly reusable under GPL-3.0 |
+| `zefr0x/ianny` | egui/winit | **GPL-3.0** | Active | Wayland overlay technique; directly reusable under GPL-3.0 |
 | `procmod/overlay` | Win32/D3D11 | MIT | Active | Windows layered-window overlay; platform reference |
-| `wanderlay` | GNOME Wayland claim; `--x11` fallback | GPL-3.0 | 2026 | Investigate technique; upstream layer-shell docs say GNOME-on-Wayland is unsupported |
+| `wanderlay` | GTK4 + gtk4-layer-shell + XWayland | GPL-3.0 | 2026 | Direct starting point for the GNOME XWayland overlay and the layer-shell path |
 | `see-the-arrow` | Windows/Linux | Verify | 2026 | Simple click-through overlay |
 | `tristim-display` | Wayland layer-shell | Verify | 2026 | Layer-shell + color-management reference |
 | `smithay-client-toolkit` | Wayland | MIT | Active | Layer-shell backend for KDE/wlroots Wayland |
-| `video-rs` | FFmpeg wrapper | Verify | Active | Runtime video decode path |
-| `ffmpeg-sidecar` | Rust + external FFmpeg | Verify | Active | Video decode without linking FFmpeg |
-| `gstreamer` | GStreamer bindings | LGPL | Active | Robust media pipeline alternative |
+| `video-rs` | FFmpeg wrapper | Verify | Active | Future runtime decode; not v1 |
+| `ffmpeg-sidecar` | Rust + external FFmpeg | Verify | Active | Future runtime decode; not v1 |
+| `gstreamer` | GStreamer bindings | LGPL | Active | Future runtime decode; not v1 |
 | `egui-video` | egui widget | Verify | Stale (2024-10) | Do not use; reference only |
 | `matyushkin/saccade` | Pure Rust | MIT | 2026 | Eye-tracking library reference for `yet-core` |
-| `trishume/FusionMouse` | Rust + Tobii | **GPL-3.0** | 2018 | Historical eye/head tracking reference; reusable only under GPL |
+| `trishume/FusionMouse` | Rust + Tobii | **GPL-3.0** | 2018 | Historical eye/head tracking reference; reusable under GPL-3.0 |
 | `Rust-SDL2/rust-sdl2` | SDL2 bindings | MIT (SDL2: zlib) | Active | Fallback canvas/window backend |
 | `parasyte/pixels` examples | winit + wgpu | MIT | Active | Framebuffer/window/precision path |
-| `schmettow/yet-rs` | — | MIT | New | This port |
+| `schmettow/yet-rs` | — | GPL-3.0 | New | This port |
 
 Not found:
 
@@ -806,43 +821,26 @@ Not found:
 - A Rust Psychtoolbox equivalent.
 - A Pygame clone with multi-window and overlay support. The `pygame` crate on crates.io is a `0.0.1` placeholder; `processing` is dead since 2019; the `psychophysics` crate is a single 2024 release with zero recent downloads and a 404 GitHub repository.
 
-**Licensing note (updated for R8):** `yet_zero` is Apache-2.0 and `yet-rs` is currently MIT. Apache-2.0 is compatible with GPLv3, so the port itself is not a problem. If yet-rs links or copies GPL code (`ianny`, `scramblery`, `FusionMouse`, or a GPL-only build of FFmpeg/Slint), the distributed work must be GPL-compatible. Two coherent policies:
+**Licensing decision (R8):** the binary is distributed under **GPL-3.0-only**. `yet_zero` is Apache-2.0, which is GPLv3-compatible; keep the Apache-2.0 notice for ported logic. GPL prior art (`ianny`, `scramblery`, `FusionMouse`, `wanderlay`) is now directly reusable, subject to GPL-3.0 obligations. Slint's GPL option is compatible. LGPL dependencies (GStreamer, an LGPL FFmpeg build) would still carry linking obligations, but neither is a v1 dependency.
 
-1. **Keep yet-rs MIT** and use GPL code only as a separate process/optional external component after legal review; or
-2. **Relicense yet-rs to GPL-3.0** and reuse GPL prior art freely.
-
-Do not mix the two silently. The answer to §12.2 decides which policy applies. LGPL dependencies (GStreamer, and FFmpeg built as LGPL) have their own linking obligations; prefer dynamic linking or isolate them in a separate process.
+**Required follow-up:** replace `yet-rs/LICENSE` with GPL-3.0 and set `license = "GPL-3.0-only"` in `Cargo.toml` when the crate is created. Confirm with all contributors before relicensing an existing repository; for a new repository this is straightforward.
 
 ---
 
 ## 12. Open questions
 
-The original ten questions are answered (R1–R10). These are the remaining decisions. Defaults in bold.
+The original ten questions are answered (R1–R10), and the follow-up resolved the GNOME strategy (XWayland first), video (pre-decoded), and license (GPL-3.0). These are the remaining implementation decisions. Defaults in bold.
 
-1. **GNOME Wayland overlay (R11 blocker).** Choose one:
-   (a) XWayland fallback (cheapest; `wanderlay --x11` claims it works on GNOME),
-   (b) a small GNOME Shell extension,
-   (c) document the limitation and exclude GNOME Wayland from strict parity.
-   Upstream `gtk4-layer-shell` lists GNOME-on-Wayland as unsupported; `wanderlay`'s GNOME claim is likely its `--x11` fallback.
-   **Default: (a) first, with a time-boxed spike; (b) only if (a) fails.**
-2. **Final project license.** If GPL code is linked or copied, is yet-rs relicensed to GPL-3.0, or does GPL code stay outside the distributed MIT work?
-   **Default: keep yet-rs MIT and avoid linking/copying GPL code for now.**
-3. **Video pipeline.** Pre-decode clips to image sequences (pure Rust at runtime, simple presenter) or decode at runtime with FFmpeg/GStreamer (arbitrary clips, C dependency)?
-   **Default: pre-decode for v1; add `video-rs` later if arbitrary runtime playback is required.**
-4. **Audio in video clips.** Are video stimuli silent, or is audio part of the experiment?
-   **Default: silent video; audio out of scope.**
-5. **Overlay interaction.** Is the overlay purely visual (gaze dot/heatmap), or must it ever accept input?
-   **Default: visual only; console controls flow; passthrough stays on.**
-6. **Presenter deployment.** In-process `EguiPresenter` first, or a separate presenter process from day one?
-   **Default: in-process first; keep the trait/IPC boundary ready.**
-7. **Monitor identity in `config.toml`.** Index only, or index + name/EDID?
-   **Default: both; fail fast if they disagree.**
-8. **CSV compatibility.** Must the downstream R pipeline keep the yet_zero column names and layout?
-   **Default: yes; add new columns at the end, never rename existing ones.**
-9. **Video pacing.** PTS-based with drop-late, or fixed frame rate?
-   **Default: PTS-based; drop late frames; log drops.**
-10. **Console placement.** Same machine/second monitor, or a second machine later?
-    **Default: same machine, second monitor; no network/IPC in v1.**
+1. **XWayland overlay details on GNOME.** Does the XWayland fallback handle multi-monitor geometry, fractional scaling, z-order above fullscreen apps, and click-through reliably? **Default: spike first; if it fails, fall back to a GNOME Shell extension or document the limitation.**
+2. **Pre-decoded frame format and manifest.** One directory of PNGs per clip plus `fps`/`duration_ms` columns in `Stimuli.csv`, or a per-clip manifest? **Default: directory + CSV columns; use JPEG/WebP only if disk size becomes a problem.**
+3. **Audio in video clips.** Are video stimuli silent, or is audio part of the experiment? **Default: silent video; audio out of scope.**
+4. **Overlay interaction.** Is the overlay purely visual (gaze dot/heatmap), or must it ever accept input? **Default: visual only; console controls flow; passthrough stays on.**
+5. **Presenter deployment.** In-process `EguiPresenter` first, or a separate presenter process from day one? **Default: in-process first; keep the trait/IPC boundary ready.**
+6. **Monitor identity in `config.toml`.** Index only, or index + name/EDID? **Default: both; fail fast if they disagree.**
+7. **CSV compatibility.** Must the downstream R pipeline keep the yet_zero column names and layout? **Default: yes; add new columns at the end, never rename existing ones.**
+8. **Console placement.** Same machine/second monitor, or a second machine later? **Default: same machine, second monitor; no network/IPC in v1.**
+9. **GPL version.** `GPL-3.0-only` or `GPL-3.0-or-later`? **Default: `GPL-3.0-only`, which is compatible with Slint's GPL option and the GPL prior art.**
+10. **XWayland overlay lifetime.** In-process thread or separate helper process? **Default: separate helper process or dedicated thread, controlled by the console; isolate X11 event-loop quirks from the eframe app.**
 
 ---
 
@@ -902,6 +900,7 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 - `pixels::PixelsBuilder` 0.17 (`enable_vsync`, `present_mode`).
 - crates.io metadata for `video-rs` 0.12, `ffmpeg-next` 9.0, `ffmpeg-sidecar` 2.7, `gstreamer` 0.25, `gtk4-layer-shell` 0.8, `egui-video` 0.9.
 - Upstream `gtk4-layer-shell` README: wlroots/Smithay/Mir/KDE supported; **GNOME-on-Wayland unsupported**.
+- `wanderlay` README: GTK4 + gtk4-layer-shell; `--x11` fallback reported to work on GNOME.
 - `toml`, `csv`, and `serde` are standard config/table crates and are not tabulated.
 
 ### Key links
@@ -915,7 +914,9 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 - ggez window config: <https://docs.rs/ggez/0.10.0/ggez/conf/struct.WindowMode.html>
 - pixels builder: <https://docs.rs/pixels/0.17.2/pixels/struct.PixelsBuilder.html>
 - Wayland layer-shell: <https://crates.io/crates/smithay-client-toolkit> · <https://crates.io/crates/gtk4-layer-shell>
-- video: <https://crates.io/crates/video-rs> · <https://crates.io/crates/ffmpeg-next> · <https://crates.io/crates/ffmpeg-sidecar> · <https://crates.io/crates/gstreamer>
+- XWayland overlay reference: <https://crates.io/crates/x11rb> · <https://github.com/tilacog/wanderlay>
+- video (future runtime decode only): <https://crates.io/crates/video-rs> · <https://crates.io/crates/ffmpeg-next> · <https://crates.io/crates/ffmpeg-sidecar> · <https://crates.io/crates/gstreamer>
+- FFmpeg CLI for setup-time frame extraction: <https://ffmpeg.org>
 - stale egui video widget: <https://crates.io/crates/egui-video>
 - psychophysics prior art: <https://github.com/altunenes/weber_fechner>
 - Windows overlay reference: <https://github.com/procmod/overlay>
@@ -933,10 +934,10 @@ Before committing to the architecture, run six time-boxed spikes. The first thre
    Root console window + fullscreen presenter viewport; the console sends `ExperimentCommand`s to `yet-core`, which sends `PresenterCommand`s and `Scene`s to the presenter; the presenter never advances state. Pass: console controls do not stall the stimulus; deferred viewport works; focus handling is understood.
 
 3. **Overlay platform spike (R1, R3, R11).**
-   Windows, macOS, X11, and at least one layer-shell Wayland compositor (KDE or Sway): transparent, always-on-top, click-through whole-monitor gaze dot. Pass: clicks reach the app below, no focus steal, correct monitor placement. Then test GNOME Wayland explicitly: first the XWayland fallback, then native layer-shell if a compositor version claims support. This is the go/no-go for R11.
+   Windows, macOS, at least one layer-shell Wayland compositor (KDE or Sway), and GNOME via the XWayland fallback: transparent, always-on-top, click-through whole-monitor gaze dot. Pass: clicks reach the app below, no focus steal, correct monitor placement. Native X11 is out of scope. This is the go/no-go for R11.
 
 4. **Video spike (R5).**
-   Play one image-sequence clip and one `video-rs` (or `ffmpeg-sidecar`) clip through the presenter. Pass: first frame preloaded, PTS pacing, late-frame drop, no UI-thread blocking, correct last-frame behavior. Decide pre-decode vs runtime decode based on this spike.
+   Use the FFmpeg CLI to prepare one image-sequence clip, then load and pace it through the presenter. Pass: a tiny reproducible pre-decode script/manifest, first frame preloaded, fps/PTS pacing, late-frame drop, no UI-thread blocking, correct last-frame behavior, and acceptable disk read throughput. No runtime decoder is tested or added.
 
 5. **Config spike (R9).**
    Load `config.toml` + `Stimuli.csv`, validate monitor/camera/file paths, and render a clear error for a bad monitor index or missing stimulus. Pass: no panics, actionable messages, comments in `config.toml` preserved if the console writes it (`toml_edit`).
