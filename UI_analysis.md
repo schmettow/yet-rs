@@ -1,7 +1,7 @@
 # UI & Graphics Crate Analysis — yet_zero → Rust
 
 **Status:** analysis revised after requirements confirmation, 2026-10-25.
-**Scope:** UI toolkit, image/video presentation, multi-window, desktop overlay, configuration and licensing consequences. Camera capture, eye detection, and ML are out of scope.
+**Scope:** UI toolkit, image/video/audio presentation, multi-window, desktop overlay, configuration and licensing consequences. Camera capture, eye detection, and ML are out of scope.
 
 ---
 
@@ -15,17 +15,18 @@ These supersede the earlier assumptions and are the basis for the conclusions be
 | **R2** | Presentation timing must be reasonable, not extreme. | Stable frame pacing, low latency and frame logging; no photodiode or hard-real-time guarantee required. `eframe` is acceptable. |
 | **R3** | The overlay covers a whole monitor. | One fullscreen overlay per monitor; no window-following or real-time AOIs required. |
 | **R4** | The console controls experiment flow; the presenter only presents. | Controller/presenter split. The console issues experiment commands, `yet-core` owns the state machine, and the `Presenter` trait must be replaceable and must not own state transitions. |
-| **R5** | Stimuli are static images and video clips. | Video clips are **pre-decoded to image sequences** at setup; the runtime presenter only handles frames. No runtime H.264 decoder in v1. |
+| **R5** | Stimuli are static images and video clips. | Video clips are **pre-decoded to PNG image sequences** at setup; the runtime presenter only handles frames. No runtime H.264 decoder in v1. |
 | **R6** | Multi-monitor and HiDPI are required. | Canonical physical-pixel geometry, per-monitor targeting, scale-factor handling. |
 | **R7** | Desktop only for v1; a simplified browser version may come later. | No WASM requirement now; keep `yet-core` UI-free so it can be reused later. |
-| **R8** | The binary is distributed under GPL-3.0. | GPL dependencies and GPL prior art are allowed; Slint is license-compatible. |
+| **R8** | The binary is distributed under GPL-3.0-only. | GPL dependencies and GPL prior art are allowed; Slint is license-compatible. |
 | **R9** | TOML for machine config (screens, screen size, USB port); CSV for experiment/stimuli; no XLSX. | Split `config.toml` from `Stimuli.csv`/experiment CSV; add typed validation. |
 | **R10** | The draw-command facade is sufficient for now. | No full Pygame `Surface`/`blit` API; keep `DrawCommand`/`Scene` small. |
-| **R11** | The overlay must work on all three platforms. | Windows/macOS use `EguiOverlay`. Linux uses native Wayland `LayerShellOverlay` (KDE/wlroots/Sway) and an **XWayland fallback first** for GNOME. Native X11 is deprecated and not a target. See §7.5. |
+| **R11** | The overlay must work on all three platforms. | Windows/macOS use `EguiOverlay`. Linux uses native Wayland `LayerShellOverlay` (KDE/wlroots/Sway) and an **XWayland fallback first** for GNOME, running in an **in-process dedicated thread**. Native X11 is deprecated and not a target. See §7.5. |
+| **R12** | Video clips carry audio. | Audio is extracted to WAV at setup and played in sync; when audio is present, the audio clock is the master clock for video frames. |
 
-**Resolved after the follow-up (2026-10-25):** R5 = pre-decoded video; R8 = GPL-3.0; R11 = XWayland first for GNOME, native Wayland layer-shell in parallel, native X11 deprecated.
+**Resolved after the follow-up (2026-10-25):** R5 = pre-decoded PNG sequences; R8 = GPL-3.0-only; R11 = XWayland-first GNOME overlay in an in-process thread + native Wayland layer-shell, native X11 deprecated; R12 = audio enabled.
 
-**Still open (see §12):** XWayland details on GNOME (multi-monitor/z-order), the pre-decoded frame format/manifest, GPL-3.0-only vs or-later, audio, overlay interaction, presenter deployment, monitor identity, CSV compatibility, and the XWayland helper lifetime.
+**Still open (see §12):** XWayland details on GNOME (multi-monitor/z-order), the pre-decoded frame manifest, audio device selection and failure policy, the A/V sync target, overlay interaction, presenter deployment, monitor identity, and CSV compatibility.
 
 ---
 
@@ -36,11 +37,12 @@ These supersede the earlier assumptions and are the basis for the conclusions be
 - `egui`/`eframe` still wins for the console plus a windowed/fullscreen presenter: pure Rust, mature, native multi-viewport, custom canvas, and low-latency `wgpu` configuration.
 - It does **not** provide a native Wayland overlay. Use `EguiOverlay` on Windows/macOS, `LayerShellOverlay` (Smithay client toolkit) on KDE/wlroots/Sway Wayland, and `XwaylandOverlay` as the first GNOME fallback. Native X11 is deprecated.
 - The console drives the experiment, `yet-core` owns the state machine, and the presenter is a dumb, replaceable media renderer. This matches R4 and makes a later `macroquad`/`winit`/SDL presenter possible.
-- Video: clips are **pre-decoded to image sequences** at setup. The presenter only uploads and paces frames; no runtime H.264 decoder is required. See §6.6.
-- GPL: the project is **GPL-3.0**; Slint and GPL prior art (including `wanderlay`'s XWayland/layer-shell overlay) are reusable.
+- Video: clips are **pre-decoded to PNG sequences** at setup. The presenter only uploads and paces frames; no runtime H.264 decoder is required. See §6.6.
+- Audio: clips carry audio, extracted to WAV at setup. `rodio` + `cpal` play it; when present, the audio clock drives video frames to keep A/V sync. See §6.7.
+- GPL: the project is **GPL-3.0-only**; Slint and GPL prior art (including `wanderlay`'s XWayland/layer-shell overlay) are reusable.
 - Timing: `eframe` is sufficient for R2. Keep frame logs; do not make a photodiode a release gate.
 
-**Main remaining risk:** the XWayland overlay on GNOME (multi-monitor geometry, z-order, click-through). Native Wayland layer-shell is the strategic path; the XWayland path is the pragmatic GNOME fallback and needs a spike.
+**Main remaining risk:** the XWayland overlay on GNOME (multi-monitor geometry, z-order, click-through). Native Wayland layer-shell is the strategic path; the XWayland path is the pragmatic GNOME fallback and needs a spike. Secondary risk: A/V sync and audio device behavior on the lab machines.
 
 **Important caveat:** `eframe` is not a hard-real-time stimulus presenter. It can be configured for low latency, and it exposes the underlying `winit` window and `wgpu` surface. Keep the `Presenter` boundary so the canvas backend can later be swapped to `winit + wgpu`, `pixels`, `macroquad`, or SDL3 without touching the tracker or experiment logic.
 
@@ -81,6 +83,7 @@ Derived functional requirements:
 - **F10** Typed configuration: `config.toml` for machine/display/camera settings; CSV for experiment/stimuli; no XLSX.
 - **F11** Console controls: load experiment/stimuli, start/pause/abort, select the presenter monitor, run calibration, show live camera/gaze feedback, and display status/logs.
 - **F12** Console validation: surface bad monitor/camera/stimulus configuration as actionable errors before a session starts.
+- **F13** Audio: preload WAV, play/pause/resume/stop, volume control, and A/V sync when a clip has an audio track.
 
 Derived non-functional requirements:
 
@@ -94,7 +97,8 @@ Derived non-functional requirements:
 - **N8** Headless testability of experiment logic (a recording presenter, no window needed).
 - **N9** Windows/macOS/Linux parity via Wayland for Linux; native X11 is deprecated and not a supported target.
 - **N10** Presenter replaceability: no `egui` types in the trait; in-process and out-of-process implementations must both be conceivable.
-- **N11** GPL-3.0-compatible distribution; GPL dependencies and prior art are allowed.
+- **N11** GPL-3.0-only-compatible distribution; GPL dependencies and prior art are allowed.
+- **N12** Audio output is validated at startup; audio/video drift and underruns are logged.
 
 ---
 
@@ -106,9 +110,9 @@ Sources:
 - **docs.rs** for the actual API surface of the shortlisted crates.
 - **GitHub search API** and repository metadata for prior art, activity, and licenses.
 
-This revision incorporates the confirmed requirements of 2026-10-25 (R1–R11) and the follow-up decisions: XWayland-first GNOME overlay with native Wayland layer-shell in parallel, pre-decoded video, GPL-3.0, and the TOML/CSV split.
+This revision incorporates the confirmed requirements of 2026-10-25 (R1–R12) and the follow-up decisions: GPL-3.0-only, pre-decoded PNG video with audio, XWayland-first GNOME overlay in an in-process thread plus native Wayland layer-shell, and the TOML/CSV split.
 
-Queries included: `egui`, `eframe`, `macroquad`, `ggez`, `bevy`, `pixels`, `minifb`, `softbuffer`, `speedy2d`, `nannou`, `slint`, `iced`, `sdl2`, `raylib`, `tauri`, `winit`, `wgpu`, `smithay-client-toolkit`, `gtk4-layer-shell`, `tiny-skia`, `cosmic-text`, `overlay`, `click-through window`, `layer-shell`, `always-on-top`, `psychophysics`, `eye tracking`, `stimulus`, `stimulus presentation`, `experiment framework`, `pygame`, `psychtoolbox`, `video-rs`, `ffmpeg-next`, `ffmpeg-sidecar`, `gstreamer`, `egui-video`, `toml`, `csv`.
+Queries included: `egui`, `eframe`, `macroquad`, `ggez`, `bevy`, `pixels`, `minifb`, `softbuffer`, `speedy2d`, `nannou`, `slint`, `iced`, `sdl2`, `raylib`, `tauri`, `winit`, `wgpu`, `smithay-client-toolkit`, `gtk4-layer-shell`, `x11rb`, `tiny-skia`, `cosmic-text`, `overlay`, `click-through window`, `layer-shell`, `always-on-top`, `psychophysics`, `eye tracking`, `stimulus`, `stimulus presentation`, `experiment framework`, `pygame`, `psychtoolbox`, `video-rs`, `ffmpeg-next`, `ffmpeg-sidecar`, `gstreamer`, `egui-video`, `rodio`, `cpal`, `hound`, `symphonia`, `kira`, `toml`, `csv`.
 
 GitHub searches included: `eye tracking language:Rust`, `psychophysics language:Rust`, `eye tracker rust`, and `pygame rust clone`, sorted by stars.
 
@@ -176,11 +180,16 @@ Video is orthogonal to this table: all viable toolkits can display decoded frame
 | `wgpu` 30.0.1 | GPU API; present modes, custom canvas |
 | `egui-winit` 0.37, `egui-wgpu` 0.37 | Build a custom multi-window shell if eframe becomes limiting |
 | `image` 0.25 | Decode/scale images (also an eframe dependency); frame-sequence loading |
-| FFmpeg CLI (external) | Setup-time extraction of video clips into PNG/JPEG frame sequences; not linked into the app |
-| `video-rs` 0.12 | Future runtime decode only; not v1 |
-| `ffmpeg-next` 9.0 | Future runtime decode only; not v1 |
-| `ffmpeg-sidecar` 2.7 | Future runtime decode only; not v1 |
-| `gstreamer` 0.25 | Future runtime decode only; not v1 |
+| FFmpeg CLI (external) | Setup-time extraction of video clips into PNG frame sequences and WAV audio; not linked into the app |
+| `rodio` 0.23 | Audio playback; `Player::get_pos()` provides the audio clock |
+| `cpal` 0.18 | Low-level cross-platform audio I/O; rodio's playback backend |
+| `hound` 3.5 | WAV decode (MIT); pair with rodio to avoid pulling Symphonia |
+| `symphonia` 0.6 | Pure-Rust audio decode for non-WAV formats; not v1 |
+| `kira` 0.12 | Game-oriented audio clock/mixing alternative; not v1 |
+| `video-rs` 0.12 | Future runtime video decode only; not v1 |
+| `ffmpeg-next` 9.0 | Future runtime video decode only; not v1 |
+| `ffmpeg-sidecar` 2.7 | Future runtime video decode only; not v1 |
+| `gstreamer` 0.25 | Future runtime video decode only; not v1 |
 | `calloop` | Event loop used by `smithay-client-toolkit` for the Wayland overlay |
 | `x11rb` | Pure Rust X11 bindings; GNOME XWayland overlay fallback |
 | `egui-video` 0.9 | Stale egui video widget (last updated 2024-10); do not depend on it |
@@ -357,9 +366,9 @@ It is pure Rust, MIT/Apache-2.0, compact, fast to compile (the project advertise
 - Not pure Rust, adds a C build/runtime dependency. SDL2 itself is zlib-licensed; bindings are MIT.
 - Worth keeping as a "break glass" option if the pure-Rust overlay path fails on the lab's OS.
 
-### 6.6 Video stimuli (resolved: pre-decoded)
+### 6.6 Video stimuli (resolved: pre-decoded PNG)
 
-R5 is resolved: **video clips are pre-decoded to image sequences at setup time**. The runtime never decodes H.264; the presenter only loads and paces frames.
+R5 is resolved: **video clips are pre-decoded to PNG image sequences at setup time**. The runtime never decodes H.264; the presenter only loads and paces frames.
 
 Pipeline:
 
@@ -370,11 +379,11 @@ Pipeline:
 
 Tradeoffs and guidance:
 
-- **Disk size is the main cost.** A 1920×1080 PNG frame is roughly 1–3 MB; a 10 s clip at 30 fps can be several hundred MB. Use JPEG/WebP if disk becomes a problem, or store frames at the stimulus resolution rather than the monitor resolution.
-- **Format:** PNG for fidelity, JPEG/WebP for size. Keep the choice per clip in the CSV.
+- **Disk size is the main cost.** A 1920×1080 PNG frame is roughly 1–3 MB; a 10 s clip at 30 fps can be several hundred MB. PNG is the chosen format; use JPEG/WebP only if disk pressure forces it, or store frames at the stimulus resolution rather than the monitor resolution.
+- **Format:** PNG by default. Keep an optional per-clip format column in the CSV only if the fallback is actually needed.
 - **Pacing:** preload frame 0, drive by `fps`/PTS, drop late frames, and log `media_pts` plus dropped-frame counts. Do not block the UI thread on disk I/O; prefetch the next few frames.
 - **Preprocessing is a build/setup step, not a runtime dependency.** This keeps the runtime pure Rust and cross-platform; it also avoids FFmpeg/GStreamer packaging on Windows/macOS/Linux.
-- **Audio:** out of scope unless confirmed in §12.
+- **Audio:** extracted to WAV and played in sync; see §6.7.
 
 Alternatives, kept for future requirements only:
 
@@ -387,6 +396,41 @@ Alternatives, kept for future requirements only:
 | `ffmpeg-sidecar` 2.7 | Rust crate, external binary | Broad | Not v1 |
 | `gstreamer` 0.25 | No (LGPL C libraries) | Broad | Not v1 |
 | `egui-video` 0.9 | — | — | Stale; do not use |
+
+### 6.7 Audio playback (resolved: enabled)
+
+R12 is resolved: video clips carry audio. The setup step extracts both streams:
+
+```sh
+ffmpeg -i clip.mp4 -vf fps=30 stimuli/t02/frame_%05d.png
+ffmpeg -i clip.mp4 -vn -ac 2 -ar 48000 -c:a pcm_s16le stimuli/t02/audio.wav
+```
+
+`Stimuli.csv` gains an `audio` column: empty for images, a WAV path for sequences.
+
+Playback stack:
+
+- `rodio` 0.23 for playback, with `cpal` 0.18 underneath. `Player::get_pos()` provides the audio clock.
+- WAV-only: `rodio = { version = "0.23", default-features = false, features = ["playback", "hound"] }`. This avoids Symphonia/MPL and keeps the decoder surface small. If the current release does not expose the WAV decoder through the `hound` feature, fall back to `wav` (Symphonia) after a license check.
+- `AudioPlayer` trait in `yet-present`; `RodioAudioPlayer` in `yet-media`; `NullAudioPlayer` for headless tests.
+
+A/V sync model:
+
+- **Audio present: audio is master.** Preload frame 0, load the WAV into a paused player, call `play()` at trial start, present frame 0, then choose the frame from `get_pos()` (`floor(pos * fps)`). Drop late frames; never block the UI thread on audio or disk.
+- **Audio absent: monotonic clock is master.**
+- Pause/resume pauses/resumes both the audio player and the frame clock. Stop stops audio and clears the sequence.
+- Validate that the WAV duration and the frame count/fps agree; log a warning if they do not, and let the trial `duration_ms` be authoritative.
+- `get_pos()` reports the position of the sound being played; it does not include the hardware output-buffer latency. For R2 this is acceptable. If A/V sync is visibly off, measure output latency (loopback or `cpal` callback timestamps) and apply a constant offset.
+- Log `audio_pts`, `video_pts`, drift, and underruns in `PresentStats`.
+
+Device policy:
+
+- `config.toml` `[audio] device = "default"`; enumerate devices with `cpal` if an explicit device is configured. Validate the device at startup and fail before a session if audio is enabled but unavailable.
+- On Linux, `cpal`'s default host is ALSA; PipeWire/PulseAudio are usually reached through their ALSA compatibility layer. Validate the actual device on each target distribution.
+- Mid-trial failure: log an error event; the default policy is to abort the trial rather than silently continue with a different stimulus. Confirm in §12.
+- Volume/mute is controlled from the console via `SetVolume`.
+
+Licensing: `rodio` MIT/Apache-2.0, `cpal` Apache-2.0, `hound` MIT. `symphonia` is MPL-2.0; avoid pulling it if WAV-only is enough. `kira` is an alternative if the audio clock needs sample-level precision; `rodio`'s `get_pos()` is sufficient for "reasonable" sync.
 
 ---
 
@@ -455,7 +499,7 @@ For web-page experiments, also consider that browser chrome (tabs, URL bar) is n
 
 - `procmod/overlay` (MIT): Windows `WS_EX_LAYERED | WS_EX_TRANSPARENT`, target-window tracking, D3D11. Excellent Win32 reference, not cross-platform.
 - `zefr0x/ianny` (GPL-3.0): egui/winit overlay on Wayland; directly reusable under GPL-3.0.
-- `wanderlay` (GPL-3.0): claims a GNOME Wayland overlay and ships an `--x11` fallback. Upstream `gtk4-layer-shell` documentation explicitly lists GNOME-on-Wayland as **unsupported**, so the XWayland path is the relevant one. Since yet-rs is GPL-3.0, this is a direct starting point for the GNOME overlay.
+- `wanderlay` (GPL-3.0): claims a GNOME Wayland overlay and ships an `--x11` fallback. Upstream `gtk4-layer-shell` documentation explicitly lists GNOME-on-Wayland as **unsupported**, so the XWayland path is the relevant one. Since yet-rs is GPL-3.0-only, this is a direct starting point for the GNOME overlay.
 - `see-the-arrow` (Windows/Linux), `rightkit-overlay-win` (Win32): small, focused overlay implementations. Verify licenses before reuse.
 - `smithay-client-toolkit` / `gtk4-layer-shell`: layer-shell implementations for KDE/wlroots/Sway.
 - `tristim-display`: Wayland layer-shell and color-management reference.
@@ -478,13 +522,13 @@ Windows/macOS support depends on `winit`'s cursor hit-test and window-level impl
 
 GNOME Wayland options, in order:
 
-1. **XWayland fallback (chosen first).** `wanderlay` ships `--x11` and claims it works on GNOME. Test multi-monitor positioning, z-order, and click-through; if it passes, it meets R11 without an extension. Since yet-rs is GPL-3.0, `wanderlay` (GPL-3.0) can be used directly as the starting point.
+1. **XWayland fallback (chosen first).** `wanderlay` ships `--x11` and claims it works on GNOME. Test multi-monitor positioning, z-order, and click-through; if it passes, it meets R11 without an extension. Since yet-rs is GPL-3.0-only, `wanderlay` (GPL-3.0) can be used directly as the starting point.
 2. **GNOME Shell extension** only if XWayland fails. It creates a topmost, click-through actor controlled by the app (D-Bus), but adds a non-Rust component, a separate install path, and GNOME-version maintenance.
 3. **Document the limitation** only as a last resort; it fails strict R11.
 
-**Implementation note:** a layer-shell surface is **not** a `winit` window, so it cannot be an eframe viewport. `LayerShellOverlay` needs its own Wayland event loop (`calloop` + `smithay-client-toolkit`) and a small renderer (`softbuffer`/`tiny-skia` or `wgpu`). It can run as a separate thread or process, controlled by the console. This is why the overlay is a separate `OverlayBackend` trait, not just another eframe viewport. The presenter itself can still use eframe `with_monitor` for fullscreen stimulus windows on Wayland. `OverlayBackend` hides whether the implementation is an eframe viewport, an in-process SCTK loop, or an IPC client to a separate overlay process.
+**Implementation note:** a layer-shell surface is **not** a `winit` window, so it cannot be an eframe viewport. `LayerShellOverlay` needs its own Wayland event loop (`calloop` + `smithay-client-toolkit`) and a small renderer (`softbuffer`/`tiny-skia` or `wgpu`). `XwaylandOverlay` is a dedicated **in-process thread** with its own `x11rb` event loop and tiny overlay renderer. Both are controlled by the console through channels; `OverlayBackend` hides the difference. The presenter itself can still use eframe `with_monitor` for fullscreen stimulus windows on Wayland.
 
-**Recommendation:** implement `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots/Sway Wayland), and `XwaylandOverlay` (GNOME) behind an `OverlayBackend` trait. Develop the native Wayland backend in parallel; use XWayland to cover GNOME now. Native X11 is not a target. If XWayland fails on GNOME, fall back to a GNOME Shell extension or a documented limitation. The main remaining risk is XWayland behavior on GNOME (multi-monitor geometry, z-order, click-through).
+**Recommendation:** implement `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots/Sway Wayland, dedicated event-loop thread), and `XwaylandOverlay` (GNOME, dedicated in-process thread) behind an `OverlayBackend` trait. Develop the native Wayland backend in parallel; use XWayland to cover GNOME now. Native X11 is not a target. If XWayland fails on GNOME, fall back to a GNOME Shell extension or a documented limitation. The main remaining risk is XWayland behavior on GNOME (multi-monitor geometry, z-order, click-through).
 
 ---
 
@@ -499,12 +543,19 @@ GNOME Wayland options, in order:
 Define a `FrameStamp`:
 
 ```rust
+enum ClockSource {
+    Audio,
+    Monotonic,
+}
+
 struct FrameStamp {
     experiment_t: Duration,       // monotonic since experiment start
     requested_at: Instant,        // before submitting the frame
     presented_at: Instant,        // after present returns (or next frame callback)
     dt: Duration,                 // since previous frame
     media_pts: Option<Duration>,  // video presentation timestamp, if any
+    audio_pts: Option<Duration>,  // audio clock position, if present
+    master: ClockSource,          // audio when the clip has sound, else monotonic
     dropped: bool,
 }
 ```
@@ -514,6 +565,7 @@ Log at least:
 - requested/presented timestamps per frame;
 - frame interval and jitter (p50/p95/p99);
 - dropped or late frames;
+- audio position, audio/video drift, and underruns when audio is present;
 - stimulus on/off timestamps and trial IDs;
 - display refresh rate, present mode, monitor index, and scale factor at startup.
 
@@ -528,6 +580,7 @@ eframe does not expose a direct post-present callback. Record `requested_at` at 
 | `pixels` | `enable_vsync(bool)`, `present_mode(PresentMode)` | Good control; you own the loop and rendering |
 | `ggez` | No explicit field in `WindowMode`/`Conf` | wgpu defaults apply |
 | SDL2 | Vsync flag / `present_vsync` | Good control, but not pure Rust |
+| Audio (`rodio`/`cpal`) | `Player::get_pos()` audio clock; output latency not included | Audio is master when present; log drift |
 
 ### 8.4 Presentation strategy
 
@@ -537,7 +590,7 @@ eframe does not expose a direct post-present callback. Record `requested_at` at 
 - Prefer `Fifo`/`AutoVsync` for tear-free presentation unless latency measurements justify `Mailbox`.
 - Set `desired_maximum_frame_latency = Some(1)` for low latency.
 - Disable OS animations, notifications, and display scaling changes during a session.
-- **Video pacing:** pre-decoded frames are paced by `fps`/PTS, not by disk-read speed; preload the first frame and prefetch the next few; drop late frames instead of blocking the UI thread; log `media_pts` and the number of dropped frames.
+- **Video pacing:** pre-decoded frames are paced by `fps`/PTS, not by disk-read speed. When the clip has audio, use `AudioPlayer::position()` as the master clock and select the frame from that position; otherwise use the monotonic clock. Preload frame 0 and prefetch the next few; drop late frames instead of blocking the UI thread; log `media_pts`, `audio_pts`, drift, and dropped frames.
 - Validate visually and with frame logs. A photodiode/high-speed-camera measurement is optional, not a release gate for R2.
 
 **Decision gate:** if the frame log shows visible jank, repeated late frames, or dropped frames above the agreed budget, move the stimulus window to a `winit + wgpu`/`pixels` backend (or SDL3) behind the same `Presenter` trait. Do not change the tracker or experiment state machine.
@@ -563,6 +616,7 @@ flowchart TD
     C -->|OverlayState| I[OverlayBackend / yet-overlay]
     I --> J[EguiOverlay Win/macOS]
     I --> K[LayerShellOverlay Wayland]
+    I --> O[XwaylandOverlay GNOME]
     C -->|TrialRecord| L[CSV data sink]
 ```
 
@@ -573,11 +627,11 @@ The experiment controller (`yet-core`) is the only component that decides state 
 | Crate | Responsibility | UI dependencies |
 |---|---|---|
 | `yet-core` | Experiment controller/state machine, tracker traits, calibration, regression, data model | **None** |
-| `yet-present` | `Presenter`, `OverlayBackend` and `FrameSource` traits; `Scene`/`DrawCommand`, `PresenterCommand`, `ScreenGeometry`, `FrameStamp` | **None** |
+| `yet-present` | `Presenter`, `OverlayBackend`, `FrameSource` and `AudioPlayer` traits; `Scene`/`DrawCommand`, `PresenterCommand`, `ScreenGeometry`, `FrameStamp` | **None** |
 | `yet-console` | egui experimenter console; sends commands; never renders the stimulus | `egui` / `eframe` |
 | `yet-present-egui` | `EguiPresenter`; viewport, textures, text/shapes, frame upload | `egui` / `eframe` |
-| `yet-overlay` | `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots Wayland), `XwaylandOverlay` (GNOME fallback) | `egui` / `eframe`, `smithay-client-toolkit`, `x11rb` |
-| `yet-media` | Frame-sequence loading, preloading, frame mailbox; `FrameSource` implementation | `image` |
+| `yet-overlay` | `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots Wayland), `XwaylandOverlay` (GNOME fallback) | `egui` / `eframe`, `smithay-client-toolkit`, `calloop`, `x11rb` |
+| `yet-media` | PNG frame-sequence loading, preloading, frame mailbox; WAV audio playback (`RodioAudioPlayer`); `FrameSource`/`AudioPlayer` implementations | `image`, `rodio`, `cpal`, `hound` |
 | `yet-app` | Binary: config, camera, tracker, wiring | all |
 | `yet-camera` (later) | Camera capture, frame mailbox | None |
 | `yet-ml` (later) | Regression/model | None |
@@ -617,6 +671,8 @@ pub struct Scene<'a> {
 pub struct PresentStats {
     pub frame: FrameStamp,
     pub dropped_frames: u32,
+    pub audio_drift_ms: Option<f32>,
+    pub audio_underruns: u32,
 }
 
 pub trait Presenter {
@@ -637,10 +693,13 @@ pub enum ExperimentCommand {
 
 pub enum PresenterCommand {
     LoadImage { id: MediaId, path: PathBuf },
-    LoadSequence { id: MediaId, dir: PathBuf, fps: f32, looped: bool },
+    LoadSequence { id: MediaId, dir: PathBuf, fps: f32, looped: bool, audio: Option<PathBuf> },
     ShowMonitor { monitor: usize, fullscreen: bool },
     Play { id: MediaId },
+    Pause,
+    Resume,
     Stop,
+    SetVolume(f32),
     Shutdown,
 }
 
@@ -655,6 +714,16 @@ pub trait FrameSource {
     fn frame_at(&mut self, t: Duration) -> Option<Frame>;
 }
 
+pub trait AudioPlayer {
+    fn load(&mut self, path: &Path) -> Result<(), AudioError>;
+    fn play(&mut self) -> Result<(), AudioError>;
+    fn pause(&mut self);
+    fn resume(&mut self);
+    fn stop(&mut self);
+    fn set_volume(&mut self, volume: f32);
+    fn position(&self) -> Duration;
+}
+
 pub enum DrawCommand<'a> {
     Clear(Color),
     Image { media: MediaId, dest_px: RectPx, filter: Filter, alpha: f32 },
@@ -664,7 +733,7 @@ pub enum DrawCommand<'a> {
 }
 ```
 
-`MediaId`, `FontId`, `PointPx`, and `RectPx` are our own newtypes/enums. None of them may be `egui` types. The presenter owns the `MediaId → texture` mapping, so the console never handles backend texture IDs. `MediaId` is stable and console-owned, so the presenter can preload media without knowing the experiment state.
+`MediaId`, `FontId`, `PointPx`, and `RectPx` are our own newtypes/enums. None of them may be `egui` types. The presenter owns the `MediaId` → media mapping (texture/frame sequence and audio), so the console never handles backend texture IDs. `MediaId` is stable and console-owned, so the presenter can preload media without knowing the experiment state.
 
 The sketch borrows text for in-process efficiency. If the presenter becomes out-of-process, make `Scene` serializable (owned strings/IDs) or define a wire format; do not put borrowed buffers on the wire.
 
@@ -699,7 +768,9 @@ A higher-level Pygame-like wrapper can be added later if it earns its keep, but 
 
 - Camera capture on its own thread; publish only the latest frame (bounded mailbox / `triple_buffer`), never a growing queue.
 - Tracker worker consumes the latest frame; UI thread reads the latest `GazeSample`.
-- UI thread never blocks on camera I/O or model fitting.
+- Audio playback runs on `rodio`'s background thread; the presenter only reads `get_pos()` and must never block on audio.
+- Overlay backends that are not eframe viewports (`LayerShellOverlay`, `XwaylandOverlay`) own dedicated in-process threads with their own event loop and renderer; the console controls them over channels. They must never block the console or presenter.
+- UI thread never blocks on camera I/O, model fitting, or disk reads.
 - Use `crossbeam-channel` or `std::sync::mpsc`; avoid `Arc<Mutex<Frame>>` around large image buffers.
 - Console ↔ experiment communication via channels; deferred viewports require this anyway.
 
@@ -736,18 +807,25 @@ overlay = "auto"      # auto | off | egui | layer-shell | xwayland
 
 [overlay]
 monitor = 1
+
+[audio]
+enabled = true
+device = "default"   # or a cpal device name
+volume = 1.0
 ```
 
 `Stimuli.csv` holds the experiment and stimulus table:
 
 ```csv
-id,kind,path,fps,duration_ms,loop
-t01,image,stimuli/t01.png,,3000,false
-t02,sequence,stimuli/t02/,30,5000,false
+id,kind,path,fps,duration_ms,loop,audio
+t01,image,stimuli/t01.png,,3000,false,
+t02,sequence,stimuli/t02/,30,5000,false,stimuli/t02/audio.wav
 ```
 
 - No XLSX. `config.toml` is only machine configuration per R9; experiment metadata, trial order, stimulus list and durations stay in CSV (`Stimuli.csv` and, if needed, `Experiment.csv`).
 - Mapping from the old `Config.csv`: `WIDTH`, `HEIGHT`, `USB` → `config.toml`; `EXP_ID`, `EXPERIMENTER`, `SLIDE_TIME`, `STIM_FILE`, `SHUFFLE` → `Experiment.csv`.
+- If `audio` is set, the WAV must exist and the configured audio device must be available at startup; otherwise fail before the session.
+- `audio` is valid only for `kind=sequence`; image rows must leave it empty. Image+audio can be added later if needed.
 - Validate monitor index/name, resolution, camera index, and file paths at startup. Return typed errors, not panics.
 - Use `serde` + `toml` for reads and `serde` + `csv` for tables. If the console writes `config.toml` back, use `toml_edit` to preserve comments; plain `toml` serialization will drop them.
 - Store monitor identity by index **and** name/EDID; indices can change when monitors are hot-plugged or reordered.
@@ -758,13 +836,14 @@ t02,sequence,stimuli/t02/,30,5000,false
 - **v1: in-process.** eframe console + `EguiPresenter` in one process. Simple, no IPC, shared monotonic clock. The console sends `ExperimentCommand`s to `yet-core`; `yet-core` sends `PresenterCommand`s and `Scene`s to the presenter through a channel. A deferred viewport prevents console repaints from forcing the stimulus window to redraw.
 - **Later: out-of-process.** The same traits over IPC: egui console + `macroquad`/`winit`/SDL presenter in separate processes. This needs serialization, media transfer (or shared file paths), clock synchronization, focus handling, and lifecycle management. Do not build it first; the trait boundary is the prerequisite, not the deployment.
 - The presenter never owns experiment state. If it reports input or frame statistics, it sends events back to the console, which decides what to do.
+- Audio stays with the presenter: the presenter owns the `AudioPlayer` and the audio clock. An out-of-process presenter must not stream audio over IPC; it plays the WAV locally and reports drift/underruns back.
 - A `RecordingPresenter` is both the headless test double and the reference implementation of the protocol.
 
 ---
 
 ## 10. Decision matrix
 
-Weights reflect this project: stimulus correctness, platform parity and overlay capability matter more than UI polish. Video decode is orthogonal (handled by `yet-media`), so it does not change the canvas score.
+Weights reflect this project: stimulus correctness, platform parity and overlay capability matter more than UI polish. Video decode is orthogonally handled by `yet-media`, and audio is handled by `rodio`/`cpal`; neither changes the canvas score.
 
 | Criterion | Weight | egui/eframe | macroquad | Bevy | pixels+winit | SDL2 | iced | slint | tauri |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -813,7 +892,7 @@ Ranking:
 | `trishume/FusionMouse` | Rust + Tobii | **GPL-3.0** | 2018 | Historical eye/head tracking reference; reusable under GPL-3.0 |
 | `Rust-SDL2/rust-sdl2` | SDL2 bindings | MIT (SDL2: zlib) | Active | Fallback canvas/window backend |
 | `parasyte/pixels` examples | winit + wgpu | MIT | Active | Framebuffer/window/precision path |
-| `schmettow/yet-rs` | — | GPL-3.0 | New | This port |
+| `schmettow/yet-rs` | — | **GPL-3.0-only** | New | This port |
 
 Not found:
 
@@ -823,24 +902,24 @@ Not found:
 
 **Licensing decision (R8):** the binary is distributed under **GPL-3.0-only**. `yet_zero` is Apache-2.0, which is GPLv3-compatible; keep the Apache-2.0 notice for ported logic. GPL prior art (`ianny`, `scramblery`, `FusionMouse`, `wanderlay`) is now directly reusable, subject to GPL-3.0 obligations. Slint's GPL option is compatible. LGPL dependencies (GStreamer, an LGPL FFmpeg build) would still carry linking obligations, but neither is a v1 dependency.
 
-**Required follow-up:** replace `yet-rs/LICENSE` with GPL-3.0 and set `license = "GPL-3.0-only"` in `Cargo.toml` when the crate is created. Confirm with all contributors before relicensing an existing repository; for a new repository this is straightforward.
+**Required follow-up:** replace `yet-rs/LICENSE` with GPL-3.0-only and set `license = "GPL-3.0-only"` in `Cargo.toml` when the crate is created. Confirm with all contributors before relicensing an existing repository; for a new repository this is straightforward. Audio dependencies are MIT/Apache-2.0 (`rodio`, `cpal`, `hound`); Symphonia is MPL-2.0 and can be avoided by using WAV.
 
 ---
 
 ## 12. Open questions
 
-The original ten questions are answered (R1–R10), and the follow-up resolved the GNOME strategy (XWayland first), video (pre-decoded), and license (GPL-3.0). These are the remaining implementation decisions. Defaults in bold.
+The original ten questions are answered. The follow-up resolved the GNOME strategy (XWayland first), video (pre-decoded PNG), audio (enabled), license (GPL-3.0-only), and XWayland lifetime (in-process thread). These are the remaining implementation decisions. Defaults in bold.
 
-1. **XWayland overlay details on GNOME.** Does the XWayland fallback handle multi-monitor geometry, fractional scaling, z-order above fullscreen apps, and click-through reliably? **Default: spike first; if it fails, fall back to a GNOME Shell extension or document the limitation.**
-2. **Pre-decoded frame format and manifest.** One directory of PNGs per clip plus `fps`/`duration_ms` columns in `Stimuli.csv`, or a per-clip manifest? **Default: directory + CSV columns; use JPEG/WebP only if disk size becomes a problem.**
-3. **Audio in video clips.** Are video stimuli silent, or is audio part of the experiment? **Default: silent video; audio out of scope.**
-4. **Overlay interaction.** Is the overlay purely visual (gaze dot/heatmap), or must it ever accept input? **Default: visual only; console controls flow; passthrough stays on.**
-5. **Presenter deployment.** In-process `EguiPresenter` first, or a separate presenter process from day one? **Default: in-process first; keep the trait/IPC boundary ready.**
-6. **Monitor identity in `config.toml`.** Index only, or index + name/EDID? **Default: both; fail fast if they disagree.**
-7. **CSV compatibility.** Must the downstream R pipeline keep the yet_zero column names and layout? **Default: yes; add new columns at the end, never rename existing ones.**
-8. **Console placement.** Same machine/second monitor, or a second machine later? **Default: same machine, second monitor; no network/IPC in v1.**
-9. **GPL version.** `GPL-3.0-only` or `GPL-3.0-or-later`? **Default: `GPL-3.0-only`, which is compatible with Slint's GPL option and the GPL prior art.**
-10. **XWayland overlay lifetime.** In-process thread or separate helper process? **Default: separate helper process or dedicated thread, controlled by the console; isolate X11 event-loop quirks from the eframe app.**
+1. **XWayland overlay details on GNOME.** Does the fallback handle multi-monitor geometry, fractional scaling, z-order above fullscreen apps, and click-through reliably? **Default: spike first; if it fails, fall back to a GNOME Shell extension or document the limitation.**
+2. **Pre-decoded manifest layout.** One directory per clip plus `fps`/`duration_ms`/`audio` columns in `Stimuli.csv`, or a per-clip manifest file? **Default: directory + CSV columns; PNG only unless disk pressure forces a fallback.**
+3. **Audio device and failure policy.** Default output device or explicit cpal device? What happens if audio is missing at startup or fails mid-trial? **Default: `device = "default"` with an optional override; fail before the session; abort the trial on mid-trial failure.**
+4. **A/V sync target.** How close must audio and video be? **Default: audio is master, log drift/underruns, aim within tens of milliseconds; no photodiode gate.**
+5. **Overlay interaction.** Is the overlay purely visual (gaze dot/heatmap), or must it ever accept input? Item 5 in the reply was blank, so this remains open. **Default: visual only; console controls flow; passthrough stays on.**
+6. **Presenter deployment.** In-process `EguiPresenter` first, or a separate presenter process from day one? **Default: in-process first; keep the trait/IPC boundary ready.**
+7. **Monitor identity in `config.toml`.** Index only, or index + name/EDID? **Default: both; fail fast if they disagree.**
+8. **CSV compatibility.** Must the downstream R pipeline keep the yet_zero column names and layout? **Default: yes; add new columns at the end, never rename existing ones.**
+9. **Console placement.** Same machine/second monitor, or a second machine later? **Default: same machine, second monitor; no network/IPC in v1.**
+10. **XWayland thread design.** A dedicated in-process thread with its own `x11rb` event loop and channel is chosen; confirm whether it also owns rendering or only the X11 surface. **Default: dedicated in-process thread owns both the X11 event loop and the tiny overlay renderer.**
 
 ---
 
@@ -876,6 +955,11 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 | `ffmpeg-next` | 9.0.0 | 8,245,841 | 2,240,045 | 2026-08-05 | verify (FFmpeg LGPL/GPL) |
 | `ffmpeg-sidecar` | 2.7.0 | 2,116,017 | 623,091 | 2026-10-18 | verify |
 | `gstreamer` | 0.25.4 | 12,261,951 | 3,076,301 | 2026-09-21 | LGPL-2.1 |
+| `rodio` | 0.23.0 | 13,172,359 | 3,705,451 | 2026-10-11 | MIT/Apache-2.0 |
+| `cpal` | 0.18.2 | 25,803,663 | 9,116,605 | 2026-08-16 | Apache-2.0 |
+| `hound` | 3.5.1 | 21,494,614 | 6,304,008 | 2023-09-25 | MIT |
+| `symphonia` | 0.6.1 | 18,765,131 | 9,746,884 | 2026-08-13 | MPL-2.0 |
+| `kira` | 0.12.5 | 1,066,412 | 231,823 | 2026-09-26 | verify |
 | `egui-video` | 0.9.0 | 9,606 | 304 | 2024-10-28 | verify (stale) |
 | `tiny-skia` | 0.12.0 | 60,046,528 | 21,211,758 | 2026-02-02 | BSD-3-Clause (verify) |
 | `cosmic-text` | 0.19.0 | 10,936,675 | 4,351,561 | 2026-04-22 | MIT/Apache-2.0 (verify) |
@@ -898,6 +982,8 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 - `macroquad::window` and `miniquad::conf::{Conf, Platform}` (`swap_interval` is a hint; `high_dpi` default false).
 - `ggez::conf::{Conf, WindowMode}` 0.10 (no explicit vsync field; transparent flag).
 - `pixels::PixelsBuilder` 0.17 (`enable_vsync`, `present_mode`).
+- `rodio::Player` 0.23 (`get_pos()`, `play/pause/stop`, `set_volume`); rodio features `playback` and `hound`.
+- `cpal` 0.18 device/output APIs.
 - crates.io metadata for `video-rs` 0.12, `ffmpeg-next` 9.0, `ffmpeg-sidecar` 2.7, `gstreamer` 0.25, `gtk4-layer-shell` 0.8, `egui-video` 0.9.
 - Upstream `gtk4-layer-shell` README: wlroots/Smithay/Mir/KDE supported; **GNOME-on-Wayland unsupported**.
 - `wanderlay` README: GTK4 + gtk4-layer-shell; `--x11` fallback reported to work on GNOME.
@@ -917,6 +1003,8 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 - XWayland overlay reference: <https://crates.io/crates/x11rb> · <https://github.com/tilacog/wanderlay>
 - video (future runtime decode only): <https://crates.io/crates/video-rs> · <https://crates.io/crates/ffmpeg-next> · <https://crates.io/crates/ffmpeg-sidecar> · <https://crates.io/crates/gstreamer>
 - FFmpeg CLI for setup-time frame extraction: <https://ffmpeg.org>
+- audio: <https://crates.io/crates/rodio> · <https://crates.io/crates/cpal> · <https://crates.io/crates/hound> · <https://crates.io/crates/symphonia>
+- rodio player/clock: <https://docs.rs/rodio/0.23.0/rodio/struct.Player.html> · <https://docs.rs/cpal/0.18.2/cpal/>
 - stale egui video widget: <https://crates.io/crates/egui-video>
 - psychophysics prior art: <https://github.com/altunenes/weber_fechner>
 - Windows overlay reference: <https://github.com/procmod/overlay>
@@ -925,7 +1013,7 @@ Download counts and dates as returned by the crates.io API on 2026-10-25.
 
 ## 14. Proposed next step (spikes, no production code)
 
-Before committing to the architecture, run six time-boxed spikes. The first three are go/no-go; the rest resolve the new requirements.
+Before committing to the architecture, run seven time-boxed spikes. The first three are go/no-go; the rest resolve the new requirements.
 
 1. **eframe presentation spike (R2, R6).**
    Fullscreen on monitor 2, load/scale/center an image, draw text and circles, log frame timestamps. Pass: correct placement, stable frame intervals, no coordinate drift at 100% and 150% scaling. No photodiode requirement.
@@ -934,15 +1022,18 @@ Before committing to the architecture, run six time-boxed spikes. The first thre
    Root console window + fullscreen presenter viewport; the console sends `ExperimentCommand`s to `yet-core`, which sends `PresenterCommand`s and `Scene`s to the presenter; the presenter never advances state. Pass: console controls do not stall the stimulus; deferred viewport works; focus handling is understood.
 
 3. **Overlay platform spike (R1, R3, R11).**
-   Windows, macOS, at least one layer-shell Wayland compositor (KDE or Sway), and GNOME via the XWayland fallback: transparent, always-on-top, click-through whole-monitor gaze dot. Pass: clicks reach the app below, no focus steal, correct monitor placement. Native X11 is out of scope. This is the go/no-go for R11.
+   Windows, macOS, at least one layer-shell Wayland compositor (KDE or Sway), and GNOME via the in-process XWayland fallback: transparent, always-on-top, click-through whole-monitor gaze dot. Pass: clicks reach the app below, no focus steal, correct monitor placement. Native X11 is out of scope. This is the go/no-go for R11.
 
 4. **Video spike (R5).**
-   Use the FFmpeg CLI to prepare one image-sequence clip, then load and pace it through the presenter. Pass: a tiny reproducible pre-decode script/manifest, first frame preloaded, fps/PTS pacing, late-frame drop, no UI-thread blocking, correct last-frame behavior, and acceptable disk read throughput. No runtime decoder is tested or added.
+   Use the FFmpeg CLI to prepare one PNG sequence **and its WAV audio**, then load and pace it through the presenter. Pass: a tiny reproducible pre-decode script/manifest, first frame preloaded, fps/PTS pacing, late-frame drop, no UI-thread blocking, correct last-frame behavior, and acceptable disk read throughput. No runtime decoder is tested or added.
 
-5. **Config spike (R9).**
-   Load `config.toml` + `Stimuli.csv`, validate monitor/camera/file paths, and render a clear error for a bad monitor index or missing stimulus. Pass: no panics, actionable messages, comments in `config.toml` preserved if the console writes it (`toml_edit`).
+5. **Audio spike (R12).**
+   Play the extracted WAV through `rodio`/`cpal`: preload, play, pause, resume, stop, volume, `get_pos()`. Drive the PNG sequence from the audio clock and log drift/underruns. Pass: audible A/V sync within tens of milliseconds, no UI-thread blocking, clean device-open failure before the session, and a defined mid-trial failure policy.
 
-6. **Camera texture spike (R6).**
+6. **Config spike (R9).**
+   Load `config.toml` + `Stimuli.csv`, validate monitor/camera/audio/file paths, and render a clear error for a bad monitor index, missing stimulus, or missing audio device. Pass: no panics, actionable messages, comments in `config.toml` preserved if the console writes it (`toml_edit`).
+
+7. **Camera texture spike (R6).**
    Feed a fake or real camera frame into egui at 30–60 fps while the stimulus animates. Pass: UI thread never blocks, frame p99 stays within budget, no texture allocation per frame.
 
-If spikes 1–3 pass, proceed with `yet-present` + `yet-console` + `EguiPresenter` + `yet-core`. If spike 3 fails on GNOME Wayland even via XWayland, decide between a GNOME Shell extension and a documented limitation before building the overlay. If spike 1 shows visible jank, keep the traits and swap only the presenter backend to `winit + wgpu`/`pixels`.
+If spikes 1–5 pass, proceed with `yet-present` + `yet-console` + `EguiPresenter` + `yet-core`. If spike 3 fails on GNOME Wayland even via XWayland, decide between a GNOME Shell extension and a documented limitation before building the overlay. If spike 1 shows visible jank, keep the traits and swap only the presenter backend to `winit + wgpu`/`pixels`.
