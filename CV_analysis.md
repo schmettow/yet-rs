@@ -1,75 +1,101 @@
-# CV crate survey for `yet-rs`
+# CV crate analysis and requirements for `yet-rs`
 
-- **Status:** research only — no code written.
+- **Status:** analysis only — no Rust code written.
 - **Date:** 2026-10-25.
-- **Scope:** camera capture and control, frame representation, grayscale conversion, eye detection, and the feature-extraction boundary. UI/graphics, table I/O, and regression are out of scope except for short notes.
-- **Method:** crates.io search API, then downloaded the `.crate` archives and read the source. Descriptions on crates.io are unreliable for this domain; every claim below about an API or a missing feature was checked against the published source or docs.
+- **Scope:** camera capture, frame representation, feature extraction, and the gaze-model boundary. UI/graphics, table I/O, and the stimulus presentation are out of scope except where they constrain the CV design.
+- **Method:** crates.io search API, then downloaded the `.crate` archives and read the source, including build scripts. Descriptions alone are not sufficient in this domain.
 
 ---
 
-## 0. Bottom line
+## 0. Requirements (owner decisions)
 
-| Concern | Recommendation | Version | Why |
-|---|---|---|---|
-| Camera, cross-platform | **`nokhwa`**, default features **off** | 0.10.11 | Mature, cross-platform, pure-Rust bindings. Its default `decoding` feature pulls the C library `mozjpeg` — disable it. |
-| Camera, Linux-only | **`v4l`** | 0.14.0 | Lean, mature, direct V4L2, full camera controls. No macOS/Windows. |
-| Frame decode | **`image`** with only the `jpeg` feature | 0.25.10 | Pure Rust; JPEG via `zune-jpeg`. Keep it at the adapter/UI edge, not in the core. |
-| Eye detection | **in-house Haar cascade** (`roxmltree` + own integral image) | — | No crates.io crate loads OpenCV's `haarcascade_*.xml`. See §4. |
-| Eye-detection fallback | **`FixedRegionDetector`** | — | The prototype only detects in the "Detect" state; if the eye is fixed relative to the camera, a configured ROI is sufficient. |
-| Alternative detector | `pico-detect` | 0.7.0 | Genuine pure-Rust PICO cascade, but needs a PICO-format model, not the existing XML. |
-| Not recommended | `opencv`, `rustface`, `mediapipe`, `scirs2-vision`, `opencv-no-c-*`, `shiguredo_video_device`, `webcam` | — | C/C++ or ONNX dependency, immature, or does not actually provide the missing loader. |
+These are the decisions that drive every recommendation below. They supersede the open questions in the previous version of this document.
 
-**Key insight:** the CV surface of the prototype is tiny. The camera delivers a frame, a detector optionally finds one eye, four quadrant means are computed, and a 4→2 linear model decodes gaze. There is no reason to bring OpenCV, a DNN runtime, or a large CV framework into the port.
+### Platform and build
 
-Illustrative dependency set (not created yet):
+- **R1. All three desktop OSes are v1 targets.** Linux, macOS, and Windows must work from one codebase.
+- **R2. Users build from source by default.** No third-party C/C++ libraries, system packages, or heavy build dependencies. No OpenCV. Camera access is inherently OS-level FFI, so "no FFI" is interpreted as **no C/C++ toolchain and no C library**; OS bindings (`libc`, `windows`, `objc`) and OS frameworks (V4L2, AVFoundation/CoreMedia, Media Foundation) are unavoidable and allowed. A C fallback, if ever needed, must be optional and off by default.
+- **R3. Implementations must be swappable behind traits.** Camera and model implementations must not leak into the tracker. The `cameras` crate is not adopted for now.
+- **R4. The camera is a simple, low-resolution USB 2.0 device.** Bandwidth is not a constraint. Support both uncompressed YUYV/GRAY and MJPEG; MJPEG decoding must remain pure Rust.
+- **R5. No in-app exposure or gain control is required.**
+
+### Tracking method
+
+- **R6. Eye detection is removed.** No Haar cascade, no XML parser, no detector crate. The eye region is a fixed, configurable ROI.
+- **R7. Drift is handled by frequent, quick recalibration**, not by global brightness normalization. The model must be cheap to refit repeatedly, and the illumination profile must be preserved.
+- **R8. The blurred stimulus preview is part of the method.** It keeps the screen-induced illumination distribution without revealing the stimulus. The presentation module owns the blur; the tracker consumes the resulting eye frames.
+- **R9. The feature vector is the four quadrant means (`QuadBrightness`).** No additional contrast normalization or low-contrast rejection is required.
+- **R10. Use a 4→2 linear regression now**, behind an exported `GazeModel` trait so it can be replaced.
+
+### Architecture
+
+- **R11. One crate with modules.** Modules interoperate through traits. The trait boundaries must keep a later split into separate crates mechanical.
+- **R12. Eye-tracking logic stays independent of UI/graphics.** No UI types in the tracker modules.
+- **R13. Keep the MSRV in mind.** `image` 0.25.10 requires Rust 1.88, so that is the current floor. `nalgebra` 0.34 keeps the floor at 1.88; `nalgebra` 0.35 raises it to 1.89.
+- **R14 (derived from the efficiency requirement).** Capture runs on a worker thread; the tracker consumes the latest frame; no unbounded frame queue.
+
+> **FFI nuance.** There is no pure-Rust camera API: a webcam is a kernel/OS device, so every camera crate uses FFI. The achievable constraint is "no C/C++ library and no build-time C compiler". Both recommended backends meet that; see §3.1.
+
+---
+
+## 1. Conclusions
+
+| Concern | Decision |
+|---|---|
+| Camera, Linux | **`linuxvideo` 0.3.5** — direct V4L2 ioctls via `libc`, **no `build.rs`**, no libv4l, no bindgen |
+| Camera, macOS/Windows | **`nokhwa` 0.10.11** with `default-features = false`; `input-avfoundation` on macOS, `input-msmf` on Windows |
+| Camera, explicitly not used | `v4l` and `nokhwa`'s `input-v4l`/`input-native` on Linux: both pull in `v4l2-sys-mit`, which runs **bindgen** and requires libclang; `cameras` inherits the same on Linux and is too new |
+| Frame decode | **`image` 0.25.10** with `jpeg` + `png`; pure Rust via `zune-jpeg` |
+| Eye detection | **Removed.** Fixed `EyeRegion`; no Haar, no XML, no `roxmltree`, no detector trait |
+| Features | `QuadBrightness` from four direct quadrant sums; no integral image needed at this ROI size |
+| Gaze model | **`nalgebra` 0.34** behind an exported `GazeModel` trait |
+| Architecture | One crate, modules, `FrameSource` + `GazeModel` as the seams |
+| Removed from consideration | `roxmltree`, `imageproc`, `pico-detect`, `opencv`, `rustface`, `mediapipe`, `scirs2-vision`, `oximedia-cv`, `opencv-no-c-*` |
+
+Illustrative dependency set:
 
 ```toml
-# Linux adapter
-nokhwa = { version = "0.10.11", default-features = false, features = ["input-v4l"] }
-# or, for all three desktop platforms: features = ["input-native"]
+[target.'cfg(target_os = "linux")'.dependencies]
+linuxvideo = "0.3.5"
 
-image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
-roxmltree = "0.21.2" # only if/when the Haar detector is built
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+nalgebra = "0.34"
+thiserror = "2"
+crossbeam-channel = "0.5"
 ```
 
-Do **not** enable `nokhwa`'s `decoding` feature unless a C dependency is acceptable; see §2.2.
+**Key insight:** dropping eye detection removes the only non-trivial CV algorithm. The remaining pipeline is camera → fixed ROI → four means → 4→2 linear fit. No CV framework, no XML parser, no ML runtime, and no image-processing framework is needed. The hard part of this port is now the **build graph**, not the algorithms.
 
 ---
 
-## 1. What the Python prototype actually needs
+## 2. What the prototype needs now
 
-All CV-relevant logic is in `yet_zero/src/yet_zero/lib.py` (`class YETI`).
+The Python prototype's detection stage is removed (R6). Everything else is unchanged.
 
-| Prototype step | OpenCV call | Rust plan |
+| Step | Python / OpenCV | Rust plan |
 |---|---|---|
-| Open USB camera, read FPS/size | `cv.VideoCapture(usb)`, `CAP_PROP_FPS`, `CAP_PROP_FRAME_WIDTH/HEIGHT` | `nokhwa` (or `v4l` on Linux) |
+| Open camera, read FPS/size | `cv.VideoCapture(usb)`, `CAP_PROP_FPS`, `CAP_PROP_FRAME_WIDTH/HEIGHT` | `linuxvideo` or `nokhwa` behind `FrameSource` |
 | Read one frame | `device.read()` | `FrameSource::next_frame()` |
-| Reject blank frame | `np.sum(frame) == 0` | Cheap in-house check (sampled sum / checksum) |
-| Eye detection | `CascadeClassifier(haarcascade_eye.xml)` + `detectMultiScale(scaleFactor=1.1, minNeighbors=5, minSize=(50,50))` | In-house Haar cascade (§4), `pico-detect`, or fixed region |
-| Crop eye | NumPy slicing | In-house |
-| BGR → gray | `cv.cvtColor(..., BGR2GRAY)` | In-house luma; for YUYV, take the Y plane directly |
-| Four quadrant means | `np.mean` over four slices | In-house (integral image or direct loops) |
-| 4→2 linear regression | `sklearn.linear_model.LinearRegression` | `nalgebra`/`linfa` (out of scope) |
-| UI-only blur / RGB / rotate | `cv.blur`, `cvtColor`, `np.rot90`, `pygame.transform` | UI crate (`imageproc`, `image`) |
+| Reject blank frame | `np.sum(frame) == 0` | Cheap sampled check |
+| Crop the eye | `frame[y:y+h, x:x+w]` from detection | Fixed `EyeRegion` from configuration |
+| BGR → gray | `cv.cvtColor(..., BGR2GRAY)` | Take Y from YUYV/GRAY; decode MJPEG with `image` |
+| Four quadrant means | `np.mean` over four slices | `quad_brightness(&GrayFrame, EyeRegion)` |
+| 4→2 linear regression | `sklearn.linear_model.LinearRegression` | `LinearGazeModel` (`nalgebra`), behind `GazeModel` |
+| Blurred stimulus preview | `cv.blur` | `image::imageops::fast_blur`, computed once and cached |
+| UI rotate/scale/color | `cvtColor`, `np.rot90`, `pygame.transform` | UI module; not CV |
 
-The only non-trivial CV item is the Haar classifier. Everything else is arithmetic on a grayscale buffer.
+One deliberate change from the Python code: it detected on the BGR frame and converted to gray only after cropping. Luma is a per-pixel transform, so the port converts once at the frame source and runs the feature extraction on `GrayFrame`; this is equivalent and cheaper.
 
-One deliberate change from the prototype: `yet_zero` detects on the BGR frame and converts to gray only after cropping. Luma is a per-pixel transform, so converting once at the frame source and running both detection and feature extraction on `GrayFrame` is equivalent and cheaper. It also gives the traits a single frame type.
+### 2.1 Quadrant order and exact split
 
-### 1.1 Measured model facts
-
-From `yet_zero/src/yet_zero/haarcascade_eye.xml` (353,619 bytes):
-
-- `opencv_storage` → `cascade` with `featureType = HAAR`, window **20×20**, `stageNum = 24`.
-- **24 stages**, **1,066 weak classifiers**, all single stumps. Stage sizes range from 6 to 93 weak classifiers.
-- Each stump: `internalNodes` contains four numbers `(left, right, featureIdx, threshold)`; `leafValues` contains two numbers. Stump thresholds range from -0.389 to 0.431.
-- **1,066 features**, each with **two or three** rectangles in `<rects>` (899 features have 2, 167 have 3), each rectangle written as `(x y w h weight)`.
-- **No tilted features** (`<tilted>` occurs zero times).
-- License: Intel License Agreement (redistribution allowed with notice). Keep the header if the XML is bundled.
-
-### 1.2 A porting hazard in the feature order
-
-The Python code names the quadrants inconsistently with its own slicing:
+The Python code names two quadrants inconsistently with its own slicing:
 
 ```python
 b_NW = eye_frame[0:h/2, 0:w/2]      # top-left     -> NW, correct
@@ -78,195 +104,170 @@ b_SW = eye_frame[0:h/2, w/2:w]      # top-right    -> actually NE
 b_SE = eye_frame[h/2:h, w/2:w]      # bottom-right -> SE, correct
 ```
 
-For a linear model the order is arbitrary as long as it is consistent, so this is harmless *inside* the prototype. It becomes a bug when mapping old calibration CSVs into a Rust struct with named fields. Define `QuadBrightness { nw, ne, sw, se }` with correct semantics and retrain (calibration is cheap). If old CSVs must be read, document that their column order is `(nw, sw, ne, se)`.
+For a linear model the order is arbitrary if it is consistent, so this is harmless inside the prototype. It becomes a bug when old calibration CSVs are mapped into a Rust struct with named fields.
+
+Define the canonical order `(nw, ne, sw, se)` and this exact split:
+
+```text
+mid_x = width / 2
+mid_y = height / 2
+NW = rows [0, mid_y)    cols [0, mid_x)
+NE = rows [0, mid_y)    cols [mid_x, width)
+SW = rows [mid_y, height) cols [0, mid_x)
+SE = rows [mid_y, height) cols [mid_x, width)
+```
+
+The remainder pixel of an odd width/height goes to the east/south quadrants. If old Python CSVs must be read, document that their column order is `(nw, sw, ne, se)`.
 
 ---
 
-## 2. Camera capture and control
+## 3. Camera capture
 
-### 2.1 Candidates
+### 3.1 The build-toolchain constraint (critical)
 
-| Crate | Latest | Platforms | Implementation | API / controls | Maintenance | Verdict |
+This is the finding that decides the camera crate.
+
+`v4l` 0.14.0 — the most mature Linux camera crate — depends on `v4l2-sys-mit` 0.3.0, whose **`build.rs` runs `bindgen` 0.65.1**. `bindgen` needs **libclang** at build time. That is exactly the kind of toolchain burden R2 excludes: a user with only a Rust toolchain cannot run `cargo build`.
+
+The same applies to:
+
+- `nokhwa`'s Linux backend: `nokhwa-bindings-linux` depends on `v4l` with the `v4l2-sys` feature, so `input-v4l` and `input-native` inherit the bindgen/libclang requirement.
+- `cameras` 0.3.2: its Linux backend depends on `v4l` 0.14 with default features, so it inherits the same requirement.
+
+`linuxvideo` 0.3.5 avoids this: it has **no `build.rs`**, depends only on `libc`, and calls the V4L2 ioctls directly without `libv4l` or other C code. It is the only **maintained** general USB-camera crate in the search that satisfies R2 on Linux; `rscam` also has no build script, but it is from 2019.
+
+**FFI is still present.** `linuxvideo` issues ioctls through `libc`; that is OS FFI, but there is no C code, no C compiler, and no system package. The same is true for `nokhwa` on macOS/Windows. A literally zero-FFI camera does not exist; if R2 is read literally, the only option is a file/pipe frame source, which is not a camera. The recommendations assume the "no C/C++ toolchain" reading.
+
+### 3.2 Candidates
+
+| Crate | Latest | OS | Build-time dependencies | API / notes | Maintenance | Verdict |
 |---|---|---|---|---|---|---|
-| **`nokhwa`** | 0.10.11 | Linux, macOS, Windows | `v4l` on Linux, AVFoundation/Media Foundation bindings; no C build step (with `decoding` off) | `Camera`, `CameraFormat`, `frame()` / `frame_raw()`, `CallbackCamera`, `KnownCameraControl` | Since 2021, 632k downloads, 817★; repo moved to `l1npengfih/nokhwa`, last push 2026-05 | **Recommended** |
-| **`v4l`** | 0.14.0 | Linux | Safe V4L2 bindings (`v4l2-sys-mit`, no libv4l by default) | `Device`, `Format`, `Stream`, `Frame`; full V4L2 controls | 8.1M downloads, last push 2024-10; stable, not actively developed | **Linux-only fallback** |
-| `cameras` | 0.3.2 | Linux, macOS, Windows | `v4l`, `objc2`, `windows`; `zune-jpeg` for MJPEG — pure Rust, no build script | Data-oriented free functions; explicit formats; `controls` feature | Created 2026-04, 3.1k downloads, 11★, last push 2026-05 | Watch / spike, do not bet v1 |
-| `shiguredo_video_device` | 2026.3.0 | Linux, macOS, Windows | Bundled **C/Objective-C** (`video_v4l2.c`, `video_avf.m`, Media Foundation), `build.rs` + `cc` + `bindgen` | `device` / `capture` modules | Shiguredo, 10.7k downloads, active | Reject: not pure Rust |
-| `linuxvideo` | 0.3.5 | Linux | V4L2 | Thin wrapper | 52k downloads, last release 2025-07 | Redundant; `v4l` is better |
-| `camera_capture` | 0.5.0 | Linux, Windows | Linux + Windows backends | — | Last release 2017 | Reject: stale |
-| `rscam` | 0.5.5 | Linux | V4L2 | — | Last release 2019 | Reject: stale |
-| `opencv` | 0.101.1 | all | FFI to OpenCV C++ | — | Very active | Reject: violates principle 1 |
-| `webcam` | 0.0.0 | — | Stub | — | 2021, 1.7k downloads | Reject: empty stub |
-| `opencv-no-c` / `-videoio` | 0.1.0 | — | Pure-Rust OpenCV port | `VideoCapture` for **AVI/Y4M/image sequences only** | Published 2026-10-20 | Reject for camera: no live-device backend |
+| **`linuxvideo`** | 0.3.5 | Linux | **Only `libc`; no `build.rs`** | `Device`, `ReadStream`, `PixFormat::bytes_per_line`, controls, UVC | 52k downloads, last release 2025-07, 0BSD | **Linux backend** |
+| **`nokhwa`** | 0.10.11 | macOS, Windows (Linux via `v4l`) | macOS `build.rs` only emits framework link flags; Windows none; Linux `input-v4l` pulls bindgen | `Camera`, `RequestedFormat`, `frame_raw`, `Buffer`, `CallbackCamera` | 632k downloads, last push 2026-05, Apache-2.0 | **macOS/Windows backend**; do not enable `input-v4l`/`input-native` |
+| `v4l` | 0.14.0 | Linux | **`v4l2-sys-mit` runs bindgen → libclang** | `Device`, `Stream`, `Frame`; full V4L2 controls | 8.1M downloads, last push 2024-10 | Fallback only; violates R2 |
+| `cameras` | 0.3.2 | all | Linux `v4l` → bindgen | Clean data-oriented API, `zune-jpeg` | 3.1k downloads, created 2026-04 | Not now (R3); also inherits bindgen on Linux |
+| `shiguredo_v4l2` | 2026.2.0 | Linux | Only `libc`; no `build.rs` | **Raspberry Pi M2M codec bindings**, not USB camera capture | 692 downloads | Reject: wrong device class |
+| `shiguredo_video_device` | 2026.3.0 | all | Bundled C/Objective-C, `cc` + `bindgen` | Cross-platform API | 10.7k downloads | Reject: C toolchain |
+| `rscam` | 0.5.5 | Linux | Only `libc`; no `build.rs` | V4L2 wrapper | Last release 2019 | Fallback only; stale |
+| `camera_capture` | 0.5.0 | Linux/Windows | `build.rs` + `pkg-config` (system library) | — | Last release 2017 | Reject |
+| `webcam` | 0.0.0 | — | — | Stub | 2021 | Reject |
+| `opencv` | 0.101.1 | all | OpenCV C++ | Full OpenCV | Active | Reject: C++ toolchain |
 
-Also present but not relevant: `puppyeyes` and `tobii` are eye-tracking *hardware* crates, not general USB camera capture; `shiguredo_v4l2`, `styx-v4l2`, `bevy_v4l2` are niche V4L2 wrappers.
+### 3.3 Recommendation: one trait, two platform backends
 
-### 2.2 Recommendation: `nokhwa`, with default features off
+Use a single `FrameSource` trait and implement it twice:
 
-`nokhwa` is the only mature cross-platform option that does not require a C/C++ toolchain when configured correctly.
+- **Linux:** `linuxvideo` 0.3.5.
+- **macOS and Windows:** `nokhwa` 0.10.11, default features off, per-OS input feature.
 
-**The `decoding` trap.** `nokhwa`'s default feature is `decoding`, which enables `nokhwa-core/mjpeg`, which depends on **`mozjpeg`** — a C library built with `cc`. That contradicts principle 1. Disable default features:
+This is exactly the kind of swap R3 asks for, and it keeps the build graph free of libclang and C/C++.
+
+**Linux adapter (`linuxvideo`):**
+
+1. `Device::open("/dev/video0")`.
+2. Enumerate `device.formats(BufType::VIDEO_CAPTURE)` and prefer `YUYV` (or a grayscale fourcc such as `GREY` if the device exposes it); fall back to `JPEG` first, then `MJPG`.
+3. Negotiate with `device.video_capture(PixFormat::new(width, height, format))`.
+4. Read `capture.format().bytes_per_line()` for the row stride.
+5. `capture.into_stream()?` and `stream.dequeue(|buf| { ... })`; copy into `GrayFrame`.
+6. On error, map to the crate error type; `dequeue` errors are recoverable per frame.
+
+**macOS/Windows adapter (`nokhwa`):**
+
+1. On macOS, call `nokhwa_initialize` once to request camera permission.
+2. `Camera::new(CameraIndex::Index(0), RequestedFormat::with_formats(RequestedFormatType::Closest(...), &[FrameFormat::YUYV, FrameFormat::GRAY, FrameFormat::MJPEG]))`.
+3. `open_stream()`.
+4. `frame_raw()` (or `frame()` for the `Buffer` with timestamp) and convert to `GrayFrame`.
+5. Keep `Camera` on the capture thread. It has an `unsafe impl Send` but is not `Sync`.
+
+**Shared conversion:** one function takes `(buffer, format, width, height, stride)` and returns `GrayFrame`:
+
+- `YUYV`: luma is byte `row*stride + 2*x` (4:2:2 packs Y0 U Y1 V).
+- `GRAY`: byte `row*stride + x`.
+- `MJPEG`: `image::load_from_memory_with_format(buf, ImageFormat::Jpeg)` then `.to_luma8()`; pure Rust through `zune-jpeg`.
+
+At 640×480@30, YUYV is ~18 MB/s, comfortably within USB 2.0. At 1280×720@30 it is ~55 MB/s and may require MJPEG. The target camera is low-resolution, so YUYV is the preferred path; MJPEG stays available (R4).
+
+**No exposure/gain control (R5).** The device's auto-exposure may run. That is acceptable because drift is handled by recalibration (R7), not by locking the camera or normalizing brightness. Do not add a controls API.
+
+**Threading (R14).** A dedicated capture thread owns the camera and sends `GrayFrame` over a bounded channel of capacity 1. If the channel is full, replace the stale frame rather than queueing. `crossbeam-channel` makes this clean; `std::sync::mpsc` is sufficient if an extra dependency is unwanted. Do not make the tracker async: a 30 fps camera is a blocking source, and an async runtime adds dependencies without improving latency.
+
+**Permissions:** macOS TCC (handled by `nokhwa_initialize`), Windows camera privacy settings, Linux `video` group membership. Document these in the README; they are the most common first-run failures.
+
+### 3.4 Fallbacks if `linuxvideo` fails on the real camera
+
+- `v4l` 0.14.0 is more widely used and has full controls, but requires libclang at build time. Treat it as a **documented fallback**, not the default: add it only if a `linuxvideo` limitation is a blocker, and warn users that libclang is required.
+- `rscam` 0.5.5 has no build script and only `libc`, but it is from 2019. Not a first choice.
+- Do **not** switch to `cameras` as a workaround: it is new and inherits `v4l`/bindgen on Linux.
+- `shiguredo_v4l2` is Raspberry Pi M2M codec bindings, not a USB camera capture crate.
+- `camera_capture` requires `pkg-config`/system libraries and is from 2017.
+
+---
+
+## 4. Frame representation and image processing
+
+### 4.1 `image` 0.25.10
+
+MIT/Apache-2.0, MSRV 1.88, 225M downloads. It provides the buffer types and pure-Rust JPEG/PNG decoding; JPEG uses `zune-jpeg`.
 
 ```toml
-nokhwa = { version = "0.10.11", default-features = false, features = ["input-v4l"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ```
 
-Use `input-v4l`, `input-avfoundation`, or `input-msmf` per target, or `input-native` for all three. `output-threaded` (which enables `CallbackCamera`) is optional; a plain capture thread is often simpler.
+`jpeg` covers MJPEG frames and JPEG stimuli; `png` covers the stimulus files. Add formats only when the stimulus set needs them.
 
-**How to get frames without `decoding`:**
+### 4.2 The blurred stimulus preview
 
-- `Camera::frame_raw()` returns the backend buffer unchanged (`Cow<[u8]>`), bypassing all decoders.
-- `Camera::frame()` returns a `Buffer` with `.buffer()`, `.resolution()`, `.source_frame_format()`, and `.capture_timestamp()`.
-- `RequestedFormat::with_formats(RequestedFormatType::Closest(...), &[FrameFormat::YUYV, FrameFormat::MJPEG, FrameFormat::GRAY])` avoids having to name a decoder type at all.
-- Decode MJPEG yourself with `image`'s `jpeg` feature (which uses pure-Rust `zune-jpeg`), or avoid JPEG entirely by requesting YUYV/GRAY.
+R8 makes the blur functional, not cosmetic: it preserves the illumination distribution while hiding the stimulus. Use `image::imageops::fast_blur` (or `blur`) on the loaded stimulus, **once per stimulus**, and cache the result. Do not blur every frame as the Python code does; the Python version re-blurs every loop, which is wasted work.
 
-**Why YUYV is attractive here.** The tracker only needs luminance. YUYV 4:2:2 stores a Y byte for every pixel; the luma plane is every other byte. There is no color conversion and no JPEG decode. At 640×480@30 this is ~18 MB/s, comfortably within USB 2.0; at 1280×720@30 it is ~55 MB/s and may require MJPEG. Given the prototype's `minSize=(50,50)` and the nature of the features, 640×480 is likely sufficient. If the camera exposes `GRAY` (common for IR eye cameras), request that and the adapter becomes a memcpy.
+The blur belongs to the presentation module. The tracker never sees the stimulus image; it only sees the camera frames. This keeps R8 and R12 separate.
 
-**Exposure and gain are part of CV correctness.** The four quadrant means are absolute brightness values. Auto-exposure will drift during a calibration run and the linear model will see a moving target. Lock `KnownCameraControl::Exposure`, `Gain`, and `Focus` (autofocus off) before calibration, and expose a manual override in the UI. `nokhwa` supports these controls; `v4l` exposes them directly.
+### 4.3 No `imageproc`
 
-**Threading.** Keep capture on a dedicated OS thread. A bounded channel of capacity 1 with "replace the stale frame" semantics is the right shape at 30 fps; the tracker should always process the newest frame, not a backlog. `crossbeam-channel` is the pragmatic choice; `std::sync::mpsc` is enough if only one consumer exists. Do not make the CV core async: a camera is a blocking 30 fps source, and an async runtime adds dependencies without improving latency. `nokhwa::CallbackCamera` is available if a callback style is preferred, but a `FrameSource` implementation over `Camera` keeps the adapter boundary explicit.
+`imageproc` 0.27.0 is not needed:
 
-**Linux-only alternative.** If v1 targets Linux only, use `v4l` directly. It is leaner than `nokhwa`, gives direct access to `Frame` bytes and all V4L2 controls, and has 8.1M downloads. It has no macOS/Windows support, which is the only reason it is not the primary recommendation.
+- Its `haar` module is irrelevant now that detection is removed (R6).
+- Its `stats` module has no mean function; quadrant means are in-house regardless.
+- Its non-optional `nalgebra`, `rand`, `rand_distr`, `itertools`, and `num` dependencies are heavy for a crate that would only contribute a blur.
+- `image::imageops::fast_blur` covers the one blur this project needs.
 
-**Watch list: `cameras` 0.3.2.** It is the cleanest design of the bunch — plain data types, explicit format negotiation, no trait objects, `zune-jpeg` for MJPEG, controls behind a feature — and it is pure Rust end to end. It was created in April 2026 and has ~3k downloads. That is not enough maturity for a foundation, but it is worth a one-day spike against the actual camera; if it works, it is a better long-term fit than `nokhwa`.
+### 4.4 `GrayFrame` and quadrant means
 
-**Rejected on principle.** `shiguredo_video_device` is cross-platform and well maintained, but it is a bundled C/Objective-C library behind a Rust API. `opencv` and `nokhwa`'s `input-opencv` feature both require an OpenCV installation. Neither fits principle 1.
+Define `GrayFrame { width, height, data: Vec<u8> }` in the tracker module; do not use `image` types in the traits. The adapters convert from `linuxvideo`/`nokhwa` and from MJPEG at the boundary.
 
----
-
-## 3. Frame representation and image processing
-
-### 3.1 `image` 0.25.10
-
-MIT/Apache-2.0, MSRV 1.88, 225M downloads. Provides `GrayImage`/`Luma<u8>`, `RgbImage`, `DynamicImage`, and decoding. Its JPEG path uses pure-Rust `zune-jpeg` 0.5.5. Keep the feature set minimal:
-
-```toml
-image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
-```
-
-For the core tracker, however, do not use `image` types in the trait signatures. Define an owned `GrayFrame { width, height, data }` in the core and convert at the adapter boundary. That keeps the tracking logic independent of any image crate and makes tests trivial.
-
-### 3.2 `imageproc` 0.27.0 — useful, but not in the core
-
-MIT, MSRV 1.87, edition 2024, active (last push 2026-10-01). It provides:
-
-- `integral_image`, `integral_squared_image`, `sum_image_pixels`, `variance`
-- filters (Gaussian, box, median), drawing, geometric transforms
-- `stats`: min/max, histogram, percentile, RMSE, PSNR
-- `haar`: **Haar-like feature enumeration and evaluation only**
-
-What it does **not** provide:
-
-- No object detector, no cascade model, no XML loader, no `detectMultiScale` equivalent.
-- `imageproc::stats` has **no mean** function. Quadrant means are in-house regardless.
-- Its `haar` module supports five untilted feature types and is a low-level evaluator, not a classifier.
-
-`imageproc` is also heavier than it looks: `nalgebra`, `rand`, `rand_distr`, `itertools`, and `num` are non-optional, and the default features add `rayon`, `fft`, and text rendering. For this project:
-
-- Implement the summed-area table and quadrant means in-house (~30 lines). `summed-area-table` 2.0.0 exists, but its last release was 2017 and recent downloads are effectively zero; the table is trivial to test and keeps the core dependency-free.
-- Use `imageproc` only in the UI crate if blur/resize/drawing are needed, where its weight is already paid for by the graphics stack.
-
-### 3.3 Grayscale
-
-`image::DynamicImage::to_luma8()` uses the standard luma weights. For YUYV input, skip it: the Y plane is already luma and is cheaper and more faithful to the sensor. For MJPEG, decode to RGB then convert, or use `zune-jpeg` directly if the extra dependency is justified.
+At the target ROI size, four direct loops are enough; an integral image adds complexity for no measurable gain. Compute sums in `u32`/`u64` and divide by the exact pixel counts. Keep the means absolute (R7/R9): do **not** normalize them by the ROI mean or by a reference frame.
 
 ---
 
-## 4. Eye detection: the Haar cascade gap
+## 5. Eye detection: removed
 
-### 4.1 Search evidence
+The owner has removed the detection feature (R6). Consequently:
 
-Queries against the crates.io API on 2026-10-25:
+- No Haar cascade, no `haarcascade_eye.xml`, no `roxmltree`, no XML parser.
+- No `EyeDetector` trait, no `pico-detect`, no `opencv`, no `rustface`, no `mediapipe`.
+- No low-contrast rejection or feature normalization stage (R9).
+- No `EyeDetection`/score type; the eye box is a configuration value, not a detection result.
 
-| Query | Total hits | Relevant hits |
-|---|---:|---|
-| `haarcascade` | **0** | — |
-| `haar cascade` | 8 | `oximedia-cv`, `scirs2-vision` (neither is a loader) |
-| `cascade classifier` | 172 | `rustface` (C++ FFI), `pico-detect`, `opencv-no-c-objdetect` |
-| `viola jones` | 1 | `scirs2-vision` (skeleton) |
-| `opencv cascade` | 5 | `opencv-no-c-objdetect`, `rustface`, `warden-vision`, `scirs2-vision` |
-| `eye cascade` | 31 | `pico-detect` (plus noise) |
+The eye region is a fixed `EyeRegion` configured after the camera format is known (pixels), or supplied as normalized fractions and converted to pixels. If the ROI acquisition becomes a usability problem, a one-time setup screen can let the user draw it; that is a UI concern, not a CV dependency.
 
-Name variants (`haar-detector`, `viola-jones`, `cascade-xml`, `opencv-xml`, `haar-classifier`, `cascade-model`, `face-cascade`) return zero hits, apart from `scirs2-vision` for `viola-jones`.
-
-**There is no crates.io crate that loads OpenCV's `haarcascade_*.xml`.** This is the one genuine gap in the Rust ecosystem for this port.
-
-### 4.2 What the near-misses actually provide
-
-| Crate | What it has | Why it is not a drop-in |
-|---|---|---|
-| `imageproc` 0.27.0 | Integral images, Haar-like feature evaluation | No cascade model, no stages/leaves, no scan, no XML |
-| `scirs2-vision` 0.6.5 | `face_detection::viola_jones`, multiscale + NMS | Source comment: *"This is an algorithmic skeleton"*; only `AdaBoostClassifier::default_24x24()` with synthetic stages; no XML loader; heavy deps (`scirs2-core`, `scirs2-linalg`, `statrs`) |
-| `oximedia-cv` 0.2.1 | `HaarCascade` with multiscale scan and grouping | Its own doc comment calls it *"a skeleton implementation"*; `stages` is private with no loader or public insertion, `HaarCascade::new()` yields an empty cascade, and the normalization divides by `std_dev` rather than OpenCV's `1/sqrt(A*Q - S^2)` (off by a factor of window area). First published 2026-03, current version 2026-08 |
-| `opencv-no-c-objdetect` 0.1.0 | Public `CascadeClassifier`, `detect_multi_scale`, `group_rectangles` | Explicitly *"The XML loader is not here"*; `passes()` compares raw rect sums to thresholds and has **no variance normalization**, so it cannot run the real XML as-is. Published 2026-10-20, 15 downloads |
-| `pico-detect` 0.7.0 | Real pure-Rust PICO detector, multiscale, IoU clustering, pupil localizer | Needs PICO-format binary models, not OpenCV XML; an eye model would have to be trained from data, as there is no direct conversion from a Haar cascade |
-| `rustface` 0.1.7 | SeetaFace face detection | C++ FFI; last release 2021 |
-| `opencv` 0.101.1 | Everything | C++ OpenCV installation required |
-| `mediapipe` 0.1.0 | Face/eye landmarks | C API; heavyweight for four brightness features |
-
-Even `opencv-no-c-core`'s `FileStorage` deliberately supports only YAML and JSON; its source comments that OpenCV's XML dialect is "a third parser" and leaves it out. The XML loader is missing even in the newest pure-Rust OpenCV port.
-
-### 4.3 What OpenCV does, so the port can match it
-
-The existing XML is the **old HAAR format**: 24 BOOST stages, 1,066 stumps, rectangles with weights. To reproduce `detectMultiScale` faithfully (verified against OpenCV 4.x `cascadedetect.cpp` / `.hpp`):
-
-1. **Integral images** for both the image and its square.
-2. **Per-window variance normalization.** For a window with area `A`, sum `S`, squared sum `Q`:
-   `nf = A*Q - S*S`. If `nf > 0`, `varianceNormFactor = 1/sqrt(nf)`; otherwise reject the window. Also reject if `A * varianceNormFactor < 0.1` (low contrast).
-3. **Feature value** = weighted rectangle sum × `varianceNormFactor`. This is essential: the XML thresholds are between -0.39 and 0.43, while raw rectangle sums are in the thousands. An evaluator that omits this step will never fire.
-4. **Stump**: `feature_value < threshold ? leafValues[0] : leafValues[1]`. Sum the leaves; reject the stage if the sum is below `stageThreshold - 1e-5`. Note: OpenCV ignores the raw `left`/`right` indices for single-stump trees (they are `0` and `-1` here); do not follow them as node offsets.
-5. **Scale scan**: `scale *= 1.1`, window `round(20*scale)`, stop when it exceeds the image. OpenCV uses a step of 2 at the smallest scale and 1 otherwise.
-6. **Grouping**: OpenCV's `groupRectangles(minNeighbors=5, eps=0.2)`, not plain IoU NMS. Reproducing the exact grouping is optional; the Python code only needs one final box.
-7. **`minSize=(50,50)`** filters scales where the window is smaller than 50×50, i.e. scale < 2.5.
-
-### 4.4 Options
-
-| Option | Reuses the XML | Pure Rust | Effort | Verdict |
-|---|---|---|---|---|
-| In-house loader + evaluator + scan | Yes, verbatim | Yes | ~400–600 LOC, ~1.5–2.5 days | **Recommended** |
-| `pico-detect` | No (needs PICO model) | Yes | Low integration; an eye model must be trained | Viable alternative if retraining is acceptable |
-| `opencv-no-c-objdetect` | No loader; no normalization | Yes | Low, but would need a fork/PR | Reference only |
-| `scirs2-vision` | No | Yes | — | Reject: skeleton |
-| `oximedia-cv` | No loader; skeleton | Yes | — | Reject as-is |
-| `opencv` (verbatim XML); `rustface` / `mediapipe` (own models) | Only `opencv` | No | Low | Reject on principle 1 |
-
-**Recommended implementation plan:**
-
-1. Parse the XML with `roxmltree` 0.21.2 (MIT/Apache-2.0, 91M downloads, read-only tree, no C). Build owned `Cascade { stages: Vec<Stage> }` with `Stump { feature: usize, threshold: f32, left: f32, right: f32 }` and `Feature { rects: Vec<Rect> }`. Do not keep the XML document alive.
-2. Build a summed-area table and a squared-sum table in-house. Use `u64`/`f64` accumulators; `u32` can overflow on larger windows.
-3. Implement the evaluation above, including normalization and the low-contrast rejection.
-4. Implement the scale scan and grouping. Start with "collect candidates, cluster by center/size, pick the group with the most votes"; exact OpenCV parity is not required.
-5. Validate against OpenCV on recorded frames: compare boxes and the count of detections. This is where the effort is, not in the XML parser.
-6. Keep the Intel license header with the XML.
-
-### 4.5 A scope-reducing insight
-
-In the prototype, detection is only used in the **"Detect" state**: `init_eye_detection()` is called, then `detect_eye()` sets `eye_frame_coords`, and the calibration/recording states only reuse that box. `detectMultiScale` is not run during recording.
-
-If the camera is head-mounted or endoscope-mounted, the eye is approximately fixed relative to the camera. That makes a `FixedRegionDetector` — a box configured once, or set manually — sufficient for the actual tracking run. Haar is then only needed for initial acquisition or re-acquisition. This has two consequences:
-
-- The first port can ship without the Haar detector at all, using a configured ROI; this removes the riskiest dependency.
-- The prototype's `len(Eyes) == 1` requirement is brittle: it fails when the cascade finds both eyes or a false positive. A Rust port should choose the best detection (highest score or nearest previous box) and expose the score, rather than requiring exactly one.
-
-**Recommendation:** implement `FixedRegionDetector` first. Add `HaarCascadeDetector` behind the same trait later, when the fixed-ROI assumption fails on real recordings. If the assumption holds, the in-house Haar work can be deferred indefinitely.
+For the record: the earlier crates.io search found **no crate that loads OpenCV's `haarcascade_*.xml`**. `imageproc::haar` only evaluates features, `scirs2-vision` and `oximedia-cv` call their Viola-Jones code skeletons, and `opencv-no-c-objdetect` has no XML loader and no variance normalization. That finding is now moot, but it is worth keeping in the record if detection ever returns.
 
 ---
 
-## 5. Proposed trait boundary
+## 6. Traits and module layout
 
-The goal is that the tracking logic has no camera, image, or graphics dependency. The camera adapter and the Haar implementation depend on the core, never the other way round.
+### 6.1 Flow
 
 ```mermaid
 flowchart TD
-    A["USB camera: nokhwa or v4l"] -->|FrameSource| B["GrayFrame"]
-    B --> C["EyeDetector: Haar, Pico, or Fixed"]
-    C -->|EyeBox| D["quad_brightness"]
-    D --> E["QuadBrightness"]
-    E --> F["GazeModel: linear"]
-    F -->|GazePoint| G["UI or recorder"]
+    A["USB camera: linuxvideo or nokhwa"] -->|FrameSource| B["GrayFrame"]
+    B --> C["quad_brightness with fixed EyeRegion"]
+    C --> D["QuadBrightness"]
+    D --> E["GazeModel: LinearGazeModel"]
+    E --> F["GazePoint"]
+    F --> G["UI or recorder"]
 ```
 
-### 5.1 Data types (core, no dependencies)
+### 6.2 Data types
 
 ```rust
 pub struct GrayFrame {
@@ -276,17 +277,11 @@ pub struct GrayFrame {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EyeBox {
+pub struct EyeRegion {
     pub x: u32,
     pub y: u32,
     pub width: u32,
     pub height: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EyeDetection {
-    pub bbox: EyeBox,
-    pub score: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -297,151 +292,133 @@ pub struct QuadBrightness {
     pub se: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GazePoint {
+    pub x: f32,
+    pub y: f32,
+}
+
 pub struct CalibrationSample {
     pub features: QuadBrightness,
-    pub target: [f32; 2],
+    pub target: GazePoint,
 }
 ```
 
-`GrayFrame` owns its buffer in the first version. If profiling shows that the camera-to-tracker copy matters, replace `Vec<u8>` with a pooled buffer or a borrow; do not optimize this before measuring. `nokhwa` already gives an owned `Buffer`, so one copy is unavoidable unless the adapter is allowed to borrow.
+`EyeRegion` is in pixels. If the camera format can change between runs, keep the configuration in normalized fractions and convert once the format is negotiated; the model must be refit whenever the ROI changes.
 
-### 5.2 Traits
+### 6.3 Traits
 
 ```rust
 pub trait FrameSource: Send {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// Blocking read of the next frame. `Ok(None)` means "no frame this time"
-    /// (dropped frame, timeout), not a failure.
-    fn next_frame(&mut self) -> Result<Option<GrayFrame>, Self::Error>;
-
+    fn next_frame(&mut self) -> Result<Option<GrayFrame>, Error>;
     fn resolution(&self) -> (u32, u32);
     fn fps(&self) -> Option<f32> {
         None
     }
 }
 
-pub trait EyeDetector {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// All candidate eyes, best first or with a score.
-    fn detect_all(&self, frame: &GrayFrame) -> Result<Vec<EyeDetection>, Self::Error>;
-
-    /// Convenience: the single best candidate, if any.
-    fn detect(&self, frame: &GrayFrame) -> Result<Option<EyeDetection>, Self::Error> {
-        Ok(self
-            .detect_all(frame)?
-            .into_iter()
-            .max_by(|a, b| a.score.total_cmp(&b.score)))
-    }
-}
-
 pub trait GazeModel {
-    type Error: std::error::Error + Send + Sync + 'static;
+    /// Replace the model with a fit to `samples`. Cheap enough to call
+    /// frequently for quick recalibration (R7).
+    fn fit(&mut self, samples: &[CalibrationSample]) -> Result<(), Error>;
 
-    fn fit(&mut self, samples: &[CalibrationSample]) -> Result<(), Self::Error>;
-    fn predict(&self, features: QuadBrightness) -> Result<[f32; 2], Self::Error>;
+    fn predict(&self, features: QuadBrightness) -> Result<GazePoint, Error>;
+
     fn is_fitted(&self) -> bool;
-}
 
-/// Optional extension implemented by camera adapters that support it.
-pub trait CameraControls {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    fn set_exposure(&mut self, mode: ExposureMode) -> Result<(), Self::Error>;
-    fn set_gain(&mut self, gain: f32) -> Result<(), Self::Error>;
-    fn set_autofocus(&mut self, enabled: bool) -> Result<(), Self::Error>;
+    /// Clear the calibration for a new session.
+    fn reset(&mut self);
 }
 ```
 
 Design notes:
 
-- **`detect_all` + provided `detect`** removes the `len == 1` brittleness without forcing every detector to implement selection.
-- **`EyeDetector::detect*` takes `&self`.** Detectors are stateless and can be shared or run in parallel. A detector that wants to cache the previous box (tracking) can wrap another detector and use interior mutability; that policy does not belong in the Haar evaluator.
-- **`FrameSource` is blocking, and implementations must be `Send`.** Run the source on its own thread. `nokhwa::Camera` carries an `unsafe impl Send` (but is not `Sync`), so the adapter can be moved into the capture thread; verify this for whichever backend is chosen. Do not share the camera between threads.
-- **`GazeModel` is the only stateful trait.** `fit` consumes calibration samples; `predict` is pure. A `LinearGazeModel` can hold the 2×4 coefficient matrix and the intercepts.
-- **Errors:** use `thiserror` in library crates and a small `CoreError` enum at the boundary. Do not use `anyhow` in a library API. `None` means "no eye in this frame"; `Err` means "the camera or decoder failed". Keep those distinct.
-- **UI preview:** do not route color frames through the core. The camera adapter can publish a separate, lower-rate RGB preview to the UI, or the UI can own its own capture handle. The core only ever sees `GrayFrame`.
-- **Feature extraction:** `quad_brightness(&GrayFrame, EyeBox) -> QuadBrightness` can be a free function. A trait is only justified when a second feature scheme (e.g. pupil center, or a weighted grid) actually exists. Adding `FeatureExtractor` now would force `GazeModel` to be generic over features for no current benefit. This is a deliberate "trait later" decision, not an oversight.
+- **Only two traits.** `FrameSource` isolates the camera backends; `GazeModel` isolates the regression. `quad_brightness(&GrayFrame, EyeRegion) -> QuadBrightness` is a free function; a `FeatureExtractor` trait would force `GazeModel` to be generic over features for no current benefit. Add that trait only when a second feature scheme exists.
+- **`fit` is repeatable and cheap (R7).** The app keeps a small calibration buffer and calls `fit` after each quick calibration. `LinearGazeModel` stores the coefficients and replaces them on every fit; no incremental update is needed for a 4→2 problem.
+- **Do not normalize the features.** The model may center `X` and `y` internally for numerical stability during the least-squares solve; that is a solver detail and does not remove the illumination profile. Do not divide each sample by its mean or by a reference frame (R7/R9).
+- **`FrameSource` is blocking and `Send`.** Run it on the capture thread. `nokhwa::Camera` has an `unsafe impl Send` but is not `Sync`; keep it on one thread. Verify the same for `linuxvideo` in the spike.
+- **One crate-level `Error`** (`thiserror`) with camera/model variants makes `Box<dyn FrameSource>` possible without associated-type gymnastics. If the crate is later split, give each crate its own error type.
+- **`None` vs `Err`:** `Ok(None)` means "no frame this time" (timeout, dropped frame); `Err` means the camera or decoder failed. Keep them distinct.
 
-### 5.3 Suggested crate/module split
+### 6.4 Single-crate module layout (R11)
 
 ```text
-yet-core       no camera/image deps: GrayFrame, EyeBox, QuadBrightness,
-               FrameSource, EyeDetector, GazeModel, quad_brightness
-yet-vision     roxmltree + in-house integral image; implements EyeDetector
-yet-camera     nokhwa (or v4l) adapter; implements FrameSource + CameraControls
-yet-ml         LinearGazeModel; implements GazeModel
-yet-present    UI (see UI_analysis.md)
+src/
+  lib.rs          re-exports the public traits and types
+  error.rs        Error
+  traits.rs       FrameSource, GazeModel
+  frame.rs        GrayFrame, EyeRegion
+  features.rs     QuadBrightness, quad_brightness
+  model.rs        LinearGazeModel (nalgebra)
+  camera/
+    mod.rs        CaptureConfig, open() -> Box<dyn FrameSource>
+    linux.rs      linuxvideo adapter   #[cfg(target_os = "linux")]
+    nokhwa.rs     nokhwa adapter       #[cfg(any(target_os = "macos", target_os = "windows"))]
 ```
 
-This is the strict separation requested in principle 2, and it uses the same crate names as the existing `UI_analysis.md` (`yet-core`, `yet-camera`, `yet-ml`, `yet-present`). The core can be tested with synthetic `GrayFrame`s and a scripted `FrameSource`; no camera or XML is needed.
+`camera::open(&CaptureConfig)` selects the backend at compile time. The tracker modules import only `traits`, `frame`, `features`, and `model`; they never import `linuxvideo`, `nokhwa`, `image`, or any UI type.
+
+This is the tracker-side layout; the presentation side keeps its own split in `UI_analysis.md`. The owner chose one crate with modules for the CV/tracker side (R11); the `FrameSource`/`GazeModel` seams keep a later split into `yet-core`/`yet-camera`/`yet-ml` mechanical without touching the presenter.
 
 ---
 
-## 6. Adjacent crates (out of scope, for the next analysis)
+## 7. Adjacent crates
 
-- **Regression:** `nalgebra` 0.35.0 (97M downloads) for a 4→2 least-squares fit. Center the features like scikit-learn does, and solve with SVD or QR rather than normal equations: the four quadrant means are highly collinear, and normal equations lose precision. `linfa` 0.8.1 is only worth it if more models are planned.
-- **Tables:** `csv` 1.4.0 + `serde` for calibration and recording data. `polars` 0.55.2 only if in-Rust analysis is a goal; it is heavy for a write-only recorder.
-- **Timing:** use `Buffer::capture_timestamp()` from `nokhwa` instead of `time()` at processing time; it survives scheduling jitter and makes the recorded data more defensible.
-- **Alternative features:** `pico-detect`'s `Localizer` (pupil centroid) could replace the four quadrant means, but that changes the YET method. Evaluate it only if the brightness features prove too exposure-sensitive.
+- **Regression (R10):** `nalgebra` 0.34 (MSRV 1.87) behind `GazeModel`. Use SVD or QR rather than normal equations: the four quadrant means are highly collinear. Center the features like scikit-learn does. `nalgebra` 0.35 works too but raises the MSRV to 1.89.
+- **Capture thread:** `crossbeam-channel` 0.5 for a bounded(1) latest-frame channel; `std::sync::mpsc` is enough if a leaner tree is preferred.
+- **Errors:** `thiserror` 2 for the crate-level `Error`.
+- **Tables:** `csv` + `serde` are out of scope here; they belong to the recording/data layer.
+- **Stimulus loading and blur:** `image` (already a dependency) — `image::imageops::fast_blur`, cached once per stimulus.
 
 ---
 
-## 7. Consolidated rejections
+## 8. Rejected alternatives
 
 | Crate / approach | Reason |
 |---|---|
-| `opencv` 0.101.1, `nokhwa/input-opencv` | Requires an OpenCV C++ installation; violates principle 1 |
-| `rustface` 0.1.7 | C++ SeetaFace FFI; stale |
-| `mediapipe` 0.1.0 | C API; excessive for four brightness features |
-| `rusty_scrfd` 2.0.1 | ONNX/OpenCV dependency |
-| `rust-faces` 1.0.0 | ONNX Runtime (BlazeFace/MTCNN); not a Haar loader |
-| `scirs2-vision` 0.6.5 | Viola-Jones is explicitly a skeleton; no XML loader; heavy |
-| `oximedia-cv` 0.2.1 | HaarCascade is a self-described skeleton; no loader; private stages; new |
-| `opencv-no-c-*` 0.1.0 | Five days old; no XML loader; no variance normalization; videoio has no live camera |
-| `shiguredo_video_device` 2026.3.0 | Bundled C/Objective-C |
+| `opencv`, `nokhwa/input-opencv` | Requires an OpenCV C++ installation; violates R2 |
+| `v4l` as the primary Linux backend | `v4l2-sys-mit` runs bindgen and needs libclang at build time (R2) |
+| `nokhwa` `input-v4l` / `input-native` | Inherits the same bindgen/libclang requirement on Linux |
+| `cameras` | New (2026-04, ~3k downloads); Linux backend uses `v4l` and inherits bindgen; R3 says avoid for now |
+| `shiguredo_video_device` | Bundled C/Objective-C, `cc` + `bindgen` (R2) |
+| `shiguredo_v4l2` | Raspberry Pi M2M codec bindings, not USB camera capture |
+| `camera_capture` | `pkg-config`/system library; last release 2017 |
+| `rscam` | No build burden, but last release 2019; fallback only |
 | `webcam` 0.0.0 | Empty stub |
-| `camera_capture`, `rscam` | Stale (2017/2019) |
-| `linuxvideo` | Redundant with `v4l` |
+| `imageproc` | Not needed: no mean function, irrelevant `haar`, heavy non-optional deps |
+| `roxmltree` | Not needed: XML/Haar removed (R6) |
+| `pico-detect` | Not needed: detection removed (R6) |
+| `rustface`, `mediapipe`, `rusty_scrfd`, `rust-faces` | Detection stacks; not needed (R6) |
+| `scirs2-vision`, `oximedia-cv`, `opencv-no-c-*` | Detection implementations; now moot (R6) |
+| `cv` / `rust-cv` | Stale, feature-based CV; no relevance |
+| `summed-area-table` | Last release 2017; four direct loops are simpler |
 | `tobii`, `puppyeyes` | Hardware-specific eye trackers, not USB camera capture |
-| `trackforge`, `visioncortex` | Tracking/semantic CV frameworks; wrong abstraction level |
-| `cv` 0.6.0 / `rust-cv` 0.1.0 | Stale (2020/2023); feature-based CV, no cascade or loader |
-| `summed-area-table` 2.0.0 | Last release 2017; ~20 LOC to implement and test in-house |
 
 ---
 
-## 8. Risks and open questions
+## 9. Risks and open questions
 
-1. **`nokhwa` is pre-1.0.** The API is stable in practice but there is no 0.11 yet. Pin `0.10.11` and isolate it behind `FrameSource`.
-2. **`nokhwa` repository moved** to `l1npengfih/nokhwa`; crates.io metadata still points at `l1npengtul/nokhwa`. Check issue activity before relying on long-term maintenance.
-3. **`cameras` is very new.** It is the cleanest pure-Rust design but has ~3k downloads and a single maintainer. Spike it, do not make it the foundation yet.
-4. **Pixel-format negotiation and row stride.** A camera may expose only MJPEG, only YUYV, or both. Test the actual device. YUYV at 720p may exceed USB 2.0 bandwidth; MJPEG costs decode CPU and adds a dependency option. V4L2 may also pad rows (`bytesperline`), and `nokhwa`'s `Buffer` exposes only width/height. Derive `stride = data.len() / height` and read luma at `row*stride + 2*x`, or use `v4l`, whose `Format::stride` exposes it directly.
-5. **Auto-exposure drift.** The linear model sees absolute brightness. Lock exposure/gain/focus, or normalize the quadrants by their mean before fitting. The latter is a cheap robustness win but changes the model; decide deliberately.
-6. **Haar parity.** Matching OpenCV requires variance normalization, the `-1e-5` stage epsilon, and sensible grouping. Without these the detector silently returns nothing. Validate on recorded frames, not just on the XML parse.
-7. **Low-contrast rejection.** OpenCV rejects windows with `area * varianceNormFactor < 0.1`. This matters for dark or defocused frames; do not omit it.
-8. **Licensing.** The XML is Intel IAC, not Apache/MIT. Keep the notice if the file is redistributed. `pico-detect` models may carry their own licenses.
-9. **MSRV.** `image` 0.25.10 requires Rust 1.88; `imageproc` 0.27 requires 1.87. `nokhwa` does not declare an MSRV. Check the target toolchain.
-10. **Thread safety.** `nokhwa::Camera` has an explicit `unsafe impl Send` but is not `Sync`. Keep it on the capture thread and assert `Send` at compile time in the adapter; do not rely on the unsafe impl as proof that every backend is safe to move.
+1. **`nokhwa` is pre-1.0.** Pin `0.10.11` and keep it behind `FrameSource`. Its repository moved to `l1npengfih/nokhwa`; crates.io still points at the old URL. Check issue activity before relying on long-term maintenance.
+2. **`linuxvideo` is a smaller crate than `v4l`.** 0.3.5, 52k downloads, last release 2025-07. The API is clean and the build is lean, but spike it on the actual camera before committing. If it fails, `v4l` is the mature fallback, at the cost of libclang.
+3. **"No FFI" is not literally achievable for a camera.** Both backends use OS FFI; the requirement is satisfied as "no C/C++ toolchain". If the owner meant literally zero FFI, the project needs a different input path (e.g. a frame file/pipe), not a camera crate.
+4. **Cross-platform permissions.** macOS TCC, Windows camera privacy, Linux `video` group. These are the most common first-run failures; document them.
+5. **Pixel format and stride.** The camera may expose only MJPEG, only YUYV, or both. Low resolution means USB 2.0 bandwidth is fine; keep both paths (R4). V4L2 may pad rows; use `PixFormat::bytes_per_line()` on Linux and derive `stride = data.len() / height` on `nokhwa` if necessary. `MJPG` frames may omit the JPEG Huffman tables (`DHT`); prefer `JPEG` if the device offers it, and verify that `zune-jpeg` decodes the device's `MJPG` output.
+6. **Calibration cost.** Frequent quick calibration requires `fit` to be fast. A 4→2 SVD is trivial, but measure the full calibrate-and-refit loop on the target machine. Do not add a normalization stage to compensate for drift; that contradicts R7.
+7. **Blur timing.** The blurred preview must be ready before calibration starts and must not be re-computed per frame. Cache it per stimulus. The presentation timing is covered by the UI analysis.
+8. **MSRV.** `image` 0.25.10 sets the floor at Rust 1.88. `nalgebra` 0.34 keeps it at 1.88; 0.35 raises it to 1.89. `nokhwa` declares no MSRV; its `image 0.25` dependency also implies 1.88.
+9. **Thread safety.** `nokhwa::Camera` is `Send` but not `Sync`; `linuxvideo` needs the same check. Keep the camera on one thread and assert `Send` at compile time in the adapter.
+10. **Licensing.** All recommended crates are permissive: `linuxvideo` 0BSD, `nokhwa` Apache-2.0, `image` MIT/Apache-2.0, `nalgebra` Apache-2.0, `thiserror`/`crossbeam` MIT/Apache-2.0. No Intel XML notice is needed because the cascade file is gone.
+11. **Open: how is the fixed ROI set?** Configuration file, a one-time setup screen, or full-frame? This is the only significant design question left by R6. A normalized ROI in the config is the most portable default; a setup screen is the most usable.
 
 ---
 
-## 9. Questions for you
+## 10. Suggested spike (about one day)
 
-1. **Target platforms for v1:** Linux only, or macOS/Windows too? Linux-only makes `v4l` the leaner choice; cross-platform points to `nokhwa`.
-2. **How strict is "pure Rust"?** Is "no OpenCV/C++ toolchain, but OS APIs via FFI" acceptable (yes for `nokhwa`/`v4l`), or must there be no C at all (rules out `nokhwa`'s default `decoding`, `shiguredo`, and `mozjpeg`)?
-3. **Must the existing `haarcascade_eye.xml` be reused verbatim**, or is retraining/converting to a PICO model acceptable? The answer decides between in-house Haar and `pico-detect`.
-4. **Is eye detection needed continuously**, or only for initial acquisition? If the eye is fixed relative to the camera, `FixedRegionDetector` removes the largest piece of work.
-5. **What camera/resolution/FPS** is the target? Does it expose YUYV/GRAY, or only MJPEG?
-6. **Do you need exposure/gain control in-app?** If yes, lock them during calibration; if no, the model must tolerate drift.
-7. **Is `linfa`/`nalgebra` already decided** for the regression, or should that be part of the next analysis?
-8. **One crate with modules, or separate `yet-core` / `yet-vision` / `yet-camera` / `yet-ml` crates?** The trait boundary works either way; separate crates enforce the dependency direction at compile time.
-
-### Suggested spike (about one day)
-
-1. Open the actual camera with `nokhwa` (default features off); list its formats and pick YUYV at 640×480@30 if available. Measure the real frame rate and confirm the adapter can be moved into the capture thread.
-2. Capture a handful of frames to disk and compare a fixed-ROI `quad_brightness` against the Python implementation on the same frames. This validates the feature order and the luma conversion before anything else is built.
-3. Only if the fixed ROI is insufficient, start the Haar loader against the recorded frames. This ordering keeps the riskiest work optional.
+1. **Linux build check:** add `linuxvideo` and `cargo build`. Confirm there is no bindgen/libclang in the tree (`cargo tree -e build`); `libc` has its own small build script, which is fine. List the camera formats, negotiate YUYV at 640×480, and capture a few frames.
+2. **macOS/Windows build check:** add `nokhwa` with the per-OS features and `cargo check`. Confirm no bindgen and that the macOS permission call works. Do not enable `input-v4l` or `input-native`.
+3. **Feature parity:** extract `QuadBrightness` from recorded frames and compare with the Python implementation on the same frames, including the NE/SW order. This validates the luma conversion and the ROI split before any model work.
+4. **Model loop:** implement `LinearGazeModel` with `nalgebra`, fit on a small sample set, and measure repeated fit/predict. Confirm that frequent recalibration is cheap enough (R7).
+5. **Only if `linuxvideo` fails:** evaluate `v4l` with the libclang cost, or `rscam` as a stale fallback. Do not switch to `cameras` yet.
 
 ---
 
@@ -449,32 +426,47 @@ This is the strict separation requested in principle 2, and it uses the same cra
 
 Queries run against `https://crates.io/api/v1/crates?q=...` on 2026-10-25:
 
-`webcam capture`, `v4l2`, `haar`, `haar cascade`, `haarcascade`, `haar-cascade`, `haar_cascade`, `haar-detector`, `haar-classifier`, `cascade classifier`, `cascade-xml`, `cascade-model`, `face-cascade`, `viola jones`, `viola-jones`, `viola_jones`, `opencv cascade`, `opencv-xml`, `opencv_storage`, `detectmultiscale`, `eye cascade`, `eye tracking`, `eye tracker`, `gaze estimation`, `eye detection`, `pupil detection`, `computer vision`, `image processing`, `video capture`, `face detection`, `object detection`, `camera calibration`, `integral image`.
+**Camera:** `webcam capture`, `video capture`, `camera capture`, `v4l2`, `v4l`, `linux camera`, `macos camera`, `windows camera`, `camera`.
+
+**Image processing:** `image processing`, `jpeg decoder`, `integral image`, `computer vision`.
+
+**Detection (now removed, recorded for completeness):** `haar`, `haar cascade`, `haarcascade`, `haar-cascade`, `haar_cascade`, `haar-detector`, `haar-classifier`, `cascade classifier`, `cascade-xml`, `cascade-model`, `face-cascade`, `viola jones`, `viola-jones`, `viola_jones`, `opencv cascade`, `opencv-xml`, `opencv_storage`, `detectmultiscale`, `eye cascade`, `eye tracking`, `eye tracker`, `pupil detection`, `face detection`.
+
+**Regression:** `nalgebra`, `linfa`.
 
 Notes:
 
-- crates.io search is fuzzy. `haar` returns wavelet/transform crates; `cascade classifier` returns AI-agent noise; `eye tracking` returns proxy dashboards and Tobii hardware bindings. The relevant hits were verified by downloading the crate and reading the module.
-- `haarcascade` returns **zero** results. This is the strongest single piece of evidence for the gap in §4.
-- The search API indexes names and descriptions, not source code. The claim in §4 is therefore based on inspecting every plausible candidate (`imageproc`, `scirs2-vision`, `oximedia-cv`, `opencv-no-c-objdetect`, `pico-detect`, `rustface`, `rust-faces`, `opencv`), not on the search counts alone.
-- The search API's `total` is the number of matching crates, not the number of relevant ones.
+- `haarcascade` returns **zero** results. `imageproc::haar` only evaluates features; `scirs2-vision`/`oximedia-cv` call their detectors skeletons; `opencv-no-c-objdetect` has no XML loader. This is recorded only because detection was investigated before R6 removed it.
+- The camera finding that matters is not download count but **build scripts**: `v4l2-sys-mit` runs bindgen; `linuxvideo` does not.
+- crates.io search indexes names and descriptions, not source or build scripts. The camera claims were verified by downloading the crates and reading `Cargo.toml`, `build.rs`, and the API source.
 
 ## Appendix B — Versions verified
 
 | Crate | Version | Verified via |
 |---|---:|---|
-| `nokhwa` | 0.10.11 | crates.io API + downloaded `Cargo.toml` / `src` |
-| `nokhwa-core` | 0.1.9 | downloaded source (`pixel_format.rs`, `types.rs`, `buffer.rs`) |
-| `v4l` | 0.14.0 | crates.io API + `Cargo.toml` |
-| `cameras` | 0.3.2 | downloaded source (`README.md`, `Cargo.toml`, `controls.rs`) |
-| `shiguredo_video_device` | 2026.3.0 | downloaded source (C/Obj-C file list, `Cargo.toml`) |
-| `image` | 0.25.10 | crates.io API + `Cargo.toml` |
-| `imageproc` | 0.27.0 | downloaded source (`haar.rs`, `stats.rs`, `integral_image.rs`, `Cargo.toml`) |
-| `scirs2-vision` | 0.6.5 | downloaded source (`viola_jones.rs`) |
-| `oximedia-cv` | 0.2.1 | downloaded source (`detect/face.rs`, `detect/mod.rs`) |
-| `opencv-no-c-objdetect` | 0.1.0 | downloaded source (`lib.rs`); published 2026-10-20 |
-| `opencv-no-c-videoio` | 0.1.0 | downloaded source (`Cargo.toml`); AVI/Y4M only |
-| `pico-detect` | 0.7.0 | downloaded source (`README.md`, `Cargo.toml`) |
-| `roxmltree` | 0.21.2 | crates.io API |
-| `nalgebra` / `linfa` / `csv` / `polars` | 0.35.0 / 0.8.1 / 1.4.0 / 0.55.2 | crates.io API |
+| `linuxvideo` | 0.3.5 | downloaded source (`Cargo.toml`: no `build`, only `libc`; `src/lib.rs`, `src/stream.rs`, `src/format.rs`) |
+| `nokhwa` | 0.10.11 | downloaded source (`Cargo.toml`, `src/camera.rs`, `src/threaded.rs`) |
+| `nokhwa-bindings-macos` | 0.2.4 | downloaded source (`build.rs` only links CoreMedia/AVFoundation/CoreVideo) |
+| `nokhwa-bindings-windows` | 0.4.1 | downloaded source (no `build.rs`; pre-generated `windows` bindings) |
+| `v4l` | 0.14.0 | downloaded `Cargo.toml` |
+| `v4l2-sys-mit` | 0.3.0 | downloaded `build.rs`: `bindgen::Builder::default().header("wrapper.h")` |
+| `cameras` | 0.3.2 | downloaded `Cargo.toml` (Linux `v4l` 0.14) |
+| `shiguredo_v4l2` | 2026.2.0 | downloaded source (`README.md`: Raspberry Pi M2M; only `libc`) |
+| `shiguredo_video_device` | 2026.3.0 | downloaded source (C/Obj-C files; `cc`/`bindgen` build deps) |
+| `rscam` | 0.5.5 | downloaded `Cargo.toml` (only `libc`, no build script) |
+| `camera_capture` | 0.5.0 | downloaded `Cargo.toml` (`build.rs`, `pkg-config`) |
+| `webcam` | 0.0.0 | crates.io API — stub, rejected |
+| `image` | 0.25.10 | crates.io API + `Cargo.toml` (MSRV 1.88; `zune-jpeg`) |
+| `nalgebra` | 0.34.0 / 0.35.0 | crates.io API (MSRV 1.87 / 1.89) |
+| `imageproc` | 0.27.0 | downloaded source (`haar.rs`, `stats.rs`) — not used |
+| `roxmltree` | 0.21.2 | crates.io API — not used |
+| `pico-detect` | 0.7.0 | downloaded source — not used |
+| `scirs2-vision` | 0.6.5 | downloaded source (`viola_jones.rs`) — not used |
+| `oximedia-cv` | 0.2.1 | downloaded source (`detect/face.rs`) — not used |
+| `opencv-no-c-objdetect` | 0.1.0 | downloaded source (`lib.rs`) — not used |
+| `opencv` | 0.101.1 | crates.io API — rejected |
+| `rustface` | 0.1.7 | crates.io API — rejected |
+| `mediapipe` | 0.1.0 | crates.io API — rejected |
+| `webcam` | 0.0.0 | crates.io API — rejected |
 
-No runtime benchmarks were run. Latency and CPU figures in this document are bandwidth/CPU estimates, not measurements; a spike against the actual camera is the next step.
+No runtime benchmarks were run. The bandwidth and refit-cost figures are estimates; the spike in §10 is the next step.
