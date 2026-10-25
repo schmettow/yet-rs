@@ -44,7 +44,7 @@ fn main() -> ExitCode {
 fn usage() {
     eprintln!(
         "usage:\n  yet-app plan <experiment-dir>\n  \
-         yet-app run <experiment-dir> [--headless] [--participant <id>] [--output <csv>]\n  \
+         yet-app run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>]\n  \
          yet-app camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
          yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]"
     );
@@ -127,6 +127,7 @@ fn run_session(args: &[String]) -> Result<(), CliError> {
     let mut directory: Option<&Path> = None;
     let mut participant: Option<&str> = None;
     let mut output: Option<&Path> = None;
+    let mut device: Option<usize> = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -139,6 +140,15 @@ fn run_session(args: &[String]) -> Result<(), CliError> {
             "--output" => {
                 index += 1;
                 output = Some(Path::new(args.get(index).ok_or(CliError::Usage)?));
+            }
+            "--device" => {
+                index += 1;
+                device = Some(
+                    args.get(index)
+                        .ok_or(CliError::Usage)?
+                        .parse()
+                        .map_err(|_| CliError::Usage)?,
+                );
             }
             flag if flag.starts_with('-') => return Err(CliError::Usage),
             path if directory.is_none() => directory = Some(Path::new(path)),
@@ -154,6 +164,9 @@ fn run_session(args: &[String]) -> Result<(), CliError> {
         }
         if let Some(output) = output {
             options = options.output(output);
+        }
+        if let Some(device) = device {
+            options = options.device(device);
         }
         run_console(options)?;
         return Ok(());

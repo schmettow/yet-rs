@@ -19,8 +19,9 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   graphical calibration window on the portrait presenter. A valid human
   calibration RMSE and the macOS/Windows runtime are still pending.
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
-  calibration and a pilot session. The S6 console and presenter shell are in
-  place for static images; calibration UX, live preview and the pilot remain.
+  calibration and a pilot session. The S7 console now runs full and quick
+  calibration, shows a live camera preview and writes gaze rows once fitted;
+  the interactive desktop validation and the 2–3-person pilot remain.
 - [ ] **M5 Media complete (S8)** — PNG sequences and WAV audio stay in sync;
   drift and underruns are logged.
 - [ ] **M6 Overlay parity (S10)** — Windows, macOS, layer-shell Wayland and
@@ -59,7 +60,16 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   for fullscreen to settle and scenes recompose on resize. Sequences, audio,
   camera integration, console auto-placement and the KWin dim-inactive caveat
   are documented and deferred. 174 tests passed at the end of the sprint.
-- **Next:** S7 calibration UX and pilot.
+- **S7 Calibration UX and live preview** — implemented, pilot outstanding:
+  `CalibrationRun` (UI-free settle/collect/report/quick/cancel state machine),
+  console calibration panel with RMSE and drift, phase-aware gating, and a
+  camera preview with eye ROI, capture rate and gaze map. The controller thread
+  owns the camera and maps gaze to stimulus pixels for the CSV. 194 tests pass;
+  two ignored tests need real camera hardware. The new tracker hardware test was
+  run against the GEMBIRD Yet camera (10 frames, preview and quadrant means
+  valid). The interactive desktop validation was blocked by a locked session,
+  and the UX-4 pilot needs 2–3 people; the README documents the procedure.
+- **Next:** S8 media and audio (PNG sequences and WAV in sync).
 
 ## Post-v1
 

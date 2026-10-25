@@ -15,6 +15,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
+use yet_core::layout::StimulusPlacement;
 use yet_core::{
     step, Clock, EngineError, EngineEvent, EngineState, FrameRecord, GazeSample, Phase,
     SessionPlan, TestClock,
@@ -77,7 +78,7 @@ pub fn run(options: HeadlessOptions<'_>) -> Result<RunReport, RunError> {
         1.0,
     ));
 
-    let mut report = drive(loaded.plan, &mut sink, &mut presenter, |_| None)?;
+    let mut report = drive(loaded.plan, &mut sink, &mut presenter, |_, _| None)?;
     sink.flush()?;
     report.result_file = Some(result_file);
     Ok(report)
@@ -97,7 +98,7 @@ pub fn drive<W, P, G>(
 where
     W: Write,
     P: Presenter,
-    G: FnMut(&FrameRecord) -> Option<GazeSample>,
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
     let mut state = EngineState::new(plan);
     let mut clock = TestClock::new();

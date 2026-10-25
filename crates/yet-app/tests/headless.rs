@@ -56,7 +56,7 @@ fn the_synthetic_clock_runs_two_blocks_and_writes_every_gaze_sample() {
         let mut sink = DataSink::new(&mut buffer, identity, 0.0).unwrap();
         let mut frame_count = 0_u32;
 
-        report = drive(loaded.plan, &mut sink, &mut presenter, |frame| {
+        report = drive(loaded.plan, &mut sink, &mut presenter, |frame, _| {
             frame_count += 1;
             Some(GazeSample::new(
                 frame.at,

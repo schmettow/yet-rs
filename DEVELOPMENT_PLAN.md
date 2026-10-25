@@ -616,6 +616,54 @@ The eframe 0.37 dependency raised the MSRV to 1.95 and removed
 **Demo:** a pilot participant completes calibration and a short experiment.
 **Gate:** time-to-first-trial, actionable errors, no mouse-only paths.
 
+**Implementation note (S7, 2026-10-25):** UX-1 to UX-3 are implemented;
+UX-4 (pilot) is not done. 194 workspace tests pass; two ignored tests require
+real camera hardware, and the new tracker test passed against the GEMBIRD Yet
+camera.
+
+- **UI-free calibration flow:** `yet-core::CalibrationRun` owns the state machine
+  (`Idle`, `Settle`, `Collect`, `FullReport`, `QuickSettle`, `QuickCollect`,
+  `QuickReport`, `Done`, `Failed`, `Cancelled`). It never reads a camera; the
+  application feeds it `QuadBrightness` and presents `run.scene()`. Each target
+  settles for 800 ms, then 20 frames are collected within a 500–1500 ms window;
+  the report holds for 2 s. Cancellation and failures restore the previous model
+  and buffer for a full run, while a failed quick run keeps the last full report.
+  A full run requires 9 targets; a quick run requires an existing fit and records
+  the center target as a tenth sample.
+- **Console, not presenter, drives calibration:** the controller thread owns
+  `Tracker` and `CalibrationRun`, presents calibration scenes through the same
+  `SessionRunner` used for stimuli, and pushes snapshots to `yet-console`. The
+  presenter still receives only scenes and has no camera or experiment state. The
+  console panel shows phase, target progress, collected frames, RMSE and drift
+  against the previous quick run (or the full run for the first quick run).
+- **Gating:** full calibration is enabled while idle or finished; quick
+  recalibration also while paused. Start, pause, resume and abort are disabled
+  during calibration, and presenter settings stay locked while calibrating.
+  Starting without a fit runs the experiment but logs that no gaze rows will be
+  written.
+- **Camera in the session path:** `yet-app::tracker::Tracker` polls the capture
+  thread only when `CameraStats::captured` advanced, so the 60 Hz controller does
+  not count one frame repeatedly. The preview crops the eye region and
+  downscales it to at most 240×160 on the controller thread; the console only
+  uploads the texture. Preview uploads are capped at about 15 Hz and do not
+  repaint the stimulus. A camera error leaves the session runnable and offers
+  retry; a stale camera becomes a visible "no frames for … s" error after 2 s.
+- **Gaze mapping:** the gaze closure receives the frame record and the current
+  scene placement, converts monitor pixels to stimulus pixels and normalized
+  coordinates, and leaves out-of-surface points unclamped. The CSV therefore
+  keeps the yet_zero columns and the mapping is covered by unit tests.
+- **Measured:** the ignored `the_yet_camera_delivers_frames` test opened
+  `/dev/video2`, consumed 10 frames in under a second, produced a non-empty
+  preview and quadrant means in `0..=255`. The full state machine, gating, drift
+  and preview texture paths are covered by tests. **Not measured:** the
+  interactive two-window calibration run, a human RMSE, time-to-first-trial and
+  the pilot. The desktop session was locked during S7, so the GUI validation
+  could not be performed; the README documents the pilot procedure.
+
+**Gate status:** open. Actionable errors and mouse-free paths are covered by
+code and tests; time-to-first-trial and the pilot need an unlocked desktop and
+2–3 participants.
+
 ### Sprint 8 — Media and audio
 
 **Goal:** M5 — PNG sequences and WAV in sync.

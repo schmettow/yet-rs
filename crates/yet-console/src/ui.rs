@@ -10,22 +10,36 @@ use eframe::egui;
 use yet_core::Phase;
 
 use crate::command::ExperimentCommand;
-use crate::state::{ConsoleState, LogLevel, PresenterStatus};
+use crate::state::{ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
 
 /// Number of monitor indices offered in the presenter-monitor selector.
 pub const MONITOR_CHOICES: usize = 4;
 
 /// Persistent console widget state.
-#[derive(Debug)]
 pub struct ConsoleUi {
     /// Whether the log panel is expanded.
     pub show_log: bool,
+    preview_texture: Option<egui::TextureHandle>,
+    preview_generation: u64,
+}
+
+impl std::fmt::Debug for ConsoleUi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsoleUi")
+            .field("show_log", &self.show_log)
+            .field("has_preview_texture", &self.preview_texture.is_some())
+            .finish()
+    }
 }
 
 impl ConsoleUi {
     /// Create a console with the log expanded.
     pub fn new() -> Self {
-        Self { show_log: true }
+        Self {
+            show_log: true,
+            preview_texture: None,
+            preview_generation: 0,
+        }
     }
 
     /// Draw the console and return the commands the experimenter requested.
@@ -47,9 +61,12 @@ impl ConsoleUi {
 
         self.phase_panel(ui, state, presenter, &mut commands);
         ui.separator();
+        self.calibration_panel(ui, state, presenter, &mut commands);
+        ui.separator();
         self.progress_panel(ui, state);
         ui.separator();
         self.presenter_panel(ui, state, presenter);
+        self.preview_panel(ui, state);
         ui.separator();
         self.log_panel(ui, state);
 
@@ -121,6 +138,219 @@ impl ConsoleUi {
             ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {error}"));
             ui.label("The session stopped. Fix the problem named above, then restart the console.");
         }
+    }
+
+    fn calibration_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &mut ConsoleState,
+        presenter: PresenterStatus,
+        commands: &mut Vec<ExperimentCommand>,
+    ) {
+        let status = &state.calibration;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Calibration").strong());
+            ui.label(status.phase.label());
+            if status.fitted {
+                ui.colored_label(egui::Color32::LIGHT_GREEN, "model fitted");
+            } else {
+                ui.colored_label(egui::Color32::YELLOW, "not calibrated");
+            }
+        });
+
+        let can_calibrate = state.can_calibrate(presenter.ready);
+        let can_quick = state.can_quick_calibrate(presenter.ready);
+        let can_cancel = state.can_cancel_calibration();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(can_calibrate, egui::Button::new("Calibrate"))
+                .on_hover_text("F7 · full 3×3 grid")
+                .clicked()
+            {
+                commands.push(ExperimentCommand::Calibrate);
+            }
+            if ui
+                .add_enabled(can_quick, egui::Button::new("Quick"))
+                .on_hover_text("F9 · one center target")
+                .clicked()
+            {
+                commands.push(ExperimentCommand::QuickCalibrate);
+            }
+            if ui
+                .add_enabled(can_cancel, egui::Button::new("Cancel"))
+                .on_hover_text("Esc")
+                .clicked()
+            {
+                commands.push(ExperimentCommand::CancelCalibration);
+            }
+        });
+
+        if !presenter.ready {
+            ui.label("Calibration waits for the stimulus window.");
+        } else if !status.fitted && !status.active {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "No fitted calibration. The experiment still runs, but no gaze rows are written.",
+            );
+        }
+        if let Some(error) = &state.preview.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("Camera: {error}"));
+        }
+
+        if status.active {
+            let quick = matches!(
+                status.phase,
+                yet_core::CalibrationPhase::QuickSettle
+                    | yet_core::CalibrationPhase::QuickCollect
+                    | yet_core::CalibrationPhase::QuickReport
+            );
+            let label = if quick {
+                "quick recalibration".to_owned()
+            } else {
+                format!("{} / {} targets", status.completed, status.total)
+            };
+            ui.add(egui::ProgressBar::new(status.progress()).text(label));
+            if quick {
+                ui.label(format!(
+                    "Center target · {} frames collected",
+                    status.collected
+                ));
+            } else if let Some(target) = status.target {
+                let collecting = if status.collecting() {
+                    format!(" · {} frames collected", status.collected)
+                } else {
+                    String::new()
+                };
+                ui.label(format!(
+                    "Target {} of {}{}",
+                    target + 1,
+                    status.total,
+                    collecting
+                ));
+            }
+        }
+
+        if let Some(report) = status.report {
+            ui.label(format!(
+                "Full: {} samples · RMSE {:.1} px",
+                report.samples, report.rmse
+            ));
+        }
+        if let Some(quick) = status.quick_report {
+            let drift = status
+                .drift_rmse
+                .map(|drift| format!(" · drift {drift:+.1} px"))
+                .unwrap_or_default();
+            ui.label(format!(
+                "Quick: {} samples · RMSE {:.1} px{drift}",
+                quick.samples, quick.rmse
+            ));
+        }
+        if let Some(error) = &status.error {
+            ui.colored_label(
+                egui::Color32::LIGHT_RED,
+                format!("Calibration error: {error}"),
+            );
+            if status.fitted {
+                ui.label("The previous calibration is still active. Fix the cause and retry.");
+            } else {
+                ui.label("No calibration is active. Check the camera and retry.");
+            }
+        }
+    }
+
+    fn preview_panel(&mut self, ui: &mut egui::Ui, state: &mut ConsoleState) {
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut state.preview.enabled, "Camera preview");
+            ui.label("F10");
+            if let Some(fps) = state.preview.capture_fps {
+                ui.label(format!("{fps:.1} fps capture"));
+            }
+            if state.preview.error.is_some() && ui.button("Retry").clicked() {
+                state.preview.enabled = true;
+                state.preview.retry = true;
+            }
+        });
+        if !state.preview.enabled {
+            return;
+        }
+
+        if let Some(error) = &state.preview.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("Camera: {error}"));
+            ui.label(
+                "The experiment still runs; gaze rows are unavailable until the camera returns.",
+            );
+        }
+
+        let Some(frame) = &state.preview.frame else {
+            ui.label("Waiting for camera frames…");
+            return;
+        };
+        self.show_preview(ui, frame);
+    }
+
+    fn show_preview(&mut self, ui: &mut egui::Ui, frame: &PreviewFrame) {
+        if self.preview_generation != frame.generation || self.preview_texture.is_none() {
+            let image = egui::ColorImage::from_gray(
+                [frame.width as usize, frame.height as usize],
+                &frame.data,
+            );
+            match &mut self.preview_texture {
+                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                None => {
+                    self.preview_texture = Some(ui.ctx().load_texture(
+                        "yet-console-preview",
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+            }
+            self.preview_generation = frame.generation;
+        }
+
+        let natural = egui::vec2(frame.width as f32, frame.height as f32);
+        let scale = (240.0 / natural.x).min(160.0 / natural.y).min(1.0);
+        let display = natural * scale;
+
+        ui.horizontal(|ui| {
+            if let Some(texture) = &self.preview_texture {
+                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                    texture.id(),
+                    display,
+                )));
+            }
+
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 96.0), egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(32));
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.0, egui::Color32::GRAY),
+                egui::StrokeKind::Inside,
+            );
+            if let Some(gaze) = frame.gaze_normalized {
+                let point = egui::pos2(
+                    rect.left() + gaze.x.clamp(0.0, 1.0) * rect.width(),
+                    rect.top() + gaze.y.clamp(0.0, 1.0) * rect.height(),
+                );
+                painter.circle_filled(point, 4.0, egui::Color32::RED);
+            }
+
+            ui.vertical(|ui| {
+                if let Some(gaze) = frame.gaze {
+                    ui.label(format!("gaze {:.0}, {:.0} px", gaze.x, gaze.y));
+                } else {
+                    ui.label("gaze: not calibrated");
+                }
+                if let Some(normalized) = frame.gaze_normalized {
+                    ui.label(format!(
+                        "normalized {:.3}, {:.3}",
+                        normalized.x, normalized.y
+                    ));
+                }
+            });
+        });
     }
 
     fn progress_panel(&mut self, ui: &mut egui::Ui, state: &ConsoleState) {
@@ -291,15 +521,19 @@ impl ConsoleUi {
     fn shortcuts(
         &mut self,
         ui: &mut egui::Ui,
-        state: &ConsoleState,
+        state: &mut ConsoleState,
         presenter_ready: bool,
         commands: &mut Vec<ExperimentCommand>,
     ) {
-        let (start, pause, abort) = ui.input(|input| {
+        let (start, pause, abort, calibrate, quick, cancel, preview) = ui.input(|input| {
             (
                 input.key_pressed(egui::Key::F5),
                 input.key_pressed(egui::Key::F6),
                 input.key_pressed(egui::Key::F8),
+                input.key_pressed(egui::Key::F7),
+                input.key_pressed(egui::Key::F9),
+                input.key_pressed(egui::Key::Escape),
+                input.key_pressed(egui::Key::F10),
             )
         });
 
@@ -315,6 +549,18 @@ impl ConsoleUi {
         }
         if abort && state.can_abort() {
             commands.push(ExperimentCommand::Abort);
+        }
+        if calibrate && state.can_calibrate(presenter_ready) {
+            commands.push(ExperimentCommand::Calibrate);
+        }
+        if quick && state.can_quick_calibrate(presenter_ready) {
+            commands.push(ExperimentCommand::QuickCalibrate);
+        }
+        if cancel && state.can_cancel_calibration() {
+            commands.push(ExperimentCommand::CancelCalibration);
+        }
+        if preview {
+            state.preview.enabled = !state.preview.enabled;
         }
 
         if state.phase == Phase::Finished {
@@ -333,11 +579,13 @@ impl Default for ConsoleUi {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use eframe::egui;
-    use yet_core::Phase;
+    use yet_core::{GazePoint, Phase};
 
     use super::{ConsoleUi, PresenterStatus};
-    use crate::state::ConsoleState;
+    use crate::state::{ConsoleState, PreviewFrame};
 
     #[test]
     fn the_console_runs_a_frame_without_a_window() {
@@ -377,5 +625,28 @@ mod tests {
         assert!(commands.is_empty());
         assert!(state.can_pause());
         assert!(state.can_abort());
+    }
+
+    #[test]
+    fn the_console_renders_a_camera_preview() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.preview.enabled = true;
+        state.preview.frame = Some(PreviewFrame {
+            width: 2,
+            height: 2,
+            data: Arc::from(vec![0_u8, 64, 128, 255]),
+            generation: 1,
+            gaze: Some(GazePoint::new(100.0, 200.0)),
+            gaze_normalized: Some(GazePoint::new(0.5, 0.5)),
+        });
+        let mut console = ConsoleUi::default();
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default());
+        });
+        output.textures_delta.clear();
+
+        assert!(!output.shapes.is_empty());
     }
 }

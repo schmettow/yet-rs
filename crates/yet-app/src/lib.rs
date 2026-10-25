@@ -10,6 +10,7 @@ pub mod console;
 pub mod driver;
 pub mod headless;
 pub mod live;
+pub mod tracker;
 pub mod window;
 
 pub use console::{run_console, ConsoleOptions};

@@ -2,14 +2,16 @@
 
 A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
-> **Status:** Sprints 0–6 (foundations, risk spikes, experiment model,
+> **Status:** Sprints 0–7 implemented (foundations, risk spikes, experiment model,
 > scheduler/headless slice, CV features and model, camera and calibration,
-> presenter and console shell). The workspace runs an experiment without a
-> window or in a two-window console: the console controls the session and a
-> deferred fullscreen viewport on the presenter monitor draws static images.
-> Feature extraction and the linear gaze model are verified against NumPy,
-> OpenCV and scikit-learn. PNG-sequence playback, audio, calibration UX and the
-> camera-in-the-session wiring are still ahead.
+> presenter and console shell, calibration UX and live camera preview). The
+> workspace runs an experiment without a window or in a two-window console: the
+> console controls the session, calibrates the tracker and shows a camera
+> preview, while a deferred fullscreen viewport on the presenter monitor draws
+> static images. Feature extraction and the linear gaze model are verified
+> against NumPy, OpenCV and scikit-learn. The pilot usability test (UX-4) and the
+> interactive desktop validation of the S7 flow are still pending; PNG-sequence
+> playback and audio are Sprint 8.
 
 ## What it will do
 
@@ -31,7 +33,10 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
   paint-rate statistics. It implements the UI-free `Presenter` trait.
 - `yet-console` — the experimenter console: start/pause/resume/abort, monitor
   selection, progress, frame statistics, a bounded log and validation errors.
-  It receives no scene or texture, so it cannot render the stimulus.
+  It receives no scene or texture, so it cannot render the stimulus. The S7
+  console adds a calibration panel (full grid, quick recalibration, cancel,
+  RMSE and drift), gating that follows the session phase, and an optional
+  camera preview with the eye region, capture rate and live gaze.
 - `yet-core` — a pure `step` engine with start/pause/resume/abort/tick,
   absolute trial deadlines, late-tick accounting, a `TestClock`, and the
   calibration data types.
@@ -40,7 +45,11 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
   per-block trial planning.
 - `yet-core` — a calibration grid (3×3 at 0.125/0.5/0.875), stimulus placement
   and golden scenes, plus a yet_zero-compatible CSV data sink with flush per
-  trial.
+  trial. `CalibrationRun` is the UI-free calibration state machine: settle,
+  automatic collection with a minimum and maximum window, report hold, quick
+  center recalibration, cancellation and actionable errors. It never reads a
+  camera; the application feeds it quadrant means and presents the scene it
+  returns.
 - `yet-core` — `GrayFrame`/`EyeRegion`, canonical `quad_brightness` with the
   odd-dimension split rule, Rec. 601 luma matching OpenCV, and a
   `LinearGazeModel` (centered SVD least squares) with a calibration buffer and
@@ -63,9 +72,11 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
   collection, RMSE report, quick recalibration and a live gaze dot. `--terminal`
   keeps the coordinate-printing fallback.
 - `yet-app` — `yet-app run <experiment-dir>` opens the console and the stimulus
-  window on the configured monitor. `--headless` keeps the windowless runner.
-  Both paths share the same effect handling and scene composition in
-  `yet-app/src/driver.rs`.
+  window on the configured monitor. The console drives the camera, full and
+  quick calibration and the live preview; gaze samples are written to the result
+  CSV once a calibration is fitted. `--headless` keeps the windowless runner,
+  and `--device N` overrides the configured camera index. Both paths share the
+  same effect handling and scene composition in `yet-app/src/driver.rs`.
 - CI for Linux, macOS and Windows, plus a Rust 1.95 MSRV check.
 - Sprint 1 risk reports in [`docs/spikes/`](docs/spikes/) covering eframe
   presentation, the overlay matrix, camera capture/parity and media/audio.
@@ -79,6 +90,10 @@ Requires Rust 1.95 or newer. The MSRV follows eframe 0.37, which provides
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
+
+# Hardware smoke tests; needs the YET camera (YET_TEST_DEVICE overrides the index).
+cargo test -p yet-app --all-features --lib -- --ignored the_yet_camera_delivers_frames
+
 cargo run -p yet-app -- plan examples/demo
 cargo run --release -p yet-app -- run examples/demo-gui --participant demo01
 cargo run -p yet-app -- run --headless examples/demo --participant demo01
@@ -129,20 +144,27 @@ about ten times per second for its clock, and that leaves the stimulus window
 untouched; the console therefore cannot cause timing jitter in the stimulus.
 
 Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
-is enabled) and **Abort** (F8). The presenter monitor can be changed before a
-session starts; changing it recreates the stimulus window on that monitor. If
-it matches the console monitor, the console warns that the fullscreen stimulus
-will cover it. The console locks presenter settings while a session is active.
+is enabled), **Abort** (F8), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
+center target; requires an existing fit), **Cancel calibration** (Esc) and the
+**Camera preview** toggle (F10). The presenter monitor can be changed before a
+session starts; changing it recreates the stimulus window on that monitor. The
+console locks presenter settings while a session or calibration is active. If
+the console monitor matches the presenter monitor, it warns that the fullscreen
+stimulus will cover it. The console locks presenter settings while a session is active.
 
 `examples/demo-gui` is the static-image demo for this path: four images shared
-with `examples/demo`, 3 s each, no sequence and no audio. A full debug-build run
-on the two-monitor workstation measured:
+with `examples/demo`, 3 s each, no sequence and no audio. The S6 full run on the
+two-monitor workstation, before the camera was wired into the session, measured:
 
 ```text
 finished 12.0 s · 4/4 trials · 720 presented · 60.0 Hz measured paint rate
 ~7% coalesced frames · all trials within 0.4 ms of their deadline
-Samples: 0 (the camera is not wired into the session yet)
+Samples: 0 (the camera was not wired into the session yet)
 ```
+
+The S7 path keeps the same scheduler and presenter. The camera now runs on the
+controller thread, so a calibrated session writes gaze rows; without a
+calibration the CSV keeps its header and no gaze rows, and the console says so.
 
 **Compositor dimming.** KWin's *Dim Inactive* effect multiplies an unfocused
 window by 75%. While the console has focus, the stimulus is dimmed, which
@@ -153,11 +175,59 @@ focus request. For luminance-sensitive work, disable *System Settings → Window
 Management → Desktop Effects → Dim Inactive* or click the stimulus window before
 the session. This is recorded in the S6 implementation note.
 
-**Not in S6:** sequences return a clear Sprint 8 error, audio is not played,
-the camera is not part of the session path, and the console window is placed by
-the desktop rather than by `display.console_monitor`. If the console reports
-"waiting for fullscreen", check `display.presenter_monitor`: an out-of-range
-index is ignored by the window manager, so the stimulus never settles.
+**Not yet:** sequences return a Sprint 8 error, audio is not played, the console
+window is placed by the desktop rather than by `display.console_monitor`, and
+the S7 interactive validation and pilot test (UX-4) are still outstanding. If the
+console reports "waiting for fullscreen", check `display.presenter_monitor`: an
+out-of-range index is ignored by the window manager, so the stimulus never
+settles.
+
+### Calibrating in the console
+
+The console is the supported tracking path. The standalone `calibrate` command
+remains useful for camera checks without an experiment session.
+
+1. Press **F10** (or tick *Camera preview*). The controller thread opens the
+   configured camera and shows the cropped eye region at up to 240×160, the
+   capture rate, a 120×96 gaze map and the current gaze in stimulus pixels and
+   normalized coordinates. A camera error leaves the experiment runnable and
+   offers **Retry**.
+2. Press **F7**. The presenter shows the 3×3 grid, the active target in orange,
+   and the console shows target progress and collected frames. Each target
+   settles for 800 ms, then 20 frames are collected within a 500–1500 ms window.
+   The report (sample count and RMSE) stays on the presenter for 2 s.
+3. **Esc** cancels at any time. A cancelled or failed full calibration restores
+   the previous model and buffer; a failed quick run keeps the last full report.
+   Errors name the cause and the console states whether a calibration is still
+   active.
+4. **F9** reruns a single center target. It requires an existing fit (calibrate
+   with F7 first). The console reports the new RMSE and the drift against the
+   previous quick run, or against the full run for the first quick run.
+5. **F5** starts the experiment. Gaze samples are mapped to stimulus pixels and
+   normalized coordinates and written per tick; without a fit the CSV keeps its
+   header and no gaze rows. Full calibration is available while idle or after a
+   session; quick recalibration also while paused, and the session stays paused
+   when it finishes.
+
+The preview is a diagnostic view on the console. It never touches the stimulus
+window, and preview updates are capped at about 15 Hz while the controller keeps
+its 60 Hz tick.
+
+### Pilot test (UX-4)
+
+The pilot needs two or three people and is still outstanding. For each pilot
+participant:
+
+```sh
+cargo run --release -p yet-app -- run examples/demo-gui --participant pilot1
+```
+
+Record the time from console start to the first trial (the console logs it), the
+calibration RMSE and drift, whether the participant needed help for F7/F9, and
+the result CSV. Stop after the first session and note the top three usability
+problems, then schedule fixes before the S11 pilot. Eye-region crops are personal
+data: keep them on the recording machine and delete them after the session unless
+the participant consented to storage.
 
 ## Camera and calibration
 

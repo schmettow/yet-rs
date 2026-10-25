@@ -16,6 +16,12 @@ pub enum ExperimentCommand {
     Resume,
     /// Stop the session and keep the partial result file.
     Abort,
+    /// Start a full 3x3 calibration on the presenter.
+    Calibrate,
+    /// Refit the model with one center-target sample.
+    QuickCalibrate,
+    /// Cancel the active calibration and restore the previous model.
+    CancelCalibration,
     /// Abort if necessary, flush the result file, and stop the controller.
     Shutdown,
 }
@@ -28,6 +34,9 @@ impl ExperimentCommand {
             Self::Pause => "pause",
             Self::Resume => "resume",
             Self::Abort => "abort",
+            Self::Calibrate => "calibrate",
+            Self::QuickCalibrate => "quick calibrate",
+            Self::CancelCalibration => "cancel calibration",
             Self::Shutdown => "shutdown",
         }
     }
@@ -43,6 +52,12 @@ mod tests {
         assert_eq!(ExperimentCommand::Pause.label(), "pause");
         assert_eq!(ExperimentCommand::Resume.label(), "resume");
         assert_eq!(ExperimentCommand::Abort.label(), "abort");
+        assert_eq!(ExperimentCommand::Calibrate.label(), "calibrate");
+        assert_eq!(ExperimentCommand::QuickCalibrate.label(), "quick calibrate");
+        assert_eq!(
+            ExperimentCommand::CancelCalibration.label(),
+            "cancel calibration"
+        );
         assert_eq!(ExperimentCommand::Shutdown.label(), "shutdown");
     }
 }

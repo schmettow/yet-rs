@@ -23,7 +23,13 @@ pub mod plan;
 mod rng;
 pub mod tracking;
 
-pub use calibration::{CalibrationGrid, CalibrationTarget};
+pub use calibration::{
+    CalibrationError, CalibrationGrid, CalibrationPhase, CalibrationRun, CalibrationSnapshot,
+    CalibrationTarget, CalibrationTiming, QuickBackground, ACTIVE_TARGET_COLOR,
+    CALIBRATION_MAX_COLLECT, CALIBRATION_MIN_COLLECT, CALIBRATION_REPORT_HOLD,
+    CALIBRATION_SAMPLES_PER_TARGET, CALIBRATION_SETTLE, GRID_POSITIONS, TARGET_COLOR,
+    TARGET_RADIUS_PX, TARGET_STROKE_PX,
+};
 pub use camera::{
     validate_eye_region, Camera, CameraError, CameraInfo, CameraStats, CaptureConfig, PixelFormat,
     PreferredFormat,

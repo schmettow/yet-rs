@@ -79,6 +79,27 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   windowless runner. Both paths share `yet-app/src/driver.rs`, which composes
   stimulus scenes from `StimulusPlacement`, loads media into the presenter,
   applies engine effects and writes the data sink.
+- `yet-core`: `CalibrationRun`, a UI-free calibration state machine with settle,
+  automatic collection (20 frames, 500–1500 ms), a 2 s report hold, quick
+  center recalibration, cancellation, typed errors and restoration of the
+  previous model and buffer after a failed full run. `CalibrationGrid` gained
+  `surface_px`, `scene_with_text` and `quick_scene` with a blurred stimulus
+  background for recalibration.
+- `yet-console`: a calibration panel with full/quick/cancel controls, phase and
+  target progress, frame counts, RMSE, drift against the previous quick or full
+  report, actionable errors and phase-aware gating. A camera preview shows the
+  eye-ROI thumbnail, capture rate, a 120×96 gaze map and the gaze in stimulus
+  pixels and normalized coordinates, with a retry path for camera errors.
+- `yet-app`: the session path now owns the camera. `Tracker` polls the capture
+  thread without counting a frame twice, `Tracker::preview` crops and downscales
+  the eye region off the UI thread, and gaze samples are mapped to stimulus
+  pixels and normalized coordinates before they reach the CSV. Full and quick
+  calibration run inside the console at the controller tick; `--device`
+  overrides the configured camera index.
+- Tests for the calibration state machine, phase-aware console gating, drift
+  reporting, the preview texture path, tracker polling and thumbnail scaling,
+  and gaze mapping. An ignored hardware test exercises `Tracker` against the
+  real YET camera.
 - `examples/demo-gui`: a four-image, image-only experiment for the console demo.
   It reuses the stimuli in `examples/demo` and keeps sequences out of the S6
   path.
@@ -132,6 +153,10 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   deterministic fonts.
 - `yet-app run` without `--headless` now opens the graphical console; the
   headless runner keeps the same CLI flags and output.
+- `yet-app run` gained in-console calibration (F7 full grid, F9 quick center,
+  Esc cancel, F10 preview). The controller thread opens the camera lazily, uses
+  it for calibration and for gaze while a fit is active, and caps preview uploads
+  at about 15 Hz.
 - The session report and errors moved to `yet-app/src/driver.rs` so the console
   and the headless runner share them. `yet-app::headless` re-exports both.
 - The controller runs on its own thread with a 16.7 ms absolute tick. The
@@ -160,18 +185,23 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   the X11 test. Disable the effect for luminance-sensitive sessions.
 - The console window is a normal window; its monitor is recorded but not
   enforced. The stimulus viewport is the monitor-targeted one.
-- Sequence stimuli are rejected by the S6 presenter with a Sprint 8 message;
-  audio is accepted in the protocol but not played yet. The camera is not part
-  of the session path, so the result CSV has a header and no gaze rows.
+- The S7 calibration flow compiles and its state machine is covered by tests,
+  but the interactive desktop validation could not run in this environment
+  because the session was locked. The pilot usability test (UX-4) needs two or
+  three people and is still outstanding; the README documents how to run it.
+- The console shows the human calibration RMSE but applies no automatic quality
+  threshold: a poor fit is visible, not rejected. Accuracy and latency budgets
+  stay deferred to the end of the project as agreed.
+- Sequence stimuli are rejected by the presenter with a Sprint 8 message; audio
+  is accepted in the protocol but not played yet.
 - A 60 Hz tick against 3 s deadlines produces sub-millisecond lateness on every
   trial (max 0.4 ms in the debug run). The console reports it with one decimal
   rather than truncating it to "0 ms".
 - The `--terminal` calibration fallback prints targets but does not draw them;
   the graphical window is the supported calibration path.
-- The headless runner does not capture gaze yet, so it writes the CSV header
-  but no data rows. The scheduler, presenter commands and sink are exercised;
-  the live camera path is covered separately by `yet-app camera` and
-  `yet-app calibrate`.
+- The headless runner does not open the camera, so it still writes the CSV
+  header but no data rows. The graphical console runs the camera and writes gaze
+  rows once a calibration is fitted.
 - The overlay runtime matrix on Windows, macOS, GNOME and KDE/Sway is still
   pending; the X11 proxy is not sufficient evidence for R11.
 - The audio clock offset is device-dependent and is not compensated yet; the

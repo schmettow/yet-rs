@@ -14,13 +14,23 @@
 > unfocused stimulus window by 25% (white 255→191), which changes stimulus
 > luminance;** the presenter requests focus on Start/Resume and the console
 > warns when the stimulus is unfocused, but KWin refused the request in this
-> test. Sequences, audio, camera-in-session wiring and the overlay remain in
-> later sprints.
+> test. Sequences, audio and the overlay remain in later sprints.
+
+> **Implementation note (S7, 2026-10-25):** the console now hosts the calibration
+> flow and a live camera preview. Both are **console-side diagnostics and
+> control**, not part of the stimulus path: `yet-core::CalibrationRun` is UI-free
+> and camera-free, `yet-console` receives only snapshots (phase, progress, RMSE,
+> drift, a downscaled eye-ROI texture and a gaze point), and the presenter still
+> receives only scenes. Preview updates are capped at about 15 Hz and never
+> repaint the stimulus viewport. This keeps R4 intact and leaves the `Presenter`
+> trait replaceable. The S7 interactive desktop validation was blocked by a
+> locked session; no human calibration RMSE is recorded yet.
 
 # UI & Graphics Crate Analysis — yet_zero → Rust
 
 **Status:** analysis revised after requirements confirmation, 2026-10-25; the
-S6 presenter and console implementation is recorded in the note above.
+S6 presenter/console and S7 calibration/preview implementations are recorded in
+the notes above.
 **Scope:** UI toolkit, image/video/audio presentation, multi-window, desktop overlay, configuration and licensing consequences. Camera capture, eye detection, and ML are out of scope.
 
 ---

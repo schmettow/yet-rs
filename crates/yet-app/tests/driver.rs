@@ -9,9 +9,12 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use yet_app::driver::{RunError, SessionRunner};
+use yet_app::driver::{gaze_sample, RunError, SessionRunner};
 use yet_core::layout::StimulusPlacement;
-use yet_core::{BlockId, DataSink, Effect, SessionIdentity, Stimulus, StimulusId, StimulusKind};
+use yet_core::{
+    BlockId, DataSink, Effect, FrameRecord, GazePoint, SessionIdentity, Stimulus, StimulusId,
+    StimulusKind,
+};
 use yet_present::{
     DrawCommand, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
     RecordingPresenter, RectPx, Scene, ScreenGeometry, SessionTime,
@@ -54,7 +57,7 @@ fn a_trial_start_loads_media_and_composes_the_placed_scene() {
     let mut sink = sink(directory.path());
     let mut presenter = RecordingPresenter::new(ScreenGeometry::new(1, None, (1440, 2560), 1.0))
         .with_media_size(MediaId::new(1), (4000, 3000));
-    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_| None);
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
 
     runner.apply(started(stimulus.clone())).unwrap();
 
@@ -94,7 +97,7 @@ fn presenting_after_a_trial_start_sends_the_scene_to_the_presenter() {
     let mut sink = sink(directory.path());
     let mut presenter = RecordingPresenter::new(ScreenGeometry::new(0, None, (1920, 1080), 1.0))
         .with_media_size(MediaId::new(1), (640, 480));
-    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_| None);
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
     runner.apply(started(stimulus)).unwrap();
 
     let stats = runner.present(
@@ -119,7 +122,7 @@ fn unknown_media_size_leaves_the_scene_empty() {
     let directory = tempfile::tempdir().unwrap();
     let mut sink = sink(directory.path());
     let mut presenter = RecordingPresenter::new(ScreenGeometry::new(0, None, (1920, 1080), 1.0));
-    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_| None);
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
 
     runner
         .apply(started(image_stimulus(directory.path().join("t01.png"))))
@@ -135,7 +138,7 @@ fn an_empty_surface_is_reported_as_an_invalid_placement() {
     let mut sink = sink(directory.path());
     let mut presenter = RecordingPresenter::new(ScreenGeometry::new(0, None, (0, 0), 1.0))
         .with_media_size(MediaId::new(1), (640, 480));
-    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_| None);
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
 
     let result = runner.apply(started(image_stimulus(directory.path().join("t01.png"))));
 
@@ -147,6 +150,78 @@ fn an_empty_surface_is_reported_as_an_invalid_placement() {
             ..
         })
     ));
+}
+
+#[test]
+fn monitor_gaze_maps_to_stimulus_pixels_and_normalized_units() {
+    let placement = StimulusPlacement::fit((640, 480), (1920, 1080)).unwrap();
+    let record = FrameRecord {
+        at: SessionTime::from_duration(Duration::from_millis(1234)),
+        block: BlockId::new("B1"),
+        trial_index: 0,
+        stimulus: StimulusId::new("t01"),
+        trial_started_at: SessionTime::ZERO,
+        gaze: None,
+    };
+
+    let sample = gaze_sample(&record, GazePoint::new(960.0, 540.0), placement);
+
+    assert_eq!(sample.at, record.at);
+    assert_eq!(sample.pixel, GazePoint::new(320.0, 240.0));
+    assert_eq!(sample.normalized, GazePoint::new(0.5, 0.5));
+}
+
+#[test]
+fn gaze_outside_the_stimulus_is_not_clamped() {
+    let placement = StimulusPlacement::fit((640, 480), (1920, 1080)).unwrap();
+    let record = FrameRecord {
+        at: SessionTime::ZERO,
+        block: BlockId::new("B1"),
+        trial_index: 0,
+        stimulus: StimulusId::new("t01"),
+        trial_started_at: SessionTime::ZERO,
+        gaze: None,
+    };
+
+    let sample = gaze_sample(&record, GazePoint::new(-100.0, -100.0), placement);
+
+    assert!(sample.pixel.x < 0.0);
+    assert!(sample.pixel.y < 0.0);
+    assert!(sample.normalized.x < 0.0);
+    assert!(sample.normalized.y < 0.0);
+}
+
+#[test]
+fn appending_a_frame_passes_the_current_placement_to_the_gaze_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sink = sink(directory.path());
+    let mut presenter = RecordingPresenter::new(ScreenGeometry::new(0, None, (1920, 1080), 1.0))
+        .with_media_size(MediaId::new(1), (640, 480));
+    let mut seen = None;
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, placement| {
+        seen = placement;
+        None
+    });
+    runner
+        .apply(started(image_stimulus(directory.path().join("t01.png"))))
+        .unwrap();
+
+    runner
+        .apply(Effect::AppendFrame(FrameRecord {
+            at: SessionTime::ZERO,
+            block: BlockId::new("B1"),
+            trial_index: 0,
+            stimulus: StimulusId::new("t01"),
+            trial_started_at: SessionTime::ZERO,
+            gaze: None,
+        }))
+        .unwrap();
+
+    drop(runner);
+    assert_eq!(
+        seen,
+        Some(StimulusPlacement::fit((640, 480), (1920, 1080)).unwrap())
+    );
 }
 
 #[test]
@@ -191,7 +266,7 @@ fn a_surface_resize_recomposes_the_current_scene() {
     let mut presenter = ResizablePresenter {
         geometry: Rc::clone(&geometry),
     };
-    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_| None);
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
     runner
         .apply(started(image_stimulus(directory.path().join("t01.png"))))
         .unwrap();

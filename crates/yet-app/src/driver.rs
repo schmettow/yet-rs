@@ -16,8 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use yet_core::layout::StimulusPlacement;
 use yet_core::{
-    DataError, DataSink, Effect, EngineError, FrameRecord, GazeSample, LoadError, LoadedExperiment,
-    Phase, SessionIdentity, Stimulus, StimulusId, StimulusKind,
+    DataError, DataSink, Effect, EngineError, FrameRecord, GazePoint, GazeSample, LoadError,
+    LoadedExperiment, Phase, SessionIdentity, Stimulus, StimulusId, StimulusKind,
 };
 use yet_present::{
     ClockSource, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
@@ -180,7 +180,7 @@ impl<'a, W, P, G> SessionRunner<'a, W, P, G>
 where
     W: Write,
     P: Presenter,
-    G: FnMut(&FrameRecord) -> Option<GazeSample>,
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
     /// Create a runner around an open sink and presenter.
     pub fn new(sink: &'a mut DataSink<W>, presenter: &'a mut P, gaze: G) -> Self {
@@ -223,6 +223,16 @@ where
         self.current.as_ref()
     }
 
+    /// Geometry of the monitor this runner presents on.
+    pub fn geometry(&self) -> yet_present::ScreenGeometry {
+        self.presenter.geometry()
+    }
+
+    /// The media identifier of the active stimulus.
+    pub fn current_media(&self) -> Option<MediaId> {
+        self.current_media
+    }
+
     /// Flush the result sink.
     pub fn flush(&mut self) -> Result<(), RunError> {
         self.sink.flush()?;
@@ -261,7 +271,7 @@ where
                 }
             }
             Effect::AppendFrame(record) => {
-                if let Some(sample) = (self.gaze)(&record) {
+                if let Some(sample) = (self.gaze)(&record, self.placement) {
                     self.sink.append(&record.stimulus, sample)?;
                     self.report.samples += 1;
                 }
@@ -286,18 +296,17 @@ where
     /// Present the current scene and return its timing statistics.
     pub fn present(&mut self, at: SessionTime, dt: Duration) -> PresentStats {
         self.refresh_placement();
-        let now = Instant::now();
-        let frame = FrameStamp {
-            experiment_t: at,
-            requested_at: now,
-            presented_at: now,
-            dt,
-            media_pts: None,
-            audio_pts: None,
-            master: ClockSource::Monotonic,
-            dropped: false,
-        };
+        let frame = frame_stamp(at, dt);
         self.presenter.present(&frame, &self.scene)
+    }
+
+    /// Present an arbitrary scene without changing the trial scene.
+    ///
+    /// Calibration uses this to draw its grid while the experiment scene is
+    /// paused or not yet started.
+    pub fn present_scene(&mut self, at: SessionTime, dt: Duration, scene: &Scene) -> PresentStats {
+        let frame = frame_stamp(at, dt);
+        self.presenter.present(&frame, scene)
     }
 
     /// Recompose the current stimulus after the presenter surface changed.
@@ -374,9 +383,42 @@ where
     }
 }
 
+/// Map a monitor-space gaze point to stimulus pixels and normalized units.
+///
+/// The placement is the fitted rectangle reported by [`StimulusPlacement`];
+/// points outside the stimulus are not clamped, so a tracker excursion stays
+/// visible in the CSV.
+pub fn gaze_sample(
+    record: &FrameRecord,
+    monitor: GazePoint,
+    placement: StimulusPlacement,
+) -> GazeSample {
+    let scale = placement.scale.max(f32::EPSILON);
+    let dest = placement.dest_px;
+    let pixel = GazePoint::new((monitor.x - dest.x) / scale, (monitor.y - dest.y) / scale);
+    let media_width = (dest.width / scale).max(f32::EPSILON);
+    let media_height = (dest.height / scale).max(f32::EPSILON);
+    let normalized = GazePoint::new(pixel.x / media_width, pixel.y / media_height);
+    GazeSample::new(record.at, pixel, normalized)
+}
+
 pub(crate) fn now_seconds() -> Result<f64, RunError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .map_err(|_| RunError::Clock)
+}
+
+fn frame_stamp(at: SessionTime, dt: Duration) -> FrameStamp {
+    let now = Instant::now();
+    FrameStamp {
+        experiment_t: at,
+        requested_at: now,
+        presented_at: now,
+        dt,
+        media_pts: None,
+        audio_pts: None,
+        master: ClockSource::Monotonic,
+        dropped: false,
+    }
 }
