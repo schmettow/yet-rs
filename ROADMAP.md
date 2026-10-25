@@ -75,11 +75,19 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   audio-master pacing, pause/resume through the engine, console drift/drop/
   underrun display, `yet-app media` validation, `tools/prepare_media.sh` and
   `examples/media-demo`. 221 tests pass; audio and sequences were exercised on
-  the Linux workstation (`media 2.03 s · drift +8.2 ms` at 2.1 s). Windows/macOS
-  runtime, a beep/flash A/V measurement and background prefetch remain.
-- **Next:** S9 overlay core (Windows/macOS `EguiOverlay`, layer-shell Wayland).
+  the Linux workstation (`media 2.10 s · audio drift +24.9 ms` at 2.1 s).
+  Windows/macOS runtime, a beep/flash A/V measurement and background prefetch
+  remain.
+- **Next:** S9 overlay core (Windows/macOS `EguiOverlay`, layer-shell Wayland),
+  after the proposed S8.5 seam-hardening pass.
 
 ## Post-v1
 
-Out-of-process presenter, GNOME Shell extension (only if XWayland fails),
-real-time AOIs, runtime video decode, experiment authoring UI, browser version.
+- **E1:** a `no_std`/fixed-point Quadbright glance predictor with a versioned
+  model file for a microcontroller.
+- **E2:** Octabright (two eye cameras) and/or a world camera with role-tagged,
+  timestamped frame sets.
+- **E3:** motion/head/body sensors and a true gaze model; glance stays the
+  fallback when pose is absent.
+- Out-of-process presenter, GNOME Shell extension (only if XWayland fails),
+  real-time AOIs, runtime video decode, experiment authoring UI, browser version.

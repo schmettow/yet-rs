@@ -148,6 +148,12 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- `DEVELOPMENT_PLAN.md` now records the 2026-10-25 plan health check and the
+  evolution requirements E1–E3: a portable MCU glance predictor, Octabright and
+  a world camera, and motion sensors for a future gaze model. The plan adds six
+  architecture seams, a proposed 2–3 day seam-hardening sprint (S8.5) before
+  overlay work, future backlog items, risks and decisions. No model, sensor or
+  camera behavior changed in v1.
 - The experimenter console targets a notebook's main screen: text, padding and
   controls are scaled 2×, the window opens at 1400×860 logical points clamped
   to 92% of the monitor, and wide windows use a two-column layout (controls and
