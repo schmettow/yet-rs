@@ -26,6 +26,9 @@ pub struct PlannedBlock {
 }
 
 /// A fully ordered session plan.
+///
+/// Plans built by [`build`] contain at least one trial and no empty blocks;
+/// the engine relies on that when it advances between blocks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionPlan {
     /// Experiment identifier.

@@ -11,19 +11,24 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+pub mod calibration;
 pub mod clock;
 pub mod config;
+pub mod data;
 pub mod engine;
 pub mod experiment;
+pub mod layout;
 pub mod plan;
 mod rng;
 pub mod tracking;
 
+pub use calibration::{CalibrationGrid, CalibrationTarget};
 pub use clock::{Clock, TestClock};
 pub use config::{
     load as load_config, AppConfig, AudioConfig, CameraConfig, ConfigError, DisplayConfig,
     OverlayConfig, OverlayMode, PresenterBackend, PresenterConfig,
 };
+pub use data::{DataError, DataSink, GazeSample, SessionIdentity};
 pub use engine::{
     step, ConsoleEvent, Effect, EngineError, EngineEvent, EngineState, FrameRecord, Key, Phase,
     TrialRecord,
