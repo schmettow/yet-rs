@@ -3,7 +3,7 @@
 //! yet-rs binary.
 //!
 //! Sprint 2 exposes the resolved experiment plan. Sprint 3 adds the headless
-//! runner; later sprints add the console and the presenter window.
+//! runner; Sprint 6 adds the console and the stimulus presenter.
 
 use std::env;
 use std::fmt;
@@ -11,14 +11,14 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use yet_app::live::{self, CalibrateOptions, CameraProbe};
-use yet_app::{run, HeadlessOptions, RunReport};
+use yet_app::{run, run_console, ConsoleOptions, HeadlessOptions, RunReport};
 use yet_core::{load_experiment, LoadError};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.as_slice() {
         [command, path] if command == "plan" => run_plan(path),
-        [command, rest @ ..] if command == "run" => run_headless(rest),
+        [command, rest @ ..] if command == "run" => run_session(rest),
         [command, rest @ ..] if command == "camera" => run_camera(rest),
         [command, rest @ ..] if command == "calibrate" => run_calibrate(rest),
         [flag] if flag == "-h" || flag == "--help" => {
@@ -44,7 +44,7 @@ fn main() -> ExitCode {
 fn usage() {
     eprintln!(
         "usage:\n  yet-app plan <experiment-dir>\n  \
-         yet-app run --headless <experiment-dir> [--participant <id>] [--output <csv>]\n  \
+         yet-app run <experiment-dir> [--headless] [--participant <id>] [--output <csv>]\n  \
          yet-app camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
          yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]"
     );
@@ -122,7 +122,7 @@ fn run_plan(directory: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_headless(args: &[String]) -> Result<(), CliError> {
+fn run_session(args: &[String]) -> Result<(), CliError> {
     let mut headless = false;
     let mut directory: Option<&Path> = None;
     let mut participant: Option<&str> = None;
@@ -148,7 +148,15 @@ fn run_headless(args: &[String]) -> Result<(), CliError> {
     }
 
     if !headless {
-        return Err(CliError::Usage);
+        let mut options = ConsoleOptions::new(directory.ok_or(CliError::Usage)?);
+        if let Some(participant) = participant {
+            options = options.participant(participant);
+        }
+        if let Some(output) = output {
+            options = options.output(output);
+        }
+        run_console(options)?;
+        return Ok(());
     }
 
     let mut options = HeadlessOptions::new(directory.ok_or(CliError::Usage)?);

@@ -44,7 +44,6 @@ fn valid_config_loads_and_validates() {
 
     assert_eq!(config.display.presenter_monitor, 1);
     assert_eq!(config.display.console_monitor, 0);
-    assert_eq!(config.display.presenter_origin, None);
     assert_eq!(config.camera.usb_index, 0);
     assert_eq!(config.camera.width, 640);
     assert_eq!(config.camera.height, 480);
@@ -82,18 +81,6 @@ fullscreen = false
     assert!(config.audio.enabled);
     assert_eq!(config.audio.device, "default");
     assert_eq!(config.audio.volume, 1.0);
-}
-
-#[test]
-fn a_presenter_origin_is_optional_and_can_be_set() {
-    let text = VALID.replace(
-        "fullscreen = true",
-        "fullscreen = true\npresenter_origin = [2560, 0]",
-    );
-    let (_dir, path) = write_config(&text);
-    let config = load_config(&path).unwrap();
-
-    assert_eq!(config.display.presenter_origin, Some([2560, 0]));
 }
 
 #[test]

@@ -64,7 +64,6 @@ pub fn run_calibration(
         info,
         roi,
         grid,
-        display,
         calibration: Calibration::new(),
         phase: Phase::Prelude,
         options,
@@ -73,21 +72,15 @@ pub fn run_calibration(
         quick_report: None,
         last_prediction: None,
         live_samples: 0,
-        initial_layout_done: false,
-        requested_origin: loaded.config.display.presenter_origin,
         viewport_px: (display.0 as f32, display.1 as f32),
     };
 
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("yet-rs calibration")
-        .with_decorations(false)
-        .with_inner_size([display.0 as f32, display.1 as f32]);
-    viewport = match loaded.config.display.presenter_origin {
-        Some([x, y]) => viewport.with_position([x as f32, y as f32]),
-        None => viewport.with_fullscreen(true),
-    };
     let native = eframe::NativeOptions {
-        viewport,
+        viewport: egui::ViewportBuilder::default()
+            .with_title("yet-rs calibration")
+            .with_monitor(loaded.config.display.presenter_monitor)
+            .with_fullscreen(true)
+            .with_inner_size([display.0 as f32, display.1 as f32]),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
@@ -159,7 +152,6 @@ struct CalibrationApp {
     info: CameraInfo,
     roi: EyeRegion,
     grid: CalibrationGrid,
-    display: (u32, u32),
     calibration: Calibration,
     phase: Phase,
     options: CalibrateOptions,
@@ -168,37 +160,18 @@ struct CalibrationApp {
     quick_report: Option<CalibrationReport>,
     last_prediction: Option<GazePoint>,
     live_samples: usize,
-    initial_layout_done: bool,
-    requested_origin: Option<[i32; 2]>,
     viewport_px: (f32, f32),
 }
 
 impl eframe::App for CalibrationApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now = Instant::now();
+        let ctx = ui.ctx().clone();
         let ppp = ctx.pixels_per_point().max(0.1);
-
-        if !self.initial_layout_done {
-            if let Some([x, y]) = self.requested_origin {
-                // Viewport sizes and positions are logical points; the config
-                // stores physical pixels. Correct after the window exists so
-                // the window covers exactly the configured presenter area.
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                    x as f32 / ppp,
-                    y as f32 / ppp,
-                )));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                    self.display.0 as f32 / ppp,
-                    self.display.1 as f32 / ppp,
-                )));
-            }
-            self.initial_layout_done = true;
-        }
-
-        let screen = ctx.content_rect();
+        let rect = ui.max_rect();
         self.viewport_px = (
-            (screen.width() * ppp).max(1.0),
-            (screen.height() * ppp).max(1.0),
+            (rect.width() * ppp).max(1.0),
+            (rect.height() * ppp).max(1.0),
         );
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -217,10 +190,7 @@ impl eframe::App for CalibrationApp {
         }
 
         self.step(now);
-
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::WHITE))
-            .show(ctx, |ui| self.draw(ui));
+        self.draw(ui);
 
         let close = match &self.phase {
             Phase::Done { since } => now.duration_since(*since) >= DONE_HOLD,

@@ -10,8 +10,20 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 ### Added
 
 - Cargo workspace with the `yet-present`, `yet-core` and `yet-app` crates.
-- `yet-present`: `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`,
-  presenter, overlay, media-sequence and audio traits, and `RecordingPresenter`.
+- `yet-present`: `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`
+  (including `BlurredImage`), presenter, overlay, media-sequence and audio
+  traits, and `RecordingPresenter`. `Presenter::media_size` lets the driver
+  compose placed scenes without decoding media itself; `PresenterError::Media`
+  reports unreadable files with their path.
+- `yet-present-egui`: the eframe presenter with a monitor-targeted deferred
+  viewport, physical-pixel to logical-point conversion at 100% and 150%,
+  image decode, texture reuse, cached box blur, text/circle/line drawing,
+  coalesced-frame accounting and a measured paint rate. The viewport waits for
+  the window manager to fill the monitor before reporting ready, and the scene
+  recomposes if the surface is resized.
+- `yet-console`: the experimenter console with start/pause/resume/abort,
+  presenter-monitor selection, progress, frame statistics, a bounded log,
+  actionable errors and a warning when the stimulus window is not focused.
 - `yet-core`: a pure `step` engine with start/pause/resume/abort/tick effects,
   `TestClock`, and the calibration data types.
 - `yet-core`: experiment model (`Experiment`/`Block`/`Trial`/`Stimulus`),
@@ -62,7 +74,22 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   result CSV. A library target makes the runner testable without a window.
 - `yet-app`: `yet-app plan <experiment-dir>` prints the resolved plan; a demo
   experiment lives in `examples/demo`.
-- GitHub Actions CI for Linux, macOS, Windows and MSRV 1.88.
+- `yet-app`: `yet-app run <experiment-dir>` opens the console plus a fullscreen
+  stimulus viewport on the configured monitor. `--headless` keeps the
+  windowless runner. Both paths share `yet-app/src/driver.rs`, which composes
+  stimulus scenes from `StimulusPlacement`, loads media into the presenter,
+  applies engine effects and writes the data sink.
+- `examples/demo-gui`: a four-image, image-only experiment for the console demo.
+  It reuses the stimuli in `examples/demo` and keeps sequences out of the S6
+  path.
+- Tests for protocol media sizes and blurred images, blur math, pixel-to-point
+  mapping at 100%/150%, text anchors, texture and blur caching, coalescing,
+  console state and UI smoke frames, scene composition, resize recomposition
+  and the new demo experiment.
+- `docs/spikes/SPK-5.md` records the S6 presenter measurements: the first paint
+  arrives at 800×600 before fullscreen, so readiness must wait for the monitor
+  fill; `with_monitor` places the stimulus correctly on DP-3.
+- GitHub Actions CI for Linux, macOS and Windows and an MSRV 1.95 check.
 - README, ROADMAP and CHANGELOG.
 - Sprint 1 risk-spike harnesses under `spikes/` and reports under `docs/spikes/`.
 
@@ -70,10 +97,10 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 - `config.toml` camera settings gained `width`, `height`, `fps`, `format` and a
   normalized `eye_region`; all are optional with 640×480, 30 fps, `auto` and no
-  region defaults. `display.presenter_origin` was added for monitor placement
-  where the compositor needs an explicit desktop position. The demo now targets
-  the GEMBIRD Yet camera on `/dev/video2` in YUYV and a portrait 1440×2560
-  presenter at `+2560+0`.
+  region defaults. `display.presenter_origin` was removed again in S6: eframe
+  0.37 targets a monitor with `ViewportBuilder::with_monitor`. The demo now
+  targets the GEMBIRD Yet camera on `/dev/video2` in YUYV and a portrait
+  1440×2560 presenter.
 - `yet-core`: the tracker moved from a single `tracking.rs` into
   `tracking/{mod,frame,features,model,buffer}.rs`. Public re-exports are
   unchanged.
@@ -97,12 +124,19 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `image` 0.25.10, `linuxvideo` 0.3.5 (Linux) and `nokhwa` 0.10.11
   (macOS/Windows) are camera dependencies. `nokhwa` is compiled with only
   `input-avfoundation`/`input-msmf`; its Linux backend and bindgen are excluded.
-- `eframe` 0.33 is the calibration-window dependency. It preserves the Rust
-  1.88 MSRV; 0.37 would provide `ViewportBuilder::with_monitor` but requires
-  Rust 1.95, so placement uses `display.presenter_origin` and a first-frame
-  logical-point correction instead. `egui-wgpu` is a direct dependency only to
-  enable the wgpu backend defaults, and `ordered-float` is pinned to 5.3.0 in
-  `Cargo.lock` because 5.5 requires Rust 1.90.
+- `eframe` 0.37 is now the UI dependency for `yet-present-egui`, `yet-console`
+  and `yet-app`, with `wgpu`/`AutoVsync` and `desired_maximum_frame_latency = 1`.
+  This raises the MSRV to Rust 1.95; the `display.presenter_origin` workaround
+  from S5 is gone, and `with_monitor` targets a monitor on Windows, macOS, X11
+  and Wayland. `system_font_fallback` is disabled so text uses egui's bundled
+  deterministic fonts.
+- `yet-app run` without `--headless` now opens the graphical console; the
+  headless runner keeps the same CLI flags and output.
+- The session report and errors moved to `yet-app/src/driver.rs` so the console
+  and the headless runner share them. `yet-app::headless` re-exports both.
+- The controller runs on its own thread with a 16.7 ms absolute tick. The
+  console reads snapshots; the presenter handle is thread-safe and decodes
+  media on the controller thread, never on the UI thread.
 - The Windows target compiles `yet-core` and `yet-app` with all targets; macOS
   runtime and the TCC prompt remain untested.
 - Linux audio is now verified with `libasound2-dev`; `get_pos()` measured
@@ -118,10 +152,20 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   exercised the full state machine with no human fixations, so their RMSE values
   are plumbing results, not tracking measurements. macOS and Windows camera
   runtime are also untested.
-- eframe 0.33 cannot select a monitor by index. The calibration window uses an
-  optional `display.presenter_origin` and a borderless monitor-sized window;
-  Wayland compositors may ignore the position. Revisit this with the S6
-  presenter and the eframe/MSRV decision.
+- eframe 0.37 is required for `with_monitor`; the MSRV is therefore 1.95. The
+  three-OS CI workflow still needs its first remote run.
+- KWin's *Dim Inactive* effect dims an unfocused stimulus window by 25%, which
+  changes its luminance. yet-rs requests focus on Start/Resume and warns in the
+  console when the stimulus is unfocused, but KWin refused the focus request in
+  the X11 test. Disable the effect for luminance-sensitive sessions.
+- The console window is a normal window; its monitor is recorded but not
+  enforced. The stimulus viewport is the monitor-targeted one.
+- Sequence stimuli are rejected by the S6 presenter with a Sprint 8 message;
+  audio is accepted in the protocol but not played yet. The camera is not part
+  of the session path, so the result CSV has a header and no gaze rows.
+- A 60 Hz tick against 3 s deadlines produces sub-millisecond lateness on every
+  trial (max 0.4 ms in the debug run). The console reports it with one decimal
+  rather than truncating it to "0 ms".
 - The `--terminal` calibration fallback prints targets but does not draw them;
   the graphical window is the supported calibration path.
 - The headless runner does not capture gaze yet, so it writes the CSV header

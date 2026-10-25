@@ -1,0 +1,5 @@
+id,kind,path,fps,duration_ms,loop,audio,block
+t01,image,../demo/stimuli/t01.png,,3000,false,,B1
+t02,image,../demo/stimuli/t02.png,,3000,false,,B1
+t03,image,../demo/stimuli/t03.png,,3000,false,,B1
+t04,image,../demo/stimuli/t04.png,,3000,false,,B1

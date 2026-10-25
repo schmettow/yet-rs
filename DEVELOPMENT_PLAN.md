@@ -75,7 +75,7 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D10** | No eye detection; fixed configurable `EyeRegion`. | CV R6 |
 | **D11** | Features are four quadrant means; model is 4→2 linear regression via `nalgebra`, behind `GazeModel`. | CV R9, R10 |
 | **D12** | CV/tracker lives in one crate with modules for v1; split later along existing traits. | CV R11 |
-| **D13** | MSRV floor 1.88 (`image` 0.25.10); verify `eframe`/`wgpu` and raise only if required. | CV R13 |
+| **D13** | MSRV 1.95, raised for eframe 0.37's `ViewportBuilder::with_monitor`; `image` 0.25.10 sets the previous floor. | CV R13 |
 | **D14** | The engine is a pure transition function plus effects — no blocking `run()` and no sleeps. | This plan, §3.2 |
 | **D15** | Camera capture uses `CameraSource`; media sequences use `FrameSource`, resolving the name collision between CV §6.3 and UI §9.2. | This plan, §3.3 |
 
@@ -338,12 +338,12 @@ flowchart TD
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
-| FND-1 | Create the workspace, GPL-3.0-only license, MSRV 1.88, CI matrix (Linux/macOS/Windows) | M | `cargo test --workspace` green on all three; `Cargo.toml` license correct; no `bindgen`/libclang in `cargo tree -e build`; system prerequisites documented |
+| FND-1 | Create the workspace, GPL-3.0-only license, MSRV 1.95, CI matrix (Linux/macOS/Windows) | M | `cargo test --workspace` green on all three; `Cargo.toml` license correct; no `bindgen`/libclang in `cargo tree -e build`; system prerequisites documented |
 | FND-2 | Define protocol types and traits in `yet-present`; add `RecordingPresenter` | M | No `egui`/`image` types; coordinate and `SessionTime` unit tests; `RecordingPresenter` records scenes |
 | FND-3 | Implement the pure engine skeleton (`EngineState`, `EngineEvent`, `Effect`, `step`, `TestClock`) | M | Start/pause/resume/abort/tick tests; no sleeps; no UI dependency |
 
 **Prior work:** Yex's hierarchy (`exp.rs`) and event log (`mod.rs` L84–L132); rewrite the runtime.
-**Status (2026-10-25):** implemented. Local `fmt`, `check`, `test`, `clippy`, `doc` and MSRV 1.88 checks pass; the three-OS CI workflow is defined and awaits its first run.
+**Status (2026-10-25):** implemented. Local `fmt`, `check`, `test`, `clippy`, `doc` and MSRV 1.95 checks pass; the three-OS CI workflow is defined and awaits its first run.
 **Demo:** workspace builds, tests pass, license and CI evidence.
 **Gate:** do not start overlay work until the license is GPL-3.0-only.
 
@@ -445,7 +445,7 @@ and the CLI testable through `CARGO_BIN_EXE_yet-app` without a window.
 **Gate:** parity and refit budget; if parity fails, fix the feature definition before building the camera adapter.
 **Status (2026-10-25):** CV-1–CV-4 implemented; parity checked against the Python
 oracle on committed synthetic fixtures. 25 new tests; 114 workspace tests pass
-on stable and MSRV 1.88.
+on stable and the then-current MSRV (since raised to 1.95 for eframe 0.37).
 
 - **CV-1:** `GrayFrame` validates its buffer length; `EyeRegion` is checked at the
   boundary; `quad_brightness` uses canonical `(nw, ne, sw, se)` and splits at
@@ -516,9 +516,9 @@ calibration window; CV-7 partially measured.
   monitor, draws the 3×3 grid and collects frames automatically (Space starts,
   Escape cancels). Fitting uses the window's physical pixels, so model, grid
   and live dot share one coordinate system. `--terminal` retains the
-  coordinate-printing fallback. The window is eframe 0.33 because 0.37 requires
-  Rust 1.95; 0.33 lacks `with_monitor`, so `display.presenter_origin` positions
-  the window.
+  coordinate-printing fallback. The window used eframe 0.33 (`presenter_origin`)
+  at the time; S6 moved to eframe 0.37 and `with_monitor`, and removed the
+  origin workaround.
 - **CV-7:** the Yet camera is the GEMBIRD/AppoTech on `/dev/video2`, not the
   StreamCam. It exposes YUYV only and sustained 25.6 fps with 1 corrupt frame in
   3 s. The StreamCam (`video0`) sustained 26.0 fps in MJPG with 6 warm-up/corrupt
@@ -532,17 +532,18 @@ calibration window; CV-7 partially measured.
 **Findings:** the Yet camera is the GEMBIRD and must use YUYV; the StreamCam is
 faster in MJPG but is not the tracker camera. The presenter is a portrait
 1440×2560 display at x=2560. Eframe viewport sizes and positions are logical
-points: a first-frame correction is needed to place and size the borderless
-window from physical-pixel config, and calibration targets must be fitted in
-the window's actual physical size rather than the nominal config size. Quadrant
-means drift under auto-exposure, confirming absolute features plus quick
-recalibration. The scripted RMSE values are not tracking measurements because
-no human fixated the targets.
+points. S6 replaced the S5 origin workaround: eframe 0.37's `with_monitor`
+places the viewport and the painter converts physical pixels to logical points
+at its boundary. Calibration targets must still be fitted in the window's
+actual physical size rather than the nominal config size. Quadrant means drift
+under auto-exposure, confirming absolute features plus quick recalibration. The
+scripted RMSE values are not tracking measurements because no human fixated the
+targets.
 
 **Gate:** Linux builds and runs; Windows compiles; macOS is unverified. The gate
-stays open until a human calibration and the macOS/Windows runtime checks.
-The graphical window is an early slice of S6; the full presenter should revisit
-per-monitor selection and the eframe/MSRV choice.
+stays open until a human calibration and the macOS/Windows runtime checks. The
+graphical calibration window is the S5 slice; S6's full presenter is described
+below.
 
 ### Sprint 6 — Presenter and console shell
 
@@ -558,6 +559,47 @@ per-monitor selection and the eframe/MSRV choice.
 **Prior work:** `Yex/examples/yex_1.rs` L37–L42, L94–L123, L131–L176 and `simple_ui.rs` for layout ideas only; use eframe, not nannou.
 **Demo:** static-image experiment on monitor 2, console on monitor 1, frame log shown.
 **Gate:** correct placement on HiDPI; p99 within budget; console interaction does not stall presentation.
+
+**Implementation note (S6, 2026-10-25):** UI-1 to UI-4 are implemented for
+static images. 174 workspace tests pass on stable and MSRV 1.95.
+
+- **Crate split:** `yet-present-egui` implements `Presenter` and owns the
+deferred viewport; `yet-console` owns the controls and status; `yet-app` wires
+both. `yet-present` and `yet-core` still contain no egui type. `yet-present`
+gained `Presenter::media_size` (the driver composes placed scenes without
+decoding media) and `DrawCommand::BlurredImage` (one cached box blur per media
+and radius).
+- **One event loop, two viewports:** the console is the root viewport and the
+stimulus is `Context::show_viewport_deferred` on `display.presenter_monitor`
+via `ViewportBuilder::with_monitor`. Changing the monitor recreates the
+viewport with a monitor-keyed viewport id; KWin ignored
+`ViewportCommand::SetMonitor` on the existing fullscreen window. Measured on the
+X11 two-monitor setup: the stimulus window is `1440x2560+2560+0` on DP-3 and
+the console is a normal window on DP-1. Switching the presenter to monitor 0
+produced a new `2560x1600+0+0` window on DP-1. Console repaints at ~10 Hz leave
+the stimulus paint counter unchanged while idle and while paused.
+- **Startup and resize:** the first paint of a new viewport is 800×600 before
+the window manager applies fullscreen. Readiness waits until the viewport fills
+`ViewportInfo::monitor_size`, and `SessionRunner::refresh_placement` recomposes
+the current scene if the surface changes later. Without this, the first trial
+would be composed for the wrong surface.
+- **Measured full run (`examples/demo-gui`, debug build):** 4 trials in 12.0 s,
+720 presented, 60.0 Hz measured paint rate, ~7% coalesced frames, maximum
+trial lateness 0.4 ms. The 60 Hz tick against 3 s deadlines produces sub-ms
+lateness on every trial; the console displays one decimal instead of truncating
+to "0 ms". Clean shutdown sends `Shutdown`, aborts if necessary, flushes the
+result file and joins the controller thread.
+- **Compositor finding:** KWin's *Dim Inactive* effect multiplies an unfocused
+window by 75% (measured: white 255→191, grey 128→96). This changes stimulus
+luminance and would bias quadrant tracking. The presenter requests focus on
+Start/Resume and reports `focused` in its status; the console warns when the
+stimulus is unfocused. KWin refused `ViewportCommand::Focus` in this X11 test,
+so the documented remedy is to disable the effect or click the stimulus window.
+- **Deferred by design:** sequences return a Sprint 8 error, audio is not played,
+the camera is not in the session path, the console window is placed by the
+desktop, and latency/accuracy budgets are measured at the end of the project.
+The eframe 0.37 dependency raised the MSRV to 1.95 and removed
+`display.presenter_origin`.
 
 ### Sprint 7 — Calibration UX and pilot
 
@@ -709,7 +751,7 @@ Ordered by value, not commitment.
 | R10 4→2 linear model behind `GazeModel` | S4 (CV-2) |
 | R11 one crate with modules | S0 (FND-1), S2–S5 layout |
 | R12 tracking independent of UI | S0 (FND-2), S4–S5 (CV modules) |
-| R13 MSRV 1.88 | S0 (FND-1) |
+| R13 MSRV 1.95 | S0 (FND-1), S6 (framework) |
 | R14 capture thread, latest frame only | S5 (CV-5) |
 
 ---

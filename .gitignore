@@ -23,6 +23,9 @@ spikes/spk4-media/audio.wav
 # Raw camera frames are personal data; only aggregate CSV/fixtures are kept
 spikes/spk3-camera/spk3-capture*.png
 
+# Result files written next to the demo experiments
+examples/demo-gui/yet1_*.csv
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

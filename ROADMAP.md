@@ -19,7 +19,8 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   graphical calibration window on the portrait presenter. A valid human
   calibration RMSE and the macOS/Windows runtime are still pending.
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
-  calibration and a pilot session.
+  calibration and a pilot session. The S6 console and presenter shell are in
+  place for static images; calibration UX, live preview and the pilot remain.
 - [ ] **M5 Media complete (S8)** — PNG sequences and WAV audio stay in sync;
   drift and underruns are logged.
 - [ ] **M6 Overlay parity (S10)** — Windows, macOS, layer-shell Wayland and
@@ -46,9 +47,19 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   `Camera`, capture thread and latest-frame mailbox, YUYV/GRAY/MJPEG conversion,
   calibration flow, a graphical calibration window and terminal fallback. The
   demo targets the GEMBIRD Yet camera on `/dev/video2` (YUYV, 25.6 fps) and the
-  portrait presenter at `+2560+0`. Linux hardware and the full window flow were
-  exercised; macOS/Windows runtime and a human calibration RMSE remain.
-- **Next:** S6 presenter and console shell.
+  portrait presenter. Linux hardware and the full window flow were exercised;
+  macOS/Windows runtime and a human calibration RMSE remain.
+- **S6 Presenter and console shell** — complete for static images: `yet-present-egui`
+  (deferred monitor-targeted viewport, physical-pixel mapping, images, text,
+  shapes, cached blur, texture reuse) and `yet-console` (controls, progress,
+  monitor selection, frame statistics, bounded log, errors). `yet-app run`
+  opens both windows and shares effect handling with the headless runner.
+  Measured on the two-monitor X11 workstation: 12.0 s demo, 60 Hz paint rate,
+  ~7% coalesced frames, max lateness 0.4 ms, clean shutdown. Readiness waits
+  for fullscreen to settle and scenes recompose on resize. Sequences, audio,
+  camera integration, console auto-placement and the KWin dim-inactive caveat
+  are documented and deferred. 174 tests passed at the end of the sprint.
+- **Next:** S7 calibration UX and pilot.
 
 ## Post-v1
 

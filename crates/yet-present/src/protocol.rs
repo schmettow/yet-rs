@@ -40,7 +40,7 @@ pub struct FrameStamp {
     pub audio_pts: Option<Duration>,
     /// Clock that determined the frame.
     pub master: ClockSource,
-    /// Whether the frame was late and dropped.
+    /// Whether the frame was late and dropped, or replaced an unpainted frame.
     pub dropped: bool,
 }
 
@@ -125,6 +125,14 @@ pub enum PresenterError {
     /// The presenter has already been shut down.
     #[error("presenter has been shut down")]
     ShutDown,
+    /// Media could not be decoded or read.
+    #[error("could not load media `{path}`: {message}")]
+    Media {
+        /// File or directory that failed.
+        path: PathBuf,
+        /// Decoder or I/O message.
+        message: String,
+    },
     /// The command is not valid for this presenter.
     #[error("invalid presenter command: {0}")]
     InvalidCommand(String),
@@ -176,6 +184,13 @@ pub enum AudioError {
 pub trait Presenter {
     /// Geometry of the monitor this presenter targets.
     fn geometry(&self) -> ScreenGeometry;
+
+    /// Natural size of loaded media in physical pixels.
+    ///
+    /// The scene composer uses this to fit and center a stimulus. It returns
+    /// `None` while the media is unknown, so a presenter that loads
+    /// asynchronously can answer after the load completes.
+    fn media_size(&self, media: MediaId) -> Option<(u32, u32)>;
 
     /// Apply a state-changing command.
     fn apply(&mut self, command: PresenterCommand) -> Result<(), PresenterError>;

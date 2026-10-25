@@ -14,16 +14,10 @@ publish.workspace = true
 [dependencies]
 yet-core.workspace = true
 yet-present.workspace = true
+yet-present-egui.workspace = true
+yet-console.workspace = true
 thiserror.workspace = true
-eframe = { version = "0.33", default-features = false, features = [
-    "default_fonts",
-    "wgpu",
-    "x11",
-    "wayland",
-] }
-# Feature unification: eframe's `wgpu` feature does not enable a wgpu backend
-# with default features off. egui-wgpu's defaults enable wgpu/default.
-egui-wgpu = { version = "0.33", default-features = true }
+eframe.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

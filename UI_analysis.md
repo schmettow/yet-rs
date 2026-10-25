@@ -1,13 +1,26 @@
-> **Implementation note (S5, 2026-10-25):** eframe 0.37 requires Rust 1.95,
-> which conflicts with the project MSRV 1.88. The graphical calibration window
-> uses eframe 0.33 (MSRV 1.88). It lacks `ViewportBuilder::with_monitor` but has
-> `App::update` (not 0.37's `App::ui`). Placement uses an optional
-> `display.presenter_origin` and a first-frame logical-point correction for the
-> window scale factor. The full presenter can revisit eframe 0.37 and the MSRV.
+> **Implementation note (S6, 2026-10-25):** the MSRV is now Rust 1.95 and the
+> project uses eframe 0.37 throughout. The presenter is `yet-present-egui`, the
+> console is `yet-console`, and `yet-app run` wires them into one eframe event
+> loop with two viewports: a windowed console (root) and a deferred fullscreen
+> stimulus viewport on `display.presenter_monitor` via
+> `ViewportBuilder::with_monitor`. `DisplayConfig::presenter_origin` is gone.
+> `yet-present` gained `Presenter::media_size` and `DrawCommand::BlurredImage`.
+> Measured on the X11 two-monitor workstation: the stimulus window is
+> `1440x2560+2560+0` on DP-3, a four-image 12 s run painted at 60.0 Hz with
+> ~7% coalesced frames and sub-millisecond trial lateness; console repaints do
+> not force stimulus repaints. The first viewport paint is 800×600 before the
+> window manager applies fullscreen, so readiness waits for the monitor fill and
+> the scene recomposes on resize. **KWin's *Dim Inactive* effect dims an
+> unfocused stimulus window by 25% (white 255→191), which changes stimulus
+> luminance;** the presenter requests focus on Start/Resume and the console
+> warns when the stimulus is unfocused, but KWin refused the request in this
+> test. Sequences, audio, camera-in-session wiring and the overlay remain in
+> later sprints.
 
 # UI & Graphics Crate Analysis — yet_zero → Rust
 
-**Status:** analysis revised after requirements confirmation, 2026-10-25.
+**Status:** analysis revised after requirements confirmation, 2026-10-25; the
+S6 presenter and console implementation is recorded in the note above.
 **Scope:** UI toolkit, image/video/audio presentation, multi-window, desktop overlay, configuration and licensing consequences. Camera capture, eye detection, and ML are out of scope.
 
 ---

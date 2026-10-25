@@ -120,6 +120,22 @@ pub enum DrawCommand {
         /// Opacity multiplier in `0.0..=1.0`.
         alpha: f32,
     },
+    /// Draw a blurred version of a previously loaded image.
+    ///
+    /// `radius_px` is the box-blur radius in source-image pixels. The presenter
+    /// caches the blurred image per media and radius, so a fixed radius costs
+    /// one blur for the whole session. The Python prototype uses this for the
+    /// stimulus preview behind the quick-calibration targets.
+    BlurredImage {
+        /// Media to draw.
+        media: MediaId,
+        /// Destination rectangle in physical pixels.
+        dest_px: RectPx,
+        /// Box-blur radius in source-image pixels.
+        radius_px: f32,
+        /// Opacity multiplier in `0.0..=1.0`.
+        alpha: f32,
+    },
     /// Draw a filled circle, or a stroked circle when `stroke_px` is positive.
     Circle {
         /// Center in physical pixels.
@@ -223,6 +239,22 @@ impl Scene {
             media,
             dest_px,
             filter,
+            alpha,
+        })
+    }
+
+    /// Append a blurred-image command.
+    pub fn blurred_image(
+        &mut self,
+        media: MediaId,
+        dest_px: RectPx,
+        radius_px: f32,
+        alpha: f32,
+    ) -> &mut Self {
+        self.push(DrawCommand::BlurredImage {
+            media,
+            dest_px,
+            radius_px,
             alpha,
         })
     }

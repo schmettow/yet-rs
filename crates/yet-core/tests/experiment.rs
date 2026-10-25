@@ -389,6 +389,21 @@ fn the_repository_demo_experiment_stays_valid() {
 }
 
 #[test]
+fn the_image_demo_for_the_console_stays_valid() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo-gui");
+    let loaded = load_experiment(root).unwrap();
+
+    assert_eq!(loaded.plan.blocks.len(), 1);
+    assert_eq!(loaded.plan.trial_count(), 4);
+    assert!(loaded
+        .experiment
+        .blocks
+        .iter()
+        .flat_map(|block| &block.trials)
+        .all(|trial| trial.stimulus.kind == StimulusKind::Image));
+}
+
+#[test]
 fn stimulus_validation_rejects_image_audio_without_io() {
     let stimulus = Stimulus {
         id: StimulusId::new("s"),

@@ -6,8 +6,6 @@ console_monitor = 0
 width = 1440
 height = 2560
 fullscreen = true
-# The presenter is the portrait display at x=2560 on this workstation.
-presenter_origin = [2560, 0]
 
 [camera]
 # The Yet camera is the GEMBIRD/AppoTech UVC device on /dev/video2.

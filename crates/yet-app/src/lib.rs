@@ -2,11 +2,15 @@
 
 //! Library entry point for the `yet-app` binary.
 //!
-//! Sprint 3 only exposes the headless runner. The console and presenter
-//! binaries will share the same effect handling in later sprints.
+//! The headless runner and the graphical console share [`driver::SessionRunner`]
+//! and the same effect handling. Neither the engine nor the protocol crates
+//! know about a window or an egui type.
 
+pub mod console;
+pub mod driver;
 pub mod headless;
 pub mod live;
 pub mod window;
 
+pub use console::{run_console, ConsoleOptions};
 pub use headless::{drive, run, HeadlessOptions, RunError, RunReport};

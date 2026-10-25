@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 [workspace]
-members = ["crates/yet-present", "crates/yet-core", "crates/yet-app"]
+members = [
+    "crates/yet-present",
+    "crates/yet-core",
+    "crates/yet-present-egui",
+    "crates/yet-console",
+    "crates/yet-app",
+]
 exclude = ["spikes"]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.95"
 license = "GPL-3.0-only"
 authors = ["Martin Schmettow <schmettow@web.de>"]
 repository = "https://github.com/schmettow/yet-rs"
@@ -17,12 +23,20 @@ publish = false
 [workspace.dependencies]
 yet-present = { path = "crates/yet-present" }
 yet-core = { path = "crates/yet-core" }
+yet-present-egui = { path = "crates/yet-present-egui" }
+yet-console = { path = "crates/yet-console" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 csv = "1"
 nalgebra = "0.34"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+eframe = { version = "0.37", default-features = false, features = [
+    "default_fonts",
+    "wgpu",
+    "x11",
+    "wayland",
+] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

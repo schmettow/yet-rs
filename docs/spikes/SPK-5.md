@@ -71,11 +71,10 @@ monitor, draws the 3×3 grid, and collects frames automatically:
 - Unless `--skip-live`, a red dot follows the predicted gaze for
   `--live-seconds`.
 
-The window uses eframe 0.33 because eframe 0.37 requires Rust 1.95 while the
-project MSRV is 1.88. eframe 0.33 lacks `ViewportBuilder::with_monitor`.
-Placement uses the optional `display.presenter_origin` (desktop physical
-pixels), a borderless window, and a first-frame logical-point correction for
-the `pixels_per_point` scale factor. On this machine:
+The window targets the presenter monitor with eframe 0.37's
+`ViewportBuilder::with_monitor` (MSRV 1.95). The S5 window used eframe 0.33 and
+`display.presenter_origin`; S6 removed the origin and moved every window to
+0.37. On this machine:
 
 ```toml
 [display]
@@ -83,12 +82,19 @@ presenter_monitor = 1
 console_monitor = 0
 width = 1440
 height = 2560
-presenter_origin = [2560, 0]
+fullscreen = true
 ```
 
 `xwininfo` confirms the resulting window is `1440x2560+2560+0`, exactly on
-DP-3. On Wayland, leave `presenter_origin` unset; the compositor decides where
-the fullscreen window appears.
+DP-3. `with_monitor` requests borderless fullscreen on the indexed monitor and
+is also the reliable path on Wayland.
+
+**S6 presenter finding:** a new eframe viewport paints once at 800×600 before
+the window manager applies borderless fullscreen. The presenter therefore
+reports "ready" only when the viewport fills `ViewportInfo::monitor_size`, and
+it recomposes the current scene if the surface changes later. The first ready
+paint measured 1440×2560 at 1.167 px/pt. A four-image debug run then presented
+at 60.0 Hz with ~7% coalesced frames and sub-millisecond trial lateness.
 
 Calibration targets are fitted in the **window's physical pixels**, not the
 configured monitor size. This keeps the model, the drawn targets and the live

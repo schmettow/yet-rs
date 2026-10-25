@@ -2,13 +2,14 @@
 
 A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
-> **Status:** Sprints 0–5 (foundations, risk spikes, experiment model,
-> scheduler/headless slice, CV features and model, camera and calibration). The
-> workspace runs a two-block experiment without a window, writes a
-> yet_zero-compatible result CSV, captures the real Yet camera on Linux and runs
-> a graphical calibration on the presenter monitor. Feature extraction and the
-> linear gaze model are verified against NumPy, OpenCV and scikit-learn on
-> committed synthetic fixtures. The full presenter and console are still ahead.
+> **Status:** Sprints 0–6 (foundations, risk spikes, experiment model,
+> scheduler/headless slice, CV features and model, camera and calibration,
+> presenter and console shell). The workspace runs an experiment without a
+> window or in a two-window console: the console controls the session and a
+> deferred fullscreen viewport on the presenter monitor draws static images.
+> Feature extraction and the linear gaze model are verified against NumPy,
+> OpenCV and scikit-learn. PNG-sequence playback, audio, calibration UX and the
+> camera-in-the-session wiring are still ahead.
 
 ## What it will do
 
@@ -21,8 +22,16 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
 ## What exists now
 
-- `yet-present` — `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`,
+- `yet-present` — `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`
+  (including a cached blurred image for the quick-calibration preview),
   presenter/overlay/media/audio traits, and a `RecordingPresenter`.
+- `yet-present-egui` — the eframe presenter: monitor-targeted deferred
+  viewport, physical-pixel to logical-point conversion, image decode and
+  placement, text, circles, lines, cached blur, texture reuse, coalescing and
+  paint-rate statistics. It implements the UI-free `Presenter` trait.
+- `yet-console` — the experimenter console: start/pause/resume/abort, monitor
+  selection, progress, frame statistics, a bounded log and validation errors.
+  It receives no scene or texture, so it cannot render the stimulus.
 - `yet-core` — a pure `step` engine with start/pause/resume/abort/tick,
   absolute trial deadlines, late-tick accounting, a `TestClock`, and the
   calibration data types.
@@ -53,19 +62,25 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
   calibration window on the presenter monitor: the 3×3 grid, automatic frame
   collection, RMSE report, quick recalibration and a live gaze dot. `--terminal`
   keeps the coordinate-printing fallback.
-- CI for Linux, macOS and Windows, plus a Rust 1.88 MSRV check.
+- `yet-app` — `yet-app run <experiment-dir>` opens the console and the stimulus
+  window on the configured monitor. `--headless` keeps the windowless runner.
+  Both paths share the same effect handling and scene composition in
+  `yet-app/src/driver.rs`.
+- CI for Linux, macOS and Windows, plus a Rust 1.95 MSRV check.
 - Sprint 1 risk reports in [`docs/spikes/`](docs/spikes/) covering eframe
   presentation, the overlay matrix, camera capture/parity and media/audio.
 
 ## Build
 
-Requires Rust 1.88 or newer.
+Requires Rust 1.95 or newer. The MSRV follows eframe 0.37, which provides
+`ViewportBuilder::with_monitor` for reliable multi-monitor fullscreen placement.
 
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
 cargo run -p yet-app -- plan examples/demo
+cargo run --release -p yet-app -- run examples/demo-gui --participant demo01
 cargo run -p yet-app -- run --headless examples/demo --participant demo01
 cargo run --release -p yet-app -- camera examples/demo --seconds 3
 cargo run --release -p yet-app -- calibrate examples/demo --quick
@@ -99,6 +114,51 @@ participant id, `x`/`y` are gaze coordinates in stimulus pixels, and
 with microsecond precision. Every trial boundary flushes the file, so an
 aborted session keeps the completed trials.
 
+## Console and presenter
+
+`yet-app run <dir>` opens two native windows from one eframe event loop:
+
+- the **console** (root viewport) with controls, progress, presenter
+  statistics and a bounded log;
+- the **stimulus** (deferred viewport) borderless fullscreen on
+  `display.presenter_monitor`. `ViewportBuilder::with_monitor` is the only
+  reliable monitor-targeting mechanism on Wayland and works on X11 too.
+
+The deferred viewport only repaints when a scene changes. The console repaints
+about ten times per second for its clock, and that leaves the stimulus window
+untouched; the console therefore cannot cause timing jitter in the stimulus.
+
+Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
+is enabled) and **Abort** (F8). The presenter monitor can be changed before a
+session starts; changing it recreates the stimulus window on that monitor. If
+it matches the console monitor, the console warns that the fullscreen stimulus
+will cover it. The console locks presenter settings while a session is active.
+
+`examples/demo-gui` is the static-image demo for this path: four images shared
+with `examples/demo`, 3 s each, no sequence and no audio. A full debug-build run
+on the two-monitor workstation measured:
+
+```text
+finished 12.0 s · 4/4 trials · 720 presented · 60.0 Hz measured paint rate
+~7% coalesced frames · all trials within 0.4 ms of their deadline
+Samples: 0 (the camera is not wired into the session yet)
+```
+
+**Compositor dimming.** KWin's *Dim Inactive* effect multiplies an unfocused
+window by 75%. While the console has focus, the stimulus is dimmed, which
+changes its luminance and biases quadrant-brightness tracking. yet-rs asks the
+stimulus viewport to take focus on Start/Resume and the console shows a yellow
+warning when the stimulus is not focused, but some window managers refuse the
+focus request. For luminance-sensitive work, disable *System Settings → Window
+Management → Desktop Effects → Dim Inactive* or click the stimulus window before
+the session. This is recorded in the S6 implementation note.
+
+**Not in S6:** sequences return a clear Sprint 8 error, audio is not played,
+the camera is not part of the session path, and the console window is placed by
+the desktop rather than by `display.console_monitor`. If the console reports
+"waiting for fullscreen", check `display.presenter_monitor`: an out-of-range
+index is ignored by the window manager, so the stimulus never settles.
+
 ## Camera and calibration
 
 The experiment config carries the display geometry and the camera:
@@ -110,7 +170,6 @@ console_monitor = 0
 width = 1440
 height = 2560
 fullscreen = true
-presenter_origin = [2560, 0]   # presenter monitor origin in desktop pixels
 
 [camera]
 usb_index = 2                 # the GEMBIRD/Yet camera on this workstation
@@ -149,17 +208,13 @@ appears for 2 s, then `--quick` adds a center-target refit. With `--skip-live`
 the window closes after the report; otherwise a red dot follows the prediction
 for `--live-seconds`.
 
-`presenter_origin` is in desktop physical pixels. It is needed on X11 because
-eframe 0.33 cannot select a monitor by index; it also works on Windows and
-macOS. On Wayland, leave it unset: the compositor chooses the screen. The demo
-values target a portrait 1440×2560 presenter at `+2560+0`; adjust them for
-another layout (`xrandr --query` lists the origins on X11). Calibration targets
-are fitted in the window's actual physical pixels, so the model, the drawn grid
-and the live dot stay consistent even if the window manager adjusts the window.
-
-**MSRV tradeoff:** eframe 0.37 offers `ViewportBuilder::with_monitor` but
-requires Rust 1.95. The project keeps Rust 1.88 and uses eframe 0.33 with the
-origin workaround. The full presenter in Sprint 6 should revisit this choice.
+`presenter_monitor` is a zero-based index in the platform's monitor order. The
+presenter uses `ViewportBuilder::with_monitor`, which requests borderless
+fullscreen on that monitor; there is no absolute desktop position in the
+configuration. On this workstation `xwininfo` confirms the stimulus window at
+`1440x2560+2560+0` on DP-3. Calibration targets are fitted in the window's
+actual physical pixels, so the model, the drawn grid and the live dot stay
+consistent even if the window manager adjusts the window.
 
 Platform notes:
 
@@ -189,10 +244,12 @@ must not set `fps`, `loop=true`, or `audio`; sequences require `fps`. Rows witho
 `block` form a `default` block. Trials are shuffled within each block; block `i`
 uses `seed + i`, so the plan is reproducible.
 
-See [`examples/demo`](examples/demo) and run:
+See [`examples/demo`](examples/demo) for images plus a sequence, and
+[`examples/demo-gui`](examples/demo-gui) for the image-only console demo. Run:
 
 ```sh
 cargo run -p yet-app -- plan examples/demo
+cargo run -p yet-app -- plan examples/demo-gui
 ```
 
 ## Design
@@ -202,6 +259,8 @@ cargo run -p yet-app -- plan examples/demo
 - Protocol coordinates are monitor-local physical pixels.
 - Protocol messages carry media identifiers and owned text, never image buffers.
 - `yet-core` and `yet-present` must not depend on a windowing toolkit.
+- The stimulus is a **deferred** viewport. Console painting never forces a
+  stimulus repaint, and the presenter never reads experiment state.
 
 The reasoning behind these choices is in
 [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md),

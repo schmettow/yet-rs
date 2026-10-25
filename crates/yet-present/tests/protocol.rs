@@ -85,6 +85,7 @@ fn scene_builder_emits_draw_commands() {
             0.75,
         )
         .circle(PointPx::new(320.0, 240.0), 12.0, 2.0, Color::BLACK)
+        .blurred_image(media, RectPx::new(0.0, 0.0, 640.0, 480.0), 24.0, 0.5)
         .text(
             PointPx::new(10.0, 20.0),
             "fixation",
@@ -100,7 +101,7 @@ fn scene_builder_emits_draw_commands() {
             Color::BLACK,
         );
 
-    assert_eq!(scene.len(), 5);
+    assert_eq!(scene.len(), 6);
     assert!(!scene.is_empty());
     assert_eq!(scene.commands()[0], DrawCommand::Clear(Color::WHITE));
     assert_eq!(
@@ -112,8 +113,17 @@ fn scene_builder_emits_draw_commands() {
             alpha: 0.75,
         }
     );
+    assert_eq!(
+        scene.commands()[3],
+        DrawCommand::BlurredImage {
+            media,
+            dest_px: RectPx::new(0.0, 0.0, 640.0, 480.0),
+            radius_px: 24.0,
+            alpha: 0.5,
+        }
+    );
 
-    match &scene.commands()[3] {
+    match &scene.commands()[4] {
         DrawCommand::Text {
             text,
             font,
@@ -157,6 +167,7 @@ fn recording_presenter_records_commands_scenes_and_frames() {
     let stats = presenter.present(&frame, &scene);
 
     assert_eq!(presenter.geometry(), geometry());
+    assert_eq!(presenter.media_size(MediaId::new(1)), None);
     assert_eq!(presenter.applied_commands(), &[image, show]);
     assert_eq!(presenter.scenes(), std::slice::from_ref(&scene));
     assert_eq!(presenter.frames(), std::slice::from_ref(&frame));
@@ -175,4 +186,14 @@ fn recording_presenter_has_a_usable_default() {
     assert!(presenter.applied_commands().is_empty());
     assert!(presenter.scenes().is_empty());
     assert!(presenter.frames().is_empty());
+    assert!(presenter.media_size(MediaId::new(0)).is_none());
+}
+
+#[test]
+fn the_recording_presenter_reports_declared_media_sizes() {
+    let media = MediaId::new(3);
+    let presenter = RecordingPresenter::default().with_media_size(media, (640, 480));
+
+    assert_eq!(presenter.media_size(media), Some((640, 480)));
+    assert_eq!(presenter.media_size(MediaId::new(4)), None);
 }

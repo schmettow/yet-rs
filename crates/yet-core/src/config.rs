@@ -48,14 +48,6 @@ pub struct DisplayConfig {
     pub height: u32,
     /// Whether the presenter uses borderless fullscreen.
     pub fullscreen: bool,
-    /// Desktop-space origin of the presenter monitor, in physical pixels.
-    ///
-    /// When set, the calibration window opens as a borderless, monitor-sized
-    /// window at this origin instead of relying on the compositor's fullscreen
-    /// placement. Leave it unset on Wayland, where global positions do not
-    /// exist.
-    #[serde(default)]
-    pub presenter_origin: Option<[i32; 2]>,
 }
 
 /// Camera settings.
