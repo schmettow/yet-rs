@@ -3,17 +3,21 @@
 [display]
 presenter_monitor = 1
 console_monitor = 0
-width = 1920
-height = 1080
+width = 1440
+height = 2560
 fullscreen = true
+# The presenter is the portrait display at x=2560 on this workstation.
+presenter_origin = [2560, 0]
 
 [camera]
-usb_index = 0
+# The Yet camera is the GEMBIRD/AppoTech UVC device on /dev/video2.
+# It exposes YUYV only and sustained ~26 fps in the SPK-5 measurement.
+usb_index = 2
 width = 640
 height = 480
 fps = 30
-# The StreamCam sustained ~29 fps with MJPG; YUYV varied from 17.7 to 24.1 fps.
-format = "mjpeg"
+format = "yuyv"
+# Centered half-frame; adjust to the eye position of the Yet camera.
 eye_region = [0.25, 0.25, 0.5, 0.5]
 
 [presenter]

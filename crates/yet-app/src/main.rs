@@ -45,8 +45,8 @@ fn usage() {
     eprintln!(
         "usage:\n  yet-app plan <experiment-dir>\n  \
          yet-app run --headless <experiment-dir> [--participant <id>] [--output <csv>]\n  \
-         yet-app camera <experiment-dir> [--seconds <s>] [--save-roi <file>]\n  \
-         yet-app calibrate <experiment-dir> [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>]"
+         yet-app camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
+         yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]"
     );
 }
 
@@ -189,10 +189,20 @@ fn run_camera(args: &[String]) -> Result<(), CliError> {
     let mut directory: Option<&Path> = None;
     let mut seconds = 2.0_f64;
     let mut save_roi: Option<&Path> = None;
+    let mut device = None;
     let mut index = 0;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--device" => {
+                index += 1;
+                device = Some(
+                    args.get(index)
+                        .ok_or(CliError::Usage)?
+                        .parse()
+                        .map_err(|_| CliError::Usage)?,
+                );
+            }
             "--seconds" => {
                 index += 1;
                 seconds = args
@@ -212,7 +222,7 @@ fn run_camera(args: &[String]) -> Result<(), CliError> {
         index += 1;
     }
 
-    let probe = live::probe(directory.ok_or(CliError::Usage)?, seconds, save_roi)?;
+    let probe = live::probe(directory.ok_or(CliError::Usage)?, seconds, save_roi, device)?;
     print_probe(&probe);
     Ok(())
 }
@@ -267,6 +277,16 @@ fn run_calibrate(args: &[String]) -> Result<(), CliError> {
 
     while index < args.len() {
         match args[index].as_str() {
+            "--device" => {
+                index += 1;
+                options.device = Some(
+                    args.get(index)
+                        .ok_or(CliError::Usage)?
+                        .parse()
+                        .map_err(|_| CliError::Usage)?,
+                );
+            }
+            "--terminal" => options.terminal = true,
             "--samples" => {
                 index += 1;
                 options.samples = args
@@ -292,10 +312,19 @@ fn run_calibrate(args: &[String]) -> Result<(), CliError> {
         index += 1;
     }
 
-    let outcome = live::calibrate(directory.ok_or(CliError::Usage)?, options)?;
-    println!(
-        "Calibration finished; {} live gaze predictions.",
-        outcome.live_samples
-    );
+    let directory = directory.ok_or(CliError::Usage)?;
+    let live_samples = if options.terminal {
+        live::calibrate(directory, options)?.live_samples
+    } else {
+        match yet_app::window::run_calibration(directory, options)? {
+            Some(report) => report.live_samples,
+            None => {
+                println!("Calibration cancelled.");
+                return Ok(());
+            }
+        }
+    };
+
+    println!("Calibration finished; {live_samples} live gaze predictions.");
     Ok(())
 }

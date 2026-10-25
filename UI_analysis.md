@@ -1,3 +1,10 @@
+> **Implementation note (S5, 2026-10-25):** eframe 0.37 requires Rust 1.95,
+> which conflicts with the project MSRV 1.88. The graphical calibration window
+> uses eframe 0.33 (MSRV 1.88). It lacks `ViewportBuilder::with_monitor` but has
+> `App::update` (not 0.37's `App::ui`). Placement uses an optional
+> `display.presenter_origin` and a first-frame logical-point correction for the
+> window scale factor. The full presenter can revisit eframe 0.37 and the MSRV.
+
 # UI & Graphics Crate Analysis — yet_zero → Rust
 
 **Status:** analysis revised after requirements confirmation, 2026-10-25.

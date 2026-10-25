@@ -7,5 +7,6 @@
 
 pub mod headless;
 pub mod live;
+pub mod window;
 
 pub use headless::{drive, run, HeadlessOptions, RunError, RunReport};

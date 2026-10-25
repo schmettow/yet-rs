@@ -15,7 +15,8 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   window and writes a yet_zero-compatible CSV. The demo completes 5 of 5
   trials; without the camera the CSV contains the header and no gaze rows.
 - [ ] **M3 Eye tracking parity (S5)** — quadrant features match Python and the
-  Linux camera path works (MJPG 26 fps on the lab StreamCam). A valid human
+  Linux camera path works on the GEMBIRD Yet camera (YUYV, 25.6 fps) with a
+  graphical calibration window on the portrait presenter. A valid human
   calibration RMSE and the macOS/Windows runtime are still pending.
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
   calibration and a pilot session.
@@ -43,9 +44,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   114 tests passed at the end of the sprint.
 - **S5 Camera and calibration** — implemented: `linuxvideo`/`nokhwa` behind
   `Camera`, capture thread and latest-frame mailbox, YUYV/GRAY/MJPEG conversion,
-  calibration flow, `yet-app camera` and `yet-app calibrate`. 141 tests pass.
-  Linux hardware measured (MJPG 26 fps, YUYV 16 fps); macOS/Windows runtime and
-  a human calibration RMSE remain.
+  calibration flow, a graphical calibration window and terminal fallback. The
+  demo targets the GEMBIRD Yet camera on `/dev/video2` (YUYV, 25.6 fps) and the
+  portrait presenter at `+2560+0`. Linux hardware and the full window flow were
+  exercised; macOS/Windows runtime and a human calibration RMSE remain.
 - **Next:** S6 presenter and console shell.
 
 ## Post-v1

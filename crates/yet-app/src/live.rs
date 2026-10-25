@@ -52,15 +52,21 @@ pub struct CalibrateOptions {
     pub skip_live: bool,
     /// Duration of the live gaze printout.
     pub live_seconds: f64,
+    /// Override the configured camera index.
+    pub device: Option<usize>,
+    /// Use the terminal instead of the fullscreen window.
+    pub terminal: bool,
 }
 
 impl Default for CalibrateOptions {
     fn default() -> Self {
         Self {
-            samples: 10,
+            samples: 20,
             quick: false,
             skip_live: false,
             live_seconds: 5.0,
+            device: None,
+            terminal: false,
         }
     }
 }
@@ -113,6 +119,9 @@ pub enum LiveError {
         #[source]
         source: std::io::Error,
     },
+    /// The graphical calibration window failed.
+    #[error("calibration window failed: {0}")]
+    Window(String),
 }
 
 /// Open the camera from an experiment directory and measure it.
@@ -120,9 +129,10 @@ pub fn probe(
     experiment_dir: &Path,
     seconds: f64,
     save_roi: Option<&Path>,
+    device: Option<usize>,
 ) -> Result<CameraProbe, LiveError> {
     let loaded = yet_core::load_experiment(experiment_dir)?;
-    let mut camera = Camera::open(capture_config(&loaded.config.camera))?;
+    let mut camera = Camera::open(capture_config(&loaded.config.camera, device))?;
     let roi = eye_region(&loaded.config.camera, camera.info())?;
 
     let duration = Duration::from_secs_f64(seconds.max(0.0));
@@ -188,7 +198,7 @@ pub fn calibrate(
     options: CalibrateOptions,
 ) -> Result<CalibrationOutcome, LiveError> {
     let loaded = yet_core::load_experiment(experiment_dir)?;
-    let mut camera = Camera::open(capture_config(&loaded.config.camera))?;
+    let mut camera = Camera::open(capture_config(&loaded.config.camera, options.device))?;
     let roi = eye_region(&loaded.config.camera, camera.info())?;
     let grid = CalibrationGrid::new((loaded.config.display.width, loaded.config.display.height));
 
@@ -292,9 +302,12 @@ pub fn calibrate(
     })
 }
 
-fn capture_config(config: &yet_core::CameraConfig) -> CaptureConfig {
+pub(crate) fn capture_config(
+    config: &yet_core::CameraConfig,
+    device: Option<usize>,
+) -> CaptureConfig {
     CaptureConfig {
-        device: config.usb_index,
+        device: device.unwrap_or(config.usb_index),
         width: config.width,
         height: config.height,
         fps: config.fps,
@@ -302,7 +315,10 @@ fn capture_config(config: &yet_core::CameraConfig) -> CaptureConfig {
     }
 }
 
-fn eye_region(config: &yet_core::CameraConfig, info: &CameraInfo) -> Result<EyeRegion, LiveError> {
+pub(crate) fn eye_region(
+    config: &yet_core::CameraConfig,
+    info: &CameraInfo,
+) -> Result<EyeRegion, LiveError> {
     info.eye_region(config.eye_region.unwrap_or(DEFAULT_EYE_REGION))
         .ok_or(LiveError::InvalidEyeRegion)
 }

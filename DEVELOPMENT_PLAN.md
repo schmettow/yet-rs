@@ -498,7 +498,8 @@ live calibration path stay open.
 `cargo test -p yet-core --test cv4_parity` before trusting the adapters.
 **Demo:** live gaze printout at 30 Hz with a visible calibration error; re-run quick calibration.
 **Gate:** both platform adapters build; no UI dependencies in the camera modules.
-**Status (2026-10-25):** CV-5 and CV-6 implemented; CV-7 partially measured.
+**Status (2026-10-25):** CV-5 and CV-6 implemented, including a graphical
+calibration window; CV-7 partially measured.
 
 - **CV-5:** `yet-core/src/camera/` adds `CaptureConfig`, `CameraInfo`,
   `CameraStats`, `CameraError`, a dedicated capture thread with a one-slot
@@ -507,28 +508,41 @@ live calibration path stay open.
   0.10.11 with `input-avfoundation`/`input-msmf` only. No bindgen or C/C++
   toolchain on Linux. The camera is opened, read and dropped on one thread.
   Unit tests cover YUYV stride, GRAY padding, truncation, MJPEG decode, the
-  mailbox, the capture loop and config validation. A Windows all-targets check
-  passes; macOS needs a real Mac.
+  mailbox, the capture loop and config validation. `--device N` overrides the
+  configured index. A Windows all-targets check passes; macOS needs a real Mac.
 - **CV-6:** `Calibration` records target/feature pairs, fits or refits without
   resetting the session, and reports sample count and Euclidean RMSE. The
-  `yet-app calibrate` command walks the 3×3 grid in the terminal, averages
-  frames per target, supports `--quick` center recalibration and prints live
-  predictions. The drawn target UX belongs to S7.
-- **CV-7:** measured on Linux with a Logitech StreamCam: MJPG 640×480 sustains
-  26.0 fps with 6 warm-up/corrupt frames in 3 s; YUYV only 16.0 fps with 35
-  corrupt frames. Release builds are required for MJPEG (debug: 12 fps). See
-  [`docs/spikes/SPK-5.md`](docs/spikes/SPK-5.md). A valid human calibration
-  RMSE, macOS runtime and Windows runtime are still pending.
+  default `yet-app calibrate` now opens a borderless window on the presenter
+  monitor, draws the 3×3 grid and collects frames automatically (Space starts,
+  Escape cancels). Fitting uses the window's physical pixels, so model, grid
+  and live dot share one coordinate system. `--terminal` retains the
+  coordinate-printing fallback. The window is eframe 0.33 because 0.37 requires
+  Rust 1.95; 0.33 lacks `with_monitor`, so `display.presenter_origin` positions
+  the window.
+- **CV-7:** the Yet camera is the GEMBIRD/AppoTech on `/dev/video2`, not the
+  StreamCam. It exposes YUYV only and sustained 25.6 fps with 1 corrupt frame in
+  3 s. The StreamCam (`video0`) sustained 26.0 fps in MJPG with 6 warm-up/corrupt
+  frames, and 16.0 fps in YUYV with 35 corrupt frames. Release builds are
+  required for MJPEG (debug: 12 fps). The graphical flow was exercised on the
+  portrait presenter monitor (1440×2560 at `+2560+0`): grid, nine targets, RMSE
+  report, quick refit and live dot. A valid **human** calibration RMSE, macOS
+  runtime and Windows runtime are still pending. See
+  [`docs/spikes/SPK-5.md`](docs/spikes/SPK-5.md).
 
-**Findings:** the lab camera must use MJPG; auto negotiation selects YUYV and
-loses nearly half the frame rate. Quadrant means drifted by ~6 levels during a
-static 10 s run under auto-exposure, confirming that absolute features plus
-quick recalibration are the right design. The first calibration plumbing run
-produced an invalid RMSE (447 px) because no one fixated the targets; this is a
-harness result, not a measurement of tracking quality.
+**Findings:** the Yet camera is the GEMBIRD and must use YUYV; the StreamCam is
+faster in MJPG but is not the tracker camera. The presenter is a portrait
+1440×2560 display at x=2560. Eframe viewport sizes and positions are logical
+points: a first-frame correction is needed to place and size the borderless
+window from physical-pixel config, and calibration targets must be fitted in
+the window's actual physical size rather than the nominal config size. Quadrant
+means drift under auto-exposure, confirming absolute features plus quick
+recalibration. The scripted RMSE values are not tracking measurements because
+no human fixated the targets.
 
 **Gate:** Linux builds and runs; Windows compiles; macOS is unverified. The gate
 stays open until a human calibration and the macOS/Windows runtime checks.
+The graphical window is an early slice of S6; the full presenter should revisit
+per-monitor selection and the eframe/MSRV choice.
 
 ### Sprint 6 — Presenter and console shell
 

@@ -5,10 +5,10 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 > **Status:** Sprints 0–5 (foundations, risk spikes, experiment model,
 > scheduler/headless slice, CV features and model, camera and calibration). The
 > workspace runs a two-block experiment without a window, writes a
-> yet_zero-compatible result CSV, captures a real camera on Linux and runs a
-> terminal-driven calibration. Feature extraction and the linear gaze model are
-> verified against NumPy, OpenCV and scikit-learn on committed synthetic
-> fixtures. There is no console and no presenter window yet.
+> yet_zero-compatible result CSV, captures the real Yet camera on Linux and runs
+> a graphical calibration on the presenter monitor. Feature extraction and the
+> linear gaze model are verified against NumPy, OpenCV and scikit-learn on
+> committed synthetic fixtures. The full presenter and console are still ahead.
 
 ## What it will do
 
@@ -49,8 +49,10 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
   with a synthetic monotonic clock and writes the result CSV. Without a camera
   there are no gaze samples yet, so the file contains the header only.
 - `yet-app` — `yet-app camera <experiment-dir>` measures a real camera and can
-  dump the raw eye ROI; `yet-app calibrate <experiment-dir>` walks the 3×3 grid
-  in the terminal and prints live gaze predictions.
+  dump the raw eye ROI. `yet-app calibrate <experiment-dir>` opens a graphical
+  calibration window on the presenter monitor: the 3×3 grid, automatic frame
+  collection, RMSE report, quick recalibration and a live gaze dot. `--terminal`
+  keeps the coordinate-printing fallback.
 - CI for Linux, macOS and Windows, plus a Rust 1.88 MSRV check.
 - Sprint 1 risk reports in [`docs/spikes/`](docs/spikes/) covering eframe
   presentation, the overlay matrix, camera capture/parity and media/audio.
@@ -67,6 +69,7 @@ cargo run -p yet-app -- plan examples/demo
 cargo run -p yet-app -- run --headless examples/demo --participant demo01
 cargo run --release -p yet-app -- camera examples/demo --seconds 3
 cargo run --release -p yet-app -- calibrate examples/demo --quick
+cargo run --release -p yet-app -- calibrate examples/demo --terminal
 ```
 
 ## Headless runs
@@ -98,37 +101,65 @@ aborted session keeps the completed trials.
 
 ## Camera and calibration
 
-Camera settings live in the `[camera]` section of `config.toml`:
+The experiment config carries the display geometry and the camera:
 
 ```toml
+[display]
+presenter_monitor = 1
+console_monitor = 0
+width = 1440
+height = 2560
+fullscreen = true
+presenter_origin = [2560, 0]   # presenter monitor origin in desktop pixels
+
 [camera]
-usb_index = 0
+usb_index = 2                 # the GEMBIRD/Yet camera on this workstation
 width = 640
 height = 480
 fps = 30
-format = "mjpeg"          # auto, gray, yuyv or mjpeg
+format = "yuyv"               # auto, gray, yuyv or mjpeg
 eye_region = [0.25, 0.25, 0.5, 0.5]   # normalized x, y, width, height
 ```
 
-`format = "auto"` prefers Gray, then YUYV, then MJPG. The lab StreamCam does
-not expose a Gray format and is much more stable in MJPG (26 fps versus 16 fps
-for YUYV in the SPK-5 measurement), so the demo sets MJPG. Use a **release
-build** for MJPEG: debug decoding is CPU-bound and does not sustain 30 fps.
+The Yet camera is the **GEMBIRD/AppoTech UVC** device on `/dev/video2`; it
+advertises YUYV only at 640×480 and sustained 25.6 fps in the SPK-5 measurement.
+`/dev/video0` is the StreamCam, which is faster in MJPG but is not the tracker
+camera. Device indices can move across reboots; check the names in
+`/sys/class/video4linux/` or override a run with `--device N`.
 
 ```sh
 # Measure the camera, print format/fps/statistics and the last quadrant means.
 cargo run --release -p yet-app -- camera examples/demo --seconds 3
+cargo run --release -p yet-app -- camera examples/demo --device 0 --seconds 3
 
 # Also write the raw eye ROI as an 8-bit grayscale file for CV-4 parity.
 cargo run --release -p yet-app -- camera examples/demo --save-roi /tmp/eye.gray
 
-# Terminal-driven calibration: look at each printed monitor target and press Enter.
-cargo run --release -p yet-app -- calibrate examples/demo --samples 10 --quick
+# Graphical calibration on the presenter monitor (default).
+cargo run --release -p yet-app -- calibrate examples/demo --quick
+
+# Terminal fallback for headless machines.
+cargo run --release -p yet-app -- calibrate examples/demo --terminal
 ```
 
-The calibration command does not draw targets yet; it prints their monitor
-coordinates. The presenter and the drawn calibration grid arrive in Sprints
-6–7. Until then, keep the presenter monitor visible while running the command.
+The graphical calibration opens a borderless window sized to the configured
+presenter area. Press **Space** to start and **Escape** to cancel. Each orange
+target is shown for 800 ms, then frames are collected automatically; the RMSE
+appears for 2 s, then `--quick` adds a center-target refit. With `--skip-live`
+the window closes after the report; otherwise a red dot follows the prediction
+for `--live-seconds`.
+
+`presenter_origin` is in desktop physical pixels. It is needed on X11 because
+eframe 0.33 cannot select a monitor by index; it also works on Windows and
+macOS. On Wayland, leave it unset: the compositor chooses the screen. The demo
+values target a portrait 1440×2560 presenter at `+2560+0`; adjust them for
+another layout (`xrandr --query` lists the origins on X11). Calibration targets
+are fitted in the window's actual physical pixels, so the model, the drawn grid
+and the live dot stay consistent even if the window manager adjusts the window.
+
+**MSRV tradeoff:** eframe 0.37 offers `ViewportBuilder::with_monitor` but
+requires Rust 1.95. The project keeps Rust 1.88 and uses eframe 0.33 with the
+origin workaround. The full presenter in Sprint 6 should revisit this choice.
 
 Platform notes:
 
@@ -141,7 +172,7 @@ Platform notes:
   not yet tested here.
 
 See [`docs/spikes/SPK-5.md`](docs/spikes/SPK-5.md) for the measured Linux
-results and the open hardware checks.
+results, the two-monitor geometry and the open hardware checks.
 
 ## Experiment format
 
