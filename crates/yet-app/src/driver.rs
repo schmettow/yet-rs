@@ -79,6 +79,9 @@ pub enum RunError {
     /// The audio backend could not be opened.
     #[error(transparent)]
     Audio(#[from] AudioError),
+    /// The overlay backend could not be opened.
+    #[error(transparent)]
+    Overlay(#[from] yet_present::OverlayError),
     /// The system clock is before the Unix epoch.
     #[error("the system clock is before the Unix epoch")]
     Clock,

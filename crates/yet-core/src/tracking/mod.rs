@@ -19,40 +19,54 @@ mod model;
 
 pub use buffer::CalibrationBuffer;
 pub use calibration::{Calibration, CalibrationReport};
-pub use features::{quad_brightness, QuadBrightness};
+pub use features::{quad_brightness, FeatureExtractor, QuadBrightness, QuadExtractor};
 pub use frame::{rec601_luma, EyeRegion, FrameError, GrayFrame};
 pub use model::{
-    GazeModel, LinearGazeModel, LinearParameters, ModelError, MIN_CALIBRATION_SAMPLES,
+    minimum_samples, GazeModel, GazeTrainer, LinearGazeModel, LinearParameters, ModelError,
+    MIN_CALIBRATION_SAMPLES,
 };
-
-/// A gaze position predicted by a model, or a calibration target.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct GazePoint {
-    /// Horizontal position.
-    pub x: f32,
-    /// Vertical position.
-    pub y: f32,
-}
-
-impl GazePoint {
-    /// Create a gaze point.
-    pub const fn new(x: f32, y: f32) -> Self {
-        Self { x, y }
-    }
-}
+pub use yet_gaze::{
+    BodyPose, FeatureLayout, FeatureVector, GazeInput, GazePoint, GazePredictor, HeadPose,
+    LinearPredictor, ModelParameters, PoseSample, PredictionError, MAX_FEATURES,
+    MODEL_FORMAT_VERSION, OCTA_LAYOUT, QUAD_LAYOUT,
+};
 
 /// One calibration observation: features paired with a known target.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CalibrationSample {
-    /// Extracted eye features.
-    pub features: QuadBrightness,
+    /// Extracted eye features in layout order.
+    pub features: FeatureVector,
     /// Known target position, in monitor pixels.
     pub target: GazePoint,
+    /// Head/body pose at the sample time, when available.
+    pub pose: Option<PoseSample>,
 }
 
+/// The future-facing name for a calibration observation.
+pub type CalibrationObservation = CalibrationSample;
+
 impl CalibrationSample {
-    /// Create a calibration sample.
-    pub const fn new(features: QuadBrightness, target: GazePoint) -> Self {
-        Self { features, target }
+    /// Create a v1 Quadbright sample; pose is absent.
+    pub fn new(features: QuadBrightness, target: GazePoint) -> Self {
+        Self {
+            features: FeatureVector::from(features),
+            target,
+            pose: None,
+        }
+    }
+
+    /// Create a sample from a generic feature vector.
+    pub fn from_features(features: FeatureVector, target: GazePoint) -> Self {
+        Self {
+            features,
+            target,
+            pose: None,
+        }
+    }
+
+    /// Add a pose observation.
+    pub const fn with_pose(mut self, pose: PoseSample) -> Self {
+        self.pose = Some(pose);
+        self
     }
 }

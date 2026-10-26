@@ -44,6 +44,57 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `yet-core`: `GazeModel` trait and `LinearGazeModel`, a centered SVD least-squares
   fit from four quadrant means to two monitor coordinates, with typed
   `ModelError`s and repeatable refits.
+- `yet-gaze`: a `#![no_std]`, allocation-free crate with zero dependencies.
+  `FeatureLayout` + `QUAD_LAYOUT`/`OCTA_LAYOUT`, fixed-capacity `FeatureVector`,
+  `GazeInput`, `PoseSample`/`HeadPose`/`BodyPose`, `GazePoint`, versioned
+  `ModelParameters` (`MODEL_FORMAT_VERSION = 1`) and `LinearPredictor`. The crate
+  contains no `std`, `nalgebra`, `image` or UI types; six tests cover the layout,
+  vector, prediction and rejection paths. `LinearPredictor` rejects a parameter
+  block whose declared feature count exceeds `MAX_FEATURES` instead of indexing
+  out of bounds.
+- `yet-core`: `FeatureExtractor` and `QuadExtractor { role, region }`;
+  `QuadBrightness::to_array`/`to_feature_vector` and
+  `From<QuadBrightness> for FeatureVector`.
+- `yet-core`: `GazeTrainer` (host fit, `nalgebra`/`f64`) and `GazePredictor`
+  (portable) are separate; `GazeModel` is a blanket alias. `LinearGazeModel`
+  implements both. Fitting derives its dimension from the samples, and
+  `minimum_samples(feature_count)` keeps 4 for Quadbright while requiring
+  `feature_count + 1` above four. `LinearParameters::to_model_parameters`
+  produces the deployable `f32` block.
+- `yet-core`: `CameraRole` (`EyeLeft`/`EyeRight`/`World`), `CameraFrame`,
+  `FrameSet` and `CameraRig` as the additive multi-camera seam. v1 still wires
+  one `EyeLeft` camera.
+- `docs/spikes/SPK-6.md`: ESP32-C glance-predictor design note (2×2 Quadbright
+  compression, parameter block, estimated flash/RAM/latency, risks). Estimates
+  are explicitly not measured.
+- A CI `no_std` guard builds `yet-gaze` for `thumbv7em-none-eabi` (Cortex-M4) and
+  `thumbv6m-none-eabi` (Cortex-M0+).
+- `yet-core`: `gaze_scene`/`GazeMarkerStyle`, UI-free composition of a
+  transparent overlay frame with a white-haloed gaze dot. Points outside the
+  presenter surface are dropped, and presenter/overlay geometries are mapped
+  proportionally.
+- `yet-overlay`: a new crate with a software `Argb8888` rasterizer for clears,
+  circles and lines, and `LayerShellOverlay`, a dedicated-thread Wayland
+  layer-shell backend (`smithay-client-toolkit` + calloop + `wl_shm`). It uses a
+  fullscreen surface, an empty input region for click-through, output selection,
+  buffer reuse and explicit errors for unsupported commands.
+- `yet-present-egui`: `EguiOverlay`, a deferred transparent viewport with
+  topmost, borderless, no-taskbar, no-activate and mouse-passthrough settings,
+  plus a shared primitive painter for overlay scenes.
+- `yet-present`: `OverlayBackend::present(&Scene)` and
+  `OverlayError::{Unsupported, Render}`.
+- `yet-console`: `OverlayStatus` with availability, an enable toggle, the latest
+  gaze point and backend errors; the presenter panel shows the toggle and
+  click-through state.
+- `yet-app`: overlay backend selection (`auto`, `off`, `egui`, `layer-shell`;
+  explicit `xwayland` returns the GNOME error), controller-side layer-shell
+  updates at gaze rate, console-side egui updates at 30 Hz, and a
+  `RunError::Overlay` path.
+- `yet-app`: `yet-app overlay <experiment-dir> [--seconds <s>]` animates a gaze
+  marker over the desktop for manual overlay validation.
+- `docs/naked-compositor.md` and `tools/sway-yet.conf`: a minimal Sway profile
+  with no bar, background service or notification daemon, plus console and
+  presenter placement rules.
 - `yet-core`: `CalibrationBuffer` with fit and Euclidean RMSE, for quick
   recalibration and calibration-quality reporting.
 - `yet-core`: `LinearGazeModel::parameters`, exposing the fitted coefficient and
@@ -148,12 +199,40 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- The overlay strategy changed: **GNOME Wayland is explicitly unsupported**
+  (decision 18). `presenter.overlay = "xwayland"` now returns a clear error;
+  layer-shell on KDE/wlroots/Sway or a naked compositor is the supported path.
+  `auto` disables the overlay with a notice instead of failing the session.
+- `config.toml` `[overlay] monitor` must equal `display.presenter_monitor` in
+  v1. An explicit mismatch is an error; `auto` disables the overlay and logs it.
+  The overlay is hidden when the presenter is not fullscreen or the monitor
+  changes; restart to rebind.
+- The console uses a fully transparent eframe clear color so its deferred overlay
+  viewport can composite; the console paints its own opaque background.
+- `smithay-client-toolkit` 0.19 and `calloop` 0.13 are direct dependencies of
+  `yet-overlay`; both were already in the workspace lock through winit.
+- `DEVELOPMENT_PLAN.md` records S9 as implemented, updates the overlay milestones
+  and risk register, and replaces the GNOME implementation plan with the
+  naked-compositor/parity plan. `UI_analysis.md` records the same decision.
+- `yet-core`: `CalibrationSample.features` is now a `FeatureVector` (with an
+  optional `pose`) instead of a `QuadBrightness`. `CalibrationSample::new`
+  still takes `QuadBrightness`, so the v1 call sites and the CSV are unchanged;
+  `CalibrationObservation` is an alias for the same type.
+- `yet-core`: `LinearParameters` gained `feature_count`; the least-squares fit is
+  feature-count aware. `LinearGazeModel::fit`/`predict`, the RMSE and the model
+  equation are unchanged for the four-feature path.
+- `GazeModel` changed from a two-method trait to a blanket alias over
+  `GazeTrainer + GazePredictor`. A type that used to implement `GazeModel`
+  directly must implement the two traits separately; the combined name keeps
+  working in bounds.
+- `DEVELOPMENT_PLAN.md` now records S8.5 as implemented, decision 12 as closed
+  and the `no_std` CI guard; the seam sketch matches the shipped API.
 - `DEVELOPMENT_PLAN.md` now records the 2026-10-25 plan health check and the
   evolution requirements E1–E3: a portable MCU glance predictor, Octabright and
   a world camera, and motion sensors for a future gaze model. The plan adds six
-  architecture seams, a proposed 2–3 day seam-hardening sprint (S8.5) before
-  overlay work, future backlog items, risks and decisions. No model, sensor or
-  camera behavior changed in v1.
+  architecture seams, a 2–3 day seam-hardening sprint (S8.5, later implemented)
+  before overlay work, future backlog items, risks and decisions. No model,
+  sensor or camera behavior changed in v1.
 - The experimenter console targets a notebook's main screen: text, padding and
   controls are scaled 2×, the window opens at 1400×860 logical points clamped
   to 92% of the monitor, and wide windows use a two-column layout (controls and

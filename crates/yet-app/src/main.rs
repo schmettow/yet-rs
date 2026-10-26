@@ -24,6 +24,7 @@ fn main() -> ExitCode {
         [command, rest @ ..] if command == "run" => run_session(rest),
         [command, rest @ ..] if command == "camera" => run_camera(rest),
         [command, rest @ ..] if command == "calibrate" => run_calibrate(rest),
+        [command, path, rest @ ..] if command == "overlay" => run_overlay(path, rest),
         [flag] if flag == "-h" || flag == "--help" => {
             usage();
             return ExitCode::SUCCESS;
@@ -50,7 +51,8 @@ fn usage() {
          yet-app media <experiment-dir>\n  \
          yet-app run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>]\n  \
          yet-app camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
-         yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]"
+         yet-app calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]\n  \
+         yet-app overlay <experiment-dir> [--seconds <s>]"
     );
 }
 
@@ -272,6 +274,23 @@ fn print_report(report: &RunReport) {
     for warning in &report.warnings {
         println!("warning: {warning}");
     }
+}
+
+fn run_overlay(directory: &str, args: &[String]) -> Result<(), CliError> {
+    let mut seconds = 10.0_f32;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--seconds" => {
+                let value = args.get(index + 1).ok_or(CliError::Usage)?;
+                seconds = value.parse().map_err(|_| CliError::Usage)?;
+                index += 2;
+            }
+            _ => return Err(CliError::Usage),
+        }
+    }
+    yet_app::run_overlay(yet_app::OverlayOptions::new(Path::new(directory)).seconds(seconds))?;
+    Ok(())
 }
 
 fn run_camera(args: &[String]) -> Result<(), CliError> {

@@ -1,16 +1,17 @@
 # Development Plan — yet-rs
 
-**Status:** Living plan · v1 implemented through S8 (S9 next) · future-sensing guardrails added 2026-10-25
+**Status:** Living plan · v1 implemented through S8.5 (S9 next) · future-sensing guardrails implemented 2026-10-25
 **Basis:** `UI_analysis.md`, `CV_analysis.md`, and the prior attempt in `Yex/`.
 **Style:** milestone-driven, sprint-based, test-first.
 
-> **Implementation snapshot (2026-10-25).** S0–S8 are implemented: 221 workspace
-> tests pass, with three ignored hardware tests (camera, tracker, audio) that
-> pass on the lab machine. S7's pilot (UX-4) and parts of the M3/M5 gates remain
-> open. The new evolution requirements E1–E3 in §0.2 are **guardrails, not v1
-> scope**: no Octabright, world camera, motion sensor or MCU runtime is built in
-> v1. They are integrated here so the later step is a mechanical extension, not
-> a rewrite.
+> **Implementation snapshot (2026-10-25).** S0–S9 are implemented: 250
+> workspace tests pass, with three ignored hardware tests (camera, tracker,
+> audio) that pass on the lab machine. S7's pilot (UX-4), parts of the M3/M5
+> gates, and the Windows/macOS/GNOME runtime matrix remain open. The evolution
+> requirements E1–E3 in §0.2 are **guardrails, not v1 scope**: no Octabright,
+> world camera, motion sensor or MCU runtime is built in v1. S8.5 added the
+> portable `yet-gaze` crate and the role/pose types; S9 added the layer-shell
+> and egui overlay backends.
 
 ---
 
@@ -33,9 +34,9 @@ when they arrive. v1 implements only the first column.
 
 | ID | Future requirement | v1 today | Seam that must exist |
 |---|---|---|---|
-| **E1** | Quadbright (feature) compression and prediction may run on a microcontroller | Host `LinearGazeModel` (f64, `nalgebra` fit); features are `f32` | Inference and training are separate; prediction uses a plain, fixed-capacity parameter block and no `std`/`nalgebra`/UI types; features can be quantized |
-| **E2** | Two eye cameras (**Octabright**) and/or a world camera | One `Camera`, one 4-quadrant `EyeRegion` | Camera roles and timestamped frame sets; a feature layout with configurable dimension; one source per device; multi-camera configuration is additive |
-| **E3** | Several motion sensors; a **gaze** model with head/body movement | Eye-only **glance** model: 4 features → screen point | Timestamped motion/pose source; a `GazeInput` that can carry pose; calibration observations that can carry pose; engine stays pure |
+| **E1** | Quadbright (feature) compression and prediction on an **ESP32-C** class device: reduce a frame to a 2×2 tile, predict a pixel gaze point | Host `LinearGazeModel` (f64, `nalgebra` fit); features are `f32` | Inference and training are separate; prediction uses a plain, fixed-capacity parameter block and no `std`/`nalgebra`/UI types; features can be quantized |
+| **E2** | **Binocular Octabright**: one camera per eye, eight quadrant features; plus a **head-mounted world camera** | One `Camera`, one 4-quadrant `EyeRegion` | Camera roles and timestamped frame sets; a feature layout with configurable dimension; one source per device; multi-camera configuration is additive |
+| **E3** | **Head IMU** (potentially two units for spike correction); a **gaze** model with head movement | Eye-only **glance** model: 4 features → screen point | Timestamped motion/pose source; a `GazeInput` that can carry pose; calibration observations that can carry pose; engine stays pure |
 
 **Terminology.** A **glance** is eye-in-head position while head and body are
 assumed fixed; that is the v1 model. **Gaze** is the point of regard after head
@@ -47,12 +48,20 @@ not imply that gaze is only ocular.
 sensor, a quantized predictor or a new model equation in v1. Only the seams
 below are in scope.
 
+**Confirmed 2026-10-25:** the world camera is **head-mounted**; Octabright is
+**binocular (one camera per eye)**; motion sensing is a **head IMU only**, with a
+second IMU possible for spike correction; the MCU target is the **ESP32-C**
+family; Quadbright compression means reducing the frame to a **2×2 tile**; the
+internal representation may become **polar** with head movement, but the output
+stays **pixels** because fixed AOIs are defined in screen pixels.
+
 ### 0.3 Plan health check (2026-10-25)
 
-**On target:** the v1 scope is intact. S0–S8 delivered the workspace, spikes,
+**On target:** the v1 scope is intact. S0–S9 delivered the workspace, spikes,
 experiment/CSV model, pure scheduler, CV parity, camera and calibration,
-presenter/console, calibration UX and media/audio. The current test suite and
-the manual media run match the S8 note. The remaining work is S9–S11.
+presenter/console, calibration UX, media/audio, the seam pass and the overlay
+core. The current test suite and the manual media run match the S8 note. The
+remaining work is S10–S11.
 
 **Open gates, not plan failures:**
 
@@ -60,27 +69,24 @@ the manual media run match the S8 note. The remaining work is S9–S11.
 - M4: UX-4 pilot not run; the S7 desktop flow was only partially validated.
 - M5: A/V drift has point measurements, no p95 series; Windows/macOS audio
   runtime unverified; frame decode is just-in-time, not a prefetch worker.
-- The overlay matrix (S9–S10) is still the highest-variance work.
+- The overlay visual matrix (S10) is still the highest-variance work; GNOME is
+  accepted as unsupported.
 
-**Architecture gaps against E1–E3:** the current code is correct for v1 but not
-future-proof in four places:
+**Architecture gaps against E1–E3 (closed by S8.5):** before the seam pass the
+code was correct for v1 but not future-proof. Each gap now has a type or trait,
+not a behavior change:
 
-1. `QuadBrightness` is a four-field struct, `CalibrationSample` stores it, and
-   `LinearGazeModel` hard-codes four coefficients. Octabright (8) or extra
-   sensors would force changes in the model, calibration and data records.
-2. `GazeModel` combines `fit` and `predict`; `nalgebra` and `f64` sit in the
-   same module. An MCU predictor cannot reuse that module without `std`/`alloc`.
-3. `Tracker` and `config.toml` assume exactly one camera; there is no camera
-   role, frame-set timestamp or rig abstraction.
-4. There is no `GazeInput`, `PoseSample` or motion-source seam; `GazeSample` is
-   an output only. Adding head/body later would touch the engine, calibration
-   and CSV path at once.
+| Gap before S8.5 | Resolution |
+|---|---|
+| `QuadBrightness` is a four-field struct, `CalibrationSample` stores it, and `LinearGazeModel` hard-codes four coefficients | `FeatureVector` + `FeatureLayout`, and a feature-count-aware fit; `QuadBrightness` remains a convenience for the v1 path |
+| `GazeModel` combines `fit` and `predict`; `nalgebra` and `f64` sit in the same module | `yet-gaze` is `#![no_std]` with `GazePredictor` and `ModelParameters`; `GazeTrainer` stays on the host |
+| `Tracker` and `config.toml` assume exactly one camera; there is no role, frame-set timestamp or rig | `CameraRole`, `CameraFrame`, `FrameSet` and `CameraRig`; the v1 rig still has one camera |
+| There is no `GazeInput`, `PoseSample` or motion-source seam | `GazeInput { features, pose }`, `PoseSample`, `HeadPose` and `BodyPose` exist; no sensor is wired |
 
-**Adjustment:** insert a **timeboxed 2–3 day seam sprint (S8.5)** before S9. It
-changes types and traits only; it must not change v1 output, timing or the model
-equation. It fits inside the two-sprint calendar buffer. If the schedule cannot
-absorb it, do it directly after S11 and before any E1–E3 work, but then the
-"no refactor" goal is at risk. This is decision 12 in §12.
+**Adjustment (done 2026-10-25):** the **timeboxed seam sprint (S8.5)** ran before
+S9. It changed types and traits only; v1 output, timing and the model equation
+are unchanged. It fit inside the two-sprint calendar buffer. See the S8.5
+implementation note for what shipped.
 
 ---
 
@@ -104,7 +110,8 @@ A researcher can, on Windows, macOS and Linux:
 - The experiment engine is testable headlessly, with no sleeps and no window.
 - A full session can be run without a terminal or a mouse.
 - Frame timing, calibration error, audio drift and dropped frames are logged.
-- The overlay meets R11 on Windows, macOS and at least one layer-shell Wayland compositor; GNOME is covered by the XWayland fallback or an explicit, documented fallback decision.
+- The overlay meets R11 on Windows, macOS and at least one layer-shell Wayland compositor (KDE, wlroots/Sway, or a naked compositor). GNOME Wayland is **explicitly unsupported** and documented; `xwayland` reports a clear error instead of pretending to work.
+- A session can run on a **naked wlroots compositor** (Sway or similar) with no panel, background or notification daemon; a documented config is provided.
 - `yet-rs/LICENSE` is GPL-3.0-only and dependency licenses are audited.
 
 ### 1.3 Non-goals for v1
@@ -131,7 +138,7 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | ID | Decision | Source |
 |---|---|---|
 | **D1** | `egui` + `eframe` (pinned 0.37 line) for console and in-process presenter. | UI §0.1, §9 |
-| **D2** | Overlay is a separate `OverlayBackend`: `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots/Sway), `XwaylandOverlay` (GNOME, in-process thread). Native X11 is deprecated. | UI R11, §7.5 |
+| **D2** | Overlay is a separate `OverlayBackend`: `EguiOverlay` (Windows/macOS, best effort on X11), `LayerShellOverlay` (KDE/wlroots/Sway and naked compositors). **GNOME Wayland is not supported**; `xwayland` returns a clear error. Native X11 is deprecated. | UI R11, §7.5; decision 18 |
 | **D3** | Video is pre-decoded to PNG sequences at setup; no runtime decoder in v1. | UI R5, §6.6 |
 | **D4** | Audio is extracted to WAV and played with `rodio` + `cpal`; audio clock is master when audio is present. | UI R12, §6.7 |
 | **D5** | Project license: **GPL-3.0-only**. | UI R8 |
@@ -151,6 +158,7 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D19** | **Sensors are event sources.** Motion/pose samples are timestamped `SensorSource`s; fusion happens on the controller, never in the pure engine. The engine may receive samples as events but never blocks on a sensor. | E3, §3.4 |
 | **D20** | **Glance is the v1 model; gaze is the future pipeline.** Keep `LinearGazeModel` as the v1 glance implementation, but new APIs take a `GazeInput` that can grow a pose field without changing call sites. | E3, §3.4 |
 | **D21** | **Portable prediction is `no_std`-ready by construction.** The prediction path uses `f32`/fixed-point-capable arithmetic, fixed-capacity buffers and versioned plain parameters; host fitting may use `f64`, `alloc` and `nalgebra`. | E1, §3.4 |
+| **D22** | **GNOME incompatibility is accepted.** The overlay targets layer-shell compositors and a naked wlroots compositor; no XWayland or GNOME Shell extension is built. A backend that cannot work returns `OverlayError::Unavailable` with the supported alternatives. | Decision 18; UI §7.5 |
 
 ---
 
@@ -269,23 +277,20 @@ host:    CalibrationObservation ─ GazeTrainer ─ ModelParameters(versioned) �
 ```
 
 ```rust
-// yet-present or a future no_std yet-gaze-portable crate
+// crates/yet-gaze — #![no_std], no allocation, no host types
 pub const MAX_FEATURES: usize = 16;
 
 pub struct FeatureLayout {
-    pub name: &'static str,       // "quad", "octa", "quad+head", …
-    pub len: usize,               // 4, 8, …
-    pub regions: &'static [FeatureRegion], // name + quadrant within a camera
+    pub name: &'static str,        // "quad", "octa", …
+    pub labels: &'static [&'static str], // canonical feature order
 }
+
+pub const QUAD_LAYOUT: FeatureLayout = FeatureLayout::new("quad", &["nw", "ne", "sw", "se"]);
+pub const OCTA_LAYOUT: FeatureLayout = FeatureLayout::new("octa", /* left_*, then right_* */);
 
 pub struct FeatureVector {
     values: [f32; MAX_FEATURES],
     len: usize,
-}
-
-pub trait FeatureExtractor {
-    fn layout(&self) -> FeatureLayout;
-    fn extract(&self, frames: &FrameSet<'_>) -> Option<FeatureVector>;
 }
 
 pub struct GazeInput<'a> {
@@ -294,12 +299,24 @@ pub struct GazeInput<'a> {
 }
 
 pub trait GazePredictor {
-    fn predict(&self, input: GazeInput<'_>) -> Result<GazePoint, ModelError>;
+    fn predict(&self, input: GazeInput<'_>) -> Result<GazePoint, PredictionError>;
     fn is_fitted(&self) -> bool;
 }
 
+pub struct PoseSample {
+    pub at_micros: u64, // host converts SessionTime
+    pub head: Option<HeadPose>,
+    pub body: Option<BodyPose>,
+}
+
+// crates/yet-core — owns frames; training may use nalgebra and f64
+pub trait FeatureExtractor {
+    fn layout(&self) -> FeatureLayout;
+    fn extract(&self, frames: &FrameSet<'_>) -> Option<FeatureVector>;
+}
+
 pub trait GazeTrainer {
-    fn fit(&mut self, samples: &[CalibrationObservation]) -> Result<(), ModelError>;
+    fn fit(&mut self, samples: &[CalibrationSample]) -> Result<(), ModelError>;
     fn reset(&mut self);
 }
 
@@ -307,54 +324,52 @@ pub trait GazeModel: GazePredictor + GazeTrainer {}
 impl<T: GazePredictor + GazeTrainer> GazeModel for T {}
 ```
 
-`FeatureRegion`, `PoseSample`, `HeadPose`, `BodyPose` and `WorldPoint` are target
-names, not v1 APIs. S8.5 introduces only the concrete types needed to make the
-mapping compile; the pose payloads may be opaque placeholders until E3.
+`yet-core` re-exports the portable types. `CalibrationObservation` is a type
+alias for `CalibrationSample`; `QuadExtractor { role, region }` is the v1
+`FeatureExtractor`, and `LinearPredictor` in `yet-gaze` consumes
+`ModelParameters` without `nalgebra`. `FeatureExtractor` lives in `yet-core`
+because it consumes `FrameSet`, but it uses no `std`-only API; moving it to
+`yet-gaze` later is possible if the frame type becomes portable.
 
-Camera and motion seams:
+Camera seams (implemented in `yet-core::camera`):
 
 ```rust
 pub enum CameraRole { EyeLeft, EyeRight, World }
 
-pub struct CameraFrame {
+pub struct CameraFrame<'a> {
     pub role: CameraRole,
     pub captured_at: SessionTime,
-    pub frame: GrayFrame,
+    pub frame: &'a GrayFrame,
 }
 
 pub struct FrameSet<'a> {
-    pub frames: &'a [CameraFrame],
+    pub frames: &'a [CameraFrame<'a>],
     pub reference_at: SessionTime,
 }
 
-pub trait SensorSource {
-    fn latest(&self) -> Option<PoseSample>;
-}
-
-pub struct PoseSample {
-    pub at: SessionTime,
-    pub head: Option<HeadPose>,
-    pub body: Option<BodyPose>,
+pub struct CameraRig {
+    // one Camera per role; v1 wraps one EyeLeft camera
 }
 ```
 
-One `SensorSource` exists per device; a future `PoseFusion` trait combines head,
-body and auxiliary samples into one timestamped `PoseSample`. The engine only
-ever sees the fused pose, so adding a sensor does not add engine branches.
+`WorldPoint` and a `SensorSource`/`PoseFusion` trait remain target names, not v1
+APIs: no sensor is wired. `PoseSample` is the transport shape a future source
+produces. The engine only ever sees a fused pose, so adding a sensor does not add
+engine branches.
 
 **Current code → seam (mechanical, no behavior change):**
 
 | Current | Seam | v1 behavior kept |
 |---|---|---|
-| `QuadBrightness` | `QuadLayout` + `FeatureVector(4)` | Named fields can remain as a convenience; conversion is lossless |
+| `QuadBrightness` | `QUAD_LAYOUT` + `FeatureVector(4)` | `QuadBrightness` remains; `From`/`to_array` conversions are lossless |
 | `quad_brightness` | `QuadExtractor` implementing `FeatureExtractor` | Same pixel rule and `(nw, ne, sw, se)` order |
-| `LinearGazeModel::fit` | `LinearTrainer` (host; `nalgebra`, `f64`) | Same SVD fit and RMSE |
-| `LinearGazeModel::predict` | `LinearPredictor` (portable; `f32`/fixed-point-capable) | Same coefficients and output within parity tolerance |
+| `LinearGazeModel::fit` | `GazeTrainer` (host; `nalgebra`, `f64`) | Same SVD fit and RMSE |
+| `LinearGazeModel::predict` | `GazePredictor` + `yet_gaze::LinearPredictor` (portable; `f32`) | Same coefficients and output within parity tolerance |
 | `LinearParameters` | `ModelParameters { version, feature_count, coefficients, intercept }` | Plain arrays only; no `nalgebra` in the saved model |
-| `CalibrationSample` | `CalibrationObservation { features, target, pose: Option }` | v1 constructs `pose: None` |
-| `Camera` / `Tracker` | One `CameraSource` per device + `CameraRig { roles }` | One eye camera, one `EyeRegion` |
+| `CalibrationSample` | `CalibrationSample { features: FeatureVector, target, pose: Option }` | `new(QuadBrightness, …)` keeps `pose: None` |
+| `Camera` / `Tracker` | One `CameraSource` per device + `CameraRig`/`CameraRole` | One `EyeLeft` camera, one `EyeRegion` |
 | `[camera]` config | `[[cameras]]` list with `role`; keep `[camera]` as shorthand | Same one-camera config parses unchanged |
-| `GazeSample` (output) | `GazeEstimate`; `GazeInput` is the input | CSV columns unchanged in v1 |
+| `GazeSample` (output) | `GazePoint` remains the prediction output; `GazeInput` is the input | CSV columns unchanged in v1 |
 
 **Rules that make the later extension mechanical:**
 
@@ -388,9 +403,9 @@ ever sees the fused pose, so adding a sensor does not add engine branches.
    limit layout-derived for 8-feature models. Raising the v1 minimum is a
    separate, explicitly tested correctness change.
 
-A compile-only guard belongs in S8.5: the feature/prediction modules must build
-without `std`/`alloc` in a future crate. It is a `cargo check` against a
-`no_std` target, not a hardware test.
+The compile-only guard from S8.5 is now in CI: `cargo check -p yet-gaze
+--target thumbv7em-none-eabi` (Cortex-M4) and `thumbv6m-none-eabi` (Cortex-M0+).
+It is a compile check, not a hardware test.
 
 ---
 
@@ -522,8 +537,7 @@ flowchart TD
     S5 --> S6["S6 Presenter + console"]
     S6 --> S7["S7 Calibration UX + pilot"]
     S7 --> S8["S8 Media + audio"]
-    S8 --> S85["S8.5 Seams (optional)"]
-    S8 -.->|defer| S9
+    S8 --> S85["S8.5 Seams (done)"]
     S85 --> S9["S9 Overlay core"]
     S9 --> S10["S10 GNOME overlay + matrix"]
     S10 --> S11["S11 Hardening + release"]
@@ -542,7 +556,7 @@ flowchart TD
 | **M3 Eye tracking parity** | S5 | Quad features match Python; calibration works on the real camera | Partial: Linux and synthetic parity; human RMSE and macOS/Windows open |
 | **M4 End-to-end experiment** | S7 | Console + fullscreen presenter + calibration + pilot session | Partial: flow implemented; UX-4 pilot open |
 | **M5 Media complete** | S8 | PNG sequence + WAV in sync; drift and underruns logged | Partial: Linux point measurements; p95 and macOS/Windows open |
-| **M6 Overlay parity** | S10 | Windows/macOS/layer-shell Wayland/GNOME-XWayland matrix passes or is documented | Not started |
+| **M6 Overlay parity** | S10 | Windows/macOS/layer-shell Wayland or a naked compositor passes; GNOME is documented as unsupported | Partial: overlay core implemented; layer-shell protocol validated; visual matrix and naked-compositor profile open |
 | **M7 v0.1.0** | S11 | Release checklist, pilot data and docs complete | Not started |
 
 ### 6.1 Post-v1 evolution path
@@ -955,19 +969,19 @@ the Linux workstation. 221 workspace tests pass (three ignored hardware tests).
 frames are tested; drift has a point measurement within budget but no p95
 series, and the Windows/macOS runtime is unverified.
 
-### Sprint 8.5 — Seam hardening (timeboxed, proposal)
+### Sprint 8.5 — Seam hardening (implemented 2026-10-25)
 
 **Goal:** make E1–E3 mechanical without extending the model, the data schema or
 the user-visible behavior. This is a types-and-traits sprint.
 
 **Timebox:** 2–3 days. If it grows beyond that, stop and defer the remainder;
-do not turn it into a model sprint. Decision 12 in §12 must be approved before
-this sprint starts.
+do not turn it into a model sprint. Decision 12 in §12 approved before the
+sprint started.
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
 | SEAM-1 | `FeatureLayout`, fixed-capacity `FeatureVector`, `FeatureExtractor`; `QuadBrightness` becomes the 4-feature layout | S | Quad output is bit-identical; Octabright is representable as an 8-feature layout; no host types in the extractor |
-| SEAM-2 | Split `GazeModel` into `GazePredictor` + `GazeTrainer`; plain versioned `ModelParameters`; `LinearPredictor` (f32) and `LinearTrainer` (f64/nalgebra); keep the combined trait as an alias | M | Fit and prediction match the current tests; parameters contain no `nalgebra` type; predictor uses a feature slice |
+| SEAM-2 | Split `GazeModel` into `GazePredictor` + `GazeTrainer`; plain versioned `ModelParameters`; `LinearPredictor` (f32) and host trainer (f64/nalgebra); keep the combined trait as an alias | M | Fit and prediction match the current tests; parameters contain no `nalgebra` type; predictor uses a feature slice |
 | SEAM-3 | `GazeInput`, `CalibrationObservation`, `CameraRole`, `FrameSet`, `PoseSample` stubs; one-camera `CameraRig` wraps today's `Camera` | S | v1 constructs `pose: None`; no behavior change; one camera remains the only wired configuration |
 | SEAM-4 | Portability guard: a `no_std` compile check for the feature/prediction modules, plus SPK-6 (one-page MCU feasibility note: target class, RAM/flash, fixed-point error budget) | S | Guard runs in CI; SPK-6 names the target and constraints; no hardware required |
 
@@ -981,34 +995,112 @@ results; the `no_std` guard passes.
 **Gate:** all existing tests pass unchanged; no new feature or sensor is wired;
 `LinearGazeModel` remains the v1 glance model.
 
+**Implementation note (S8.5, 2026-10-25):** SEAM-1 to SEAM-4 are implemented.
+230 workspace tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
+`clippy -D warnings`, `doc -D warnings`, MSRV 1.95 and the Windows target check
+are green. Behavior is unchanged: the CSV schema, quadrant rule, SVD fit, RMSE
+and all S8 media/demo output are untouched.
+
+- **New crate `yet-gaze`:** `#![no_std]`, zero dependencies, allocation-free.
+  It owns `FeatureLayout` with `QUAD_LAYOUT`/`OCTA_LAYOUT`, `FeatureVector`
+  (capacity 16), `GazeInput`, `PoseSample`/`HeadPose`/`BodyPose`, `GazePoint`,
+  `ModelParameters` (version 1, `feature_count: u8`, `[[f32; 16]; 2]`),
+  `PredictionError`, `GazePredictor` and `LinearPredictor`. Six unit tests cover
+  layouts, the fixed vector, the plane prediction and rejection paths.
+- **Trainer/predictor split:** `yet-core` defines `GazeTrainer` (host `f64`,
+  `nalgebra`) and the `GazeModel` blanket alias; `LinearGazeModel` implements both.
+  The fit derives its dimension from the samples' `FeatureVector`, not a
+  four-field struct, and `minimum_samples` keeps the historical 4 for Quadbright
+  while requiring `feature_count + 1` above four. `LinearParameters` carries
+  `feature_count` and converts to `ModelParameters`.
+- **Features:** `QuadBrightness` gained `to_array`/`to_feature_vector` and
+  `From<QuadBrightness> for FeatureVector`; `QuadExtractor { role, region }`
+  implements `FeatureExtractor`. The pixel rule and `(nw, ne, sw, se)` order are
+  unchanged, and the Python-oracle parity test still passes.
+- **Calibration and camera seams:** `CalibrationSample.features` is now a
+  `FeatureVector` (plus `pose: Option<PoseSample>`); `CalibrationSample::new`
+  still accepts `QuadBrightness`, so the v1 call sites are unchanged.
+  `CameraRole`, `CameraFrame`, `FrameSet` and `CameraRig` are additive; the v1
+  path still opens exactly one `EyeLeft` camera.
+- **Portability evidence:** `cargo check -p yet-gaze --target
+  thumbv7em-none-eabi` and `thumbv6m-none-eabi` pass locally, and a CI job now
+  runs both. `docs/spikes/SPK-6.md` is the MCU design note; its resource numbers
+  are explicitly marked *not measured*.
+- **Not done (deliberately):** no Octabright, world camera, pose source, sensor
+  fusion, quantized features, model-file I/O or new CSV columns.
+
+**Gate status:** met. The later E1–E3 work is additive; `LinearGazeModel` is
+still the v1 glance model.
+
 ### Sprint 9 — Overlay core
 
-**Goal:** the overlay works on Windows, macOS and a layer-shell Wayland compositor.
+**Goal:** a click-through gaze overlay on Windows/macOS and on layer-shell Wayland
+(KDE, wlroots/Sway, naked compositors). GNOME is explicitly out of scope.
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
-| OVL-1 | `EguiOverlay` for Windows/macOS: transparent, topmost, click-through, no taskbar, no focus steal | M | Manual matrix passes; clicks reach the app below; monitor targeting works |
-| OVL-2 | `LayerShellOverlay`: `calloop` + `smithay-client-toolkit`, one surface per output, empty input region | L | KDE or Sway: topmost, click-through, correct monitor; no focus steal |
-| OVL-3 | `OverlayBackend` selection and `config.toml` `overlay = "auto"` | S | Clear error when a backend is unavailable; manual override works |
-| OVL-4 | Overlay manual test matrix for Windows/macOS/KDE/Sway | M | Results recorded with OS/compositor versions; limitations documented |
+| OVL-1 | `EguiOverlay`: transparent, topmost, click-through, no taskbar, no focus steal; fullscreen viewport on the overlay monitor | M | Windows/macOS matrix passes; X11 is best effort; clicks reach the app below |
+| OVL-2 | `LayerShellOverlay`: dedicated thread with `smithay-client-toolkit`, `calloop` and `wl_shm`; fullscreen layer surface, empty input region, output selection | L | Starts on KDE/Sway/naked wlroots; click-through; correct monitor; no focus steal |
+| OVL-3 | `OverlayBackend` selection (`auto`, `off`, `egui`, `layer-shell`); `xwayland` returns a clear unsupported error; no silent fallback | S | `auto` disables with a log when unavailable; explicit modes fail clearly |
+| OVL-4 | `GazeOverlay` scene plus the shm raster path (`Clear`, `Circle`, `Line`), alpha blending and damage; unit tests | M | Scene and raster tests; gaze maps to overlay physical pixels; unsupported commands error |
+| OVL-5 | Manual matrix for Windows/macOS/X11 best effort/KDE/Sway/naked; record compositor versions | M | Results recorded; limitations documented |
 
-**Prior work:** UI §7.1–§7.5; `wanderlay`, `ianny` and `procmod/overlay` as references, subject to GPL obligations.
-**Demo:** gaze dot over the desktop, click-through, no focus steal, on three platforms/compositors.
-**Gate:** R11 partially met; GNOME still open; no regression in presenter timing.
-**Note:** S9–S10 are the highest-variance sprints. If the platform matrix cannot fit, use the calendar buffer rather than dropping the click-through or z-order checks.
+**Prior work:** UI §7.1–§7.5; SCTK 0.19 and calloop are already in the dependency
+lock through winit; `Yex` has no overlay code. `wanderlay`/`ianny` remain GPL
+references only.
+**Demo:** gaze dot over the desktop, click-through, no focus steal.
+**Gate:** R11 partially met; GNOME documented; no regression in presenter timing.
 
-### Sprint 10 — GNOME overlay and parity
+**Implementation note (S9, 2026-10-25):** OVL-1 to OVL-4 are implemented; OVL-5
+is partially measured. 250 workspace tests pass (three ignored hardware tests).
 
-**Goal:** M6 — close the last platform gap or document it precisely.
+- **`yet-overlay`:** a new crate with a software `Argb8888` rasterizer
+  (`Clear`/`Circle`/`Line`, alpha blending) and `LayerShellOverlay`, which runs
+  `smithay-client-toolkit` 0.19 + calloop on a dedicated thread, uses a
+  fullscreen `zwlr_layer_shell_v1` surface, an empty input region for
+  click-through, and `wl_shm` buffers. It rejects images/text explicitly.
+- **`EguiOverlay`** in `yet-present-egui`: a deferred transparent viewport with
+  topmost, borderless, no-taskbar, no-activate and mouse-passthrough settings.
+  It is selected on Windows/macOS and is best effort on X11.
+- **Selection:** `auto` picks layer-shell on Wayland, egui on Windows/macOS, and
+  disables the overlay on X11 with a notice. `egui`, `layer-shell` and `off` are
+  explicit; `xwayland` returns the documented GNOME error. A mismatched
+  `overlay.monitor` is an error for explicit modes and disables `auto`.
+- **Scene and wire-up:** `yet_core::gaze_scene` maps presenter pixels to the
+  overlay and emits a transparent clear plus a white halo and red dot. The
+  controller feeds the layer-shell backend at gaze rate; the console viewport
+  reads the same `ConsoleState.overlay.gaze` at 30 Hz. The console has a
+  click-through toggle and shows backend errors.
+- **Validation tool:** `yet-app overlay <experiment-dir> [--seconds <s>]`
+  animates a marker for manual checks.
+- **Measured:** the egui overlay window is created on the correct monitor with
+  `_NET_WM_STATE_ABOVE` and fullscreen, and draws the marker on X11. On this
+  KWin X11 session the compositor did not show the transparent window content
+  in the screen capture, and the overlay took focus (`with_active(false)` is
+  unsupported on X11); X11 is therefore best effort only. The layer-shell
+  backend connected to a nested COSMIC compositor, bound layer-shell, created
+  the surface and ran the animation; the nested COSMIC X11 backend failed with
+  DRI3/Present errors, so the composited pixels were not observable.
+  **Windows/macOS and a real KDE/Sway/naked session remain to be measured.**
+
+**Gate status:** partially met. The protocol, selection, scene and raster paths
+are tested; layer-shell worked against a live compositor; the final visual matrix
+and GNOME documentation are S10 work.
+
+### Sprint 10 — Naked compositor and platform parity
+
+**Goal:** M6 — a reproducible naked-compositor session and the remaining platform
+evidence. No GNOME implementation work.
 
 | ID | Story | Size | Done when |
 |---|---|---|---|
-| OVL-5 | `XwaylandOverlay`: in-process thread, `x11rb`, override-redirect, input shape, monitor geometry | L | GNOME: transparent, topmost, click-through, correct monitor; no console blocking |
-| OVL-6 | GNOME matrix, z-order and multi-monitor tests; fallback decision | M | Pass criteria or a written decision (extension vs documented limitation) with evidence |
-| OVL-7 | Overlay troubleshooting docs and known limitations | S | README section covers GNOME, KDE, wlroots, permissions and click-through |
+| OVL-6 | Naked compositor profile: Sway config without bar, background or notification daemon; console/presenter placement; launch script | M | One documented command starts a two-monitor kiosk session |
+| OVL-7 | GNOME/XWayland decision record and overlay troubleshooting docs | S | README states GNOME is unsupported, why, and the supported alternatives |
+| OVL-8 | Windows/macOS runtime matrix, HiDPI and multi-monitor checks for the overlay | M | Results recorded on hardware |
+| OVL-9 | Overlay soak and timing check | S | 60 min; no focus steal; dropped overlay frames counted |
 
-**Prior work:** UI §7.5; `wanderlay --x11` as the reference. Do not claim native GNOME Wayland layer-shell support.
-**Demo:** GNOME overlay session plus the full platform matrix.
+**Prior work:** UI §7.5; the layer-shell backend from S9.
+**Demo:** naked-compositor session plus the platform matrix.
 **Gate:** R11 met or explicitly documented; no silent fallback.
 
 ### Sprint 11 — Hardening and release
@@ -1034,7 +1126,6 @@ Ordered by value, not commitment.
 
 | Priority | Item | Why later |
 |---|---|---|
-| Must | Seam hardening (SEAM-1..4) | Prerequisite for E1–E3; 2–3 days, no user-visible change |
 | Should | **E1** `no_std`/fixed-point glance predictor and versioned model file | Only useful once a target MCU and memory/error budget are chosen |
 | Should | **E2a** Octabright: two eye cameras, 8-feature layout, role-aware config | Needs a second camera and a sync policy; the v1 feature layout must stay intact |
 | Should | **E2b** World camera and world/AOI mapping | Needs a camera role, timestamps and a decision on the output coordinate frame |
@@ -1042,7 +1133,7 @@ Ordered by value, not commitment.
 | Could | Feature quantization/compression (`FeatureCodec`) | Only after the portable predictor has a measured error budget |
 | Could | Multi-camera previews and a camera-rig console page | Follows E2; the console currently shows one preview |
 | Could | Out-of-process presenter (`macroquad`/`winit`/SDL) | Valuable for timing and process isolation; the trait boundary must be proven first |
-| Could | GNOME Shell extension overlay | Only if XWayland fails; adds a non-Rust component |
+| Could | GNOME/XWayland overlay | **Not planned:** GNOME is explicitly unsupported (decision 18); revisit only if a deployment requires it |
 | Could | Real-time AOIs and window tracking | R3 deliberately scoped it out; needs platform-specific work |
 | Could | Runtime video decode (`video-rs`/`ffmpeg-sidecar`) | Only when pre-decoding becomes an operational burden |
 | Could | Experiment editor / CSV authoring UI | Usability win, but the CSV is workable for v1 |
@@ -1058,12 +1149,12 @@ Ordered by value, not commitment.
 
 | Risk | Likelihood / impact | Trigger | Mitigation | Story |
 |---|---|---|---|---|
-| XWayland overlay fails on GNOME | High / high | SPK-2 X11 proxy passes the empty input region but shows focus stealing; GNOME/Wayland still untested | Test the GNOME matrix at S10; use a GNOME Shell extension or a documented limitation; never treat the X11 proxy as R11 evidence | SPK-2, OVL-5, OVL-6 |
+| XWayland overlay fails on GNOME | Accepted / low | Decision 18: GNOME Wayland is unsupported; no XWayland or Shell extension will be built | `auto` disables the overlay with a log; `xwayland` returns `Unavailable`; docs point to layer-shell on KDE/wlroots/Sway or a naked compositor | OVL-3, OVL-7 |
 | YUYV capture is unstable on the target camera | High / medium | SPK-3 measured 17.7–24.1 fps with 6–21 corrupt warm-up frames; MJPG was stable at 28.9 fps | Prefer YUYV only if it sustains the rate; add MJPG fallback and a corrupt-frame counter; record format in calibration | CV-5, CV-7 |
 | eframe timing is visibly janky | Medium / medium | SPK-1 measured 17.57 ms p99 on X11; Wayland/Windows/macOS untested | Keep traits; retest in UI-4; switch to `winit + wgpu`/`pixels` if needed | SPK-1, UI-4 |
 | A/V drift or audio device failure | Medium / medium | SPK-4 measured `get_pos()` −100…−151 ms behind wall clock on its harness; the integrated S8 run measured +8…+25 ms with no offset | Keep the 128 ms spike value as a per-device calibration option, default 0; add a beep/flash recording; measure p95 in S11; document `output_latency_ms` | SPK-4, MED-3, MED-4, REL-2 |
-| Future features are hard-coded to four | High / high | E2 needs 8 features; `QuadBrightness`, `CalibrationSample` and `LinearGazeModel` currently name four | `FeatureLayout` + `FeatureVector` + slice-based predictor in S8.5; no model extension | SEAM-1/2, E2a |
-| MCU path needs `nalgebra`/`f64`/`std` | High / high | E1 targets a Cortex-M without an FPU or allocator | Split predictor/trainer; plain versioned parameters; `no_std` guard; optional fixed-point predictor | SEAM-2/4, E1 |
+| Future features are hard-coded to four | Low / high | Was high before S8.5; `QuadBrightness`, `CalibrationSample` and `LinearGazeModel` named four | **Mitigated in S8.5:** `FeatureLayout` + `FeatureVector` + slice-based predictor; an 8-feature model is tested | SEAM-1/2, E2a |
+| MCU path needs `nalgebra`/`f64`/`std` | Low / high | Was high before S8.5; E1 targets a device without an FPU or allocator | **Mitigated in S8.5:** predictor/trainer split, plain versioned `ModelParameters`, `no_std` crate and CI target check; fixed-point stays optional | SEAM-2/4, E1 |
 | Multi-camera timestamp skew or focus/bandwidth contention | High / medium | Two USB cameras rarely share a hardware clock; both may fight for bandwidth | Role-tagged sources, timestamped `FrameSet`, explicit nearest-frame/skew policy, one capture thread per camera | SEAM-3, E2a |
 | Motion sensors add latency and a moving calibration frame | High / high | Head/body pose arrives at a different rate from the eye camera | Timestamped `PoseSample`, fusion on the controller, latency budget, a pose-aware calibration study before E3 | SEAM-3, E3 |
 | World camera privacy and coordinate-frame ambiguity | Medium / high | A scene camera records the participant's environment; screen vs world output differ | Decide the coordinate frame and retention policy before E2b; record only what is needed | E2b, decision 13 |
@@ -1181,30 +1272,31 @@ motion and the glance fallback boundary. Do not add these budgets to the v1 gate
 | 9 | Which hardware is available for HIL: camera, second monitor, Windows/macOS machines, GNOME and KDE/Sway? | Assume all are available at least once per milestone | S1 |
 | 10 | Accept `libasound2-dev`/`alsa-lib-devel` on Linux and Xcode CLT on macOS as documented build prerequisites? | **Linux confirmed** (`libasound2-dev` installed; playback measured). macOS Xcode CLT still to confirm on hardware. | S5 |
 | 11 | Adopt the SPK-3 corrections: explicit Rec. 601 luma, format-aware calibration, and MJPG fallback? | Yes; implement in S4/S5 | S4 |
-| 12 | Insert the 2–3 day seam-hardening sprint S8.5 before S9? | **Recommended yes.** If no, record the deferral and accept that E1–E3 will start with a refactor | Before S9 |
-| 13 | What is the future **world camera** for: scene/AOI mapping, head-mounted scene capture, or a second view of the participant? | Scene/AOI mapping on the experiment monitor; store no raw scene frames by default | Before E2b |
-| 14 | Which motion sensors and mounting: head IMU, body tracker, external optical tracker, or a combination? At what rates? | Head IMU at ≥100 Hz; body pose optional | Before E3 |
-| 15 | What is the MCU target class (Cortex-M0+/M4/M7), RAM/flash budget, FPU availability, and acceptable fixed-point error? | Cortex-M4F, 256 KB RAM, 1 MB flash, f32 prediction; fixed-point only if needed | Before E1 |
-| 16 | Octabright geometry: two cameras viewing the two eyes, or two views of one eye? Which four regions each? | Two eye cameras, 4 quadrants each; 8 features in layout order | Before E2a |
-| 17 | Gaze output frame: screen pixels, world coordinates, or both? Does the CSV gain a coordinate-frame column? | Screen pixels first; world coordinates as an appended column in E2b/E3 | Before E2b |
+| 12 | Insert the 2–3 day seam-hardening sprint S8.5 before S9? | **Approved and implemented 2026-10-25.** `yet-gaze`, the trait split, plain model parameters, camera roles and the `no_std` CI guard are in place; v1 behavior is unchanged | Done |
+| 13 | What is the future **world camera** for: scene/AOI mapping, head-mounted scene capture, or a second view of the participant? | **Confirmed: head-mounted.** It captures the participant's scene; AOI mapping and retention policy remain open | Before E2b |
+| 14 | Which motion sensors and mounting: head IMU, body tracker, external optical tracker, or a combination? At what rates? | **Confirmed: head IMU only**, at ≥100 Hz; a second IMU is allowed for spike correction; body pose is optional | Before E3 |
+| 15 | What is the MCU target class (Cortex-M0+/M4/M7), RAM/flash budget, FPU availability, and acceptable fixed-point error? | **Confirmed: ESP32-C family**, f32 prediction; the exact variant, FPU, SRAM/flash and camera interface are open (SPK-6) | Before E1 |
+| 16 | Octabright geometry: two cameras viewing the two eyes, or two views of one eye? Which four regions each? | **Confirmed: binocular, one camera per eye**, four quadrants each; 8 features in layout order | Before E2a |
+| 17 | Gaze output frame: screen pixels, world coordinates, or both? Does the CSV gain a coordinate-frame column? | **Confirmed: pixels are the output.** Internal polar coordinates are allowed once head movement is modeled; a world-coordinate column is appended only in E2b/E3 | Before E2b |
+| 18 | Is GNOME Wayland overlay support required? | **No. Accepted as unsupported** (2026-10-25). Use layer-shell on KDE/wlroots/Sway or a naked compositor; `xwayland` returns a clear error; docs state the limitation | Done |
 
 ---
 
 ## 13. First action
 
-Sprints 0–8 are complete, including the notebook console layout and media/audio.
-221 tests pass; three ignored hardware tests pass on the lab machine. The next
-v1 sprint is **S9 Overlay core**, but it should not start until decision 12 is
-resolved:
+Sprints 0–9 are complete, including the notebook console layout, media/audio and
+the overlay core. 250 tests pass; three ignored hardware tests pass on the lab
+machine. The next v1 sprint is **S10 Naked compositor and platform parity**;
+decision 12 and decision 18 are closed.
 
-1. **Approve S8.5 (recommended).** Freeze the feature layout, split
-   predictor/trainer, add camera-role and gaze-input stubs, and add the `no_std`
-   guard. It is 2–3 days, changes no user-visible behavior and prevents the
-   refactor E1–E3 would otherwise require.
-2. **Or defer S8.5.** Then go directly to S9 and schedule SEAM-1..4 immediately
-   after S11, before any E1–E3 work.
+1. **Build the naked-compositor profile (OVL-6).** A Sway config with no bar,
+   background or notification daemon, console/presenter placement and a launch
+   script. This is now the primary deployment story for a quiet lab machine.
+2. **Close the visual matrix (OVL-5/OVL-8).** KDE, Sway or a naked wlroots
+   compositor, Windows and macOS. Do not claim GNOME support.
+3. **In parallel, close the open v1 gates:** S7 pilot (UX-4), a human
+   calibration RMSE, macOS/Windows camera and audio runtime, and the p95 A/V
+   measurement.
 
-In parallel, close the open v1 gates: S7 pilot (UX-4), a human calibration RMSE,
-macOS/Windows camera and audio runtime, and the p95 A/V measurement. The overlay
-matrix (S9–S10) is the highest-variance remaining work; confirm the GNOME and
-KDE/Sway machines before starting it.
+Do not extend the model: E1–E3 are post-v1. The S8.5 seams are ready but unused
+in v1.

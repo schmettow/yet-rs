@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[package]
+name = "yet-gaze"
+description = "Portable feature and gaze prediction primitives for yet-rs (no_std)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

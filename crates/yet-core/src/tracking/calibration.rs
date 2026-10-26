@@ -3,8 +3,8 @@
 //! Calibration buffer plus model, for full and quick recalibration.
 
 use super::{
-    CalibrationBuffer, CalibrationSample, GazeModel, GazePoint, LinearGazeModel, LinearParameters,
-    ModelError, QuadBrightness,
+    CalibrationBuffer, CalibrationSample, GazePoint, LinearGazeModel, LinearParameters, ModelError,
+    QuadBrightness,
 };
 
 /// Summary of a calibration fit.

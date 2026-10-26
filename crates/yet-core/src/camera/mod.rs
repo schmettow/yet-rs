@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
+use yet_present::SessionTime;
 
 use crate::tracking::{EyeRegion, GrayFrame};
 
@@ -35,6 +36,121 @@ pub const DEFAULT_EYE_REGION: [f32; 4] = [0.25, 0.25, 0.5, 0.5];
 
 /// Stop the capture loop after this many consecutive device errors.
 const MAX_CONSECUTIVE_ERRORS: u32 = 30;
+
+/// Role of a camera in a rig.
+///
+/// v1 has one [`Self::EyeLeft`] camera. Future binocular tracking adds
+/// [`Self::EyeRight`]; a head-mounted world camera uses [`Self::World`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CameraRole {
+    /// Camera viewing the left eye.
+    EyeLeft,
+    /// Camera viewing the right eye.
+    EyeRight,
+    /// Head-mounted camera viewing the world.
+    World,
+}
+
+/// One borrowed frame tagged with its camera role and capture time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraFrame<'a> {
+    /// Which camera produced the frame.
+    pub role: CameraRole,
+    /// Session-relative capture time.
+    pub captured_at: SessionTime,
+    /// Grayscale frame.
+    pub frame: &'a GrayFrame,
+}
+
+/// A set of camera frames at one reference time.
+///
+/// Multi-camera fusion uses the timestamps, not an assumption of hardware sync.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameSet<'a> {
+    /// Frames in rig order.
+    pub frames: &'a [CameraFrame<'a>],
+    /// Reference time for features extracted from this set.
+    pub reference_at: SessionTime,
+}
+
+impl<'a> FrameSet<'a> {
+    /// The first frame for a role.
+    pub fn frame(&self, role: CameraRole) -> Option<&'a CameraFrame<'a>> {
+        self.frames.iter().find(|frame| frame.role == role)
+    }
+
+    /// Number of frames.
+    pub const fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Whether the set is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+}
+
+/// A role-tagged set of cameras.
+///
+/// v1 wraps one [`CameraRole::EyeLeft`] camera. The rig is the seam for
+/// binocular Octabright and a head-mounted world camera; it does not imply that
+/// multiple cameras are wired or synchronized yet.
+#[derive(Debug, Default)]
+pub struct CameraRig {
+    cameras: Vec<(CameraRole, Camera)>,
+}
+
+impl CameraRig {
+    /// Create an empty rig.
+    pub const fn new() -> Self {
+        Self {
+            cameras: Vec::new(),
+        }
+    }
+
+    /// Wrap one camera.
+    pub fn single(role: CameraRole, camera: Camera) -> Self {
+        Self {
+            cameras: vec![(role, camera)],
+        }
+    }
+
+    /// Add a camera for a role.
+    pub fn add(&mut self, role: CameraRole, camera: Camera) {
+        self.cameras.push((role, camera));
+    }
+
+    /// The camera for a role.
+    pub fn camera(&self, role: CameraRole) -> Option<&Camera> {
+        self.cameras
+            .iter()
+            .find(|(candidate, _)| *candidate == role)
+            .map(|(_, camera)| camera)
+    }
+
+    /// The camera for a role, mutably.
+    pub fn camera_mut(&mut self, role: CameraRole) -> Option<&mut Camera> {
+        self.cameras
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == role)
+            .map(|(_, camera)| camera)
+    }
+
+    /// Roles in rig order.
+    pub fn roles(&self) -> impl Iterator<Item = CameraRole> + '_ {
+        self.cameras.iter().map(|(role, _)| *role)
+    }
+
+    /// Number of cameras.
+    pub fn len(&self) -> usize {
+        self.cameras.len()
+    }
+
+    /// Whether the rig has no cameras.
+    pub fn is_empty(&self) -> bool {
+        self.cameras.is_empty()
+    }
+}
 
 /// A requested capture format, from `config.toml`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -508,6 +624,16 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+
+    #[test]
+    fn an_empty_rig_has_no_cameras() {
+        let rig = CameraRig::new();
+
+        assert!(rig.is_empty());
+        assert_eq!(rig.len(), 0);
+        assert!(rig.camera(CameraRole::EyeLeft).is_none());
+        assert_eq!(rig.roles().count(), 0);
+    }
 
     fn info() -> CameraInfo {
         CameraInfo {

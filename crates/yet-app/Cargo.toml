@@ -15,6 +15,7 @@ publish.workspace = true
 yet-core.workspace = true
 yet-present.workspace = true
 yet-media.workspace = true
+yet-overlay.workspace = true
 yet-present-egui.workspace = true
 yet-console.workspace = true
 thiserror.workspace = true

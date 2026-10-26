@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use yet_core::{
-    CalibrationBuffer, CalibrationSample, GazeModel, GazePoint, LinearGazeModel, ModelError,
+    minimum_samples, CalibrationBuffer, CalibrationSample, FeatureVector, GazeInput, GazePoint,
+    GazePredictor, GazeTrainer, LinearGazeModel, LinearPredictor, ModelError, PredictionError,
     QuadBrightness,
 };
 
@@ -192,20 +193,22 @@ fn a_buffer_without_a_fitted_model_reports_not_fitted() {
 fn rmse_is_the_euclidean_rms_error() {
     struct Constant(GazePoint);
 
-    impl GazeModel for Constant {
+    impl GazeTrainer for Constant {
         fn fit(&mut self, _samples: &[CalibrationSample]) -> Result<(), ModelError> {
             Ok(())
         }
 
-        fn predict(&self, _features: QuadBrightness) -> Result<GazePoint, ModelError> {
+        fn reset(&mut self) {}
+    }
+
+    impl GazePredictor for Constant {
+        fn predict(&self, _input: GazeInput<'_>) -> Result<GazePoint, PredictionError> {
             Ok(self.0)
         }
 
         fn is_fitted(&self) -> bool {
             true
         }
-
-        fn reset(&mut self) {}
     }
 
     let mut buffer = CalibrationBuffer::new();
@@ -245,4 +248,62 @@ fn clearing_the_buffer_removes_its_samples() {
 
     assert!(buffer.is_empty());
     assert_eq!(buffer.samples(), &[]);
+}
+
+#[test]
+fn an_eight_feature_model_uses_the_layout_dimension() {
+    let mut coefficients = [[0.0_f32; 8]; 2];
+    for (index, value) in coefficients[0].iter_mut().enumerate() {
+        *value = index as f32 + 1.0;
+    }
+    for (index, value) in coefficients[1].iter_mut().enumerate() {
+        *value = 8.0 - index as f32;
+    }
+    let intercept = [10.0_f32, 20.0];
+    let patterns: [[f32; 8]; 9] = [
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+    ];
+    let samples: Vec<CalibrationSample> = patterns
+        .iter()
+        .map(|pattern| {
+            let x = intercept[0]
+                + pattern
+                    .iter()
+                    .zip(coefficients[0])
+                    .map(|(feature, coefficient)| feature * coefficient)
+                    .sum::<f32>();
+            let y = intercept[1]
+                + pattern
+                    .iter()
+                    .zip(coefficients[1])
+                    .map(|(feature, coefficient)| feature * coefficient)
+                    .sum::<f32>();
+            CalibrationSample::from_features(
+                FeatureVector::new(pattern).unwrap(),
+                GazePoint::new(x, y),
+            )
+        })
+        .collect();
+
+    assert_eq!(minimum_samples(8), 9);
+    let mut model = LinearGazeModel::new();
+    model.fit(&samples).unwrap();
+    let predicted = GazePredictor::predict(&model, GazeInput::glance(&patterns[1])).unwrap();
+    assert!((predicted.x - 12.0).abs() < 0.05, "{}", predicted.x);
+    assert!((predicted.y - 27.0).abs() < 0.05, "{}", predicted.y);
+
+    let parameters = model.model_parameters().unwrap();
+    assert_eq!(parameters.feature_count, 8);
+    let portable = LinearPredictor::new(parameters);
+    let portable_point = portable.predict(GazeInput::glance(&patterns[1])).unwrap();
+    assert!((portable_point.x - predicted.x).abs() < 0.1);
+    assert!((portable_point.y - predicted.y).abs() < 0.1);
 }

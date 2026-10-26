@@ -159,6 +159,19 @@ pub struct PreviewState {
     pub capture_fps: Option<f32>,
 }
 
+/// Gaze overlay state shared between the controller and the console.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OverlayStatus {
+    /// Whether a backend was selected for this session.
+    pub available: bool,
+    /// Whether the experimenter wants the gaze marker visible.
+    pub enabled: bool,
+    /// Latest gaze point in presenter-surface physical pixels.
+    pub gaze: Option<GazePoint>,
+    /// Backend selection or runtime error.
+    pub error: Option<String>,
+}
+
 /// Everything the console displays.
 #[derive(Clone, Debug)]
 pub struct ConsoleState {
@@ -212,6 +225,8 @@ pub struct ConsoleState {
     pub calibration: CalibrationStatus,
     /// Live camera preview.
     pub preview: PreviewState,
+    /// Gaze overlay state.
+    pub overlay: OverlayStatus,
     /// Seconds from console launch to the first presented trial, when reached.
     pub first_trial_seconds: Option<f32>,
     /// Bounded event log.
@@ -257,6 +272,7 @@ impl ConsoleState {
             error: None,
             calibration: CalibrationStatus::default(),
             preview: PreviewState::default(),
+            overlay: OverlayStatus::default(),
             first_trial_seconds: None,
             log: VecDeque::new(),
             finished: false,

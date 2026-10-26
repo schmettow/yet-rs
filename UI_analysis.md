@@ -556,14 +556,15 @@ This is the one place where R1 and R11 cannot both be met natively by a Wayland 
 | Windows | `EguiOverlay`: transparent + always-on-top + `mouse_passthrough` + no taskbar/focus | Full support |
 | macOS | `EguiOverlay` + `with_has_shadow(false)`; `NSWindowCollectionBehavior::CanJoinAllSpaces` via `Frame::winit_window()` + `objc2` | Full support, needs a small platform shim |
 | Linux Wayland (KDE, wlroots, Sway) | `LayerShellOverlay` via `smithay-client-toolkit` + `zwlr_layer_shell_v1`; one surface per output; empty input region | Full support; strategic Wayland path |
-| Linux Wayland (GNOME/Mutter) | Native layer-shell unsupported. `XwaylandOverlay` via `x11rb`; `wanderlay --x11` is the reference. | **XWayland first; spike multi-monitor/z-order/click-through** |
-| Linux X11 (legacy) | Not a target; may work incidentally through `EguiOverlay`/XWayland | **Deprecated; do not invest** |
+| Linux Wayland (GNOME/Mutter) | Native layer-shell unsupported. `XwaylandOverlay` via `x11rb` was the fallback; **not built** (decision 2026-10-25). | **Unsupported, documented** |
+| Linux X11 (legacy) | Not a target; `EguiOverlay` is best effort. In the 2026-10-25 KWin X11 check the transparent window content was not composited and the overlay took focus. | **Deprecated; do not invest** |
 
 Upstream `gtk4-layer-shell` (checked 2026-10-25) lists wlroots, Smithay, Mir, and KDE Plasma as supported, and explicitly lists **GNOME-on-Wayland** as unsupported. `wanderlay`'s GNOME claim is therefore likely its `--x11` fallback, not native GNOME Wayland.
 
 Windows/macOS support depends on `winit`'s cursor hit-test and window-level implementations; the overlay spike must confirm it on the target OS versions.
 
-GNOME Wayland options, in order:
+GNOME Wayland options considered before the 2026-10-25 decision (all rejected; see
+below):
 
 1. **XWayland fallback (chosen first).** `wanderlay` ships `--x11` and claims it works on GNOME. Test multi-monitor positioning, z-order, and click-through; if it passes, it meets R11 without an extension. Since yet-rs is GPL-3.0-only, `wanderlay` (GPL-3.0) can be used directly as the starting point.
 2. **GNOME Shell extension** only if XWayland fails. It creates a topmost, click-through actor controlled by the app (D-Bus), but adds a non-Rust component, a separate install path, and GNOME-version maintenance.
@@ -571,7 +572,9 @@ GNOME Wayland options, in order:
 
 **Implementation note:** a layer-shell surface is **not** a `winit` window, so it cannot be an eframe viewport. `LayerShellOverlay` needs its own Wayland event loop (`calloop` + `smithay-client-toolkit`) and a small renderer (`softbuffer`/`tiny-skia` or `wgpu`). `XwaylandOverlay` is a dedicated **in-process thread** with its own `x11rb` event loop and tiny overlay renderer. Both are controlled by the console through channels; `OverlayBackend` hides the difference. The presenter itself can still use eframe `with_monitor` for fullscreen stimulus windows on Wayland.
 
-**Recommendation:** implement `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots/Sway Wayland, dedicated event-loop thread), and `XwaylandOverlay` (GNOME, dedicated in-process thread) behind an `OverlayBackend` trait. Develop the native Wayland backend in parallel; use XWayland to cover GNOME now. Native X11 is not a target. If XWayland fails on GNOME, fall back to a GNOME Shell extension or a documented limitation. The main remaining risk is XWayland behavior on GNOME (multi-monitor geometry, z-order, click-through).
+**Recommendation:** implement `EguiOverlay` (Windows/macOS) and `LayerShellOverlay` (KDE/wlroots/Sway Wayland, dedicated event-loop thread) behind an `OverlayBackend` trait. Native X11 is best effort and deprecated. **Do not build `XwaylandOverlay` or a GNOME Shell extension.**
+
+**Decision 2026-10-25 (owner):** GNOME-on-Wayland incompatibility is accepted. The strategic overlay path is native layer-shell on KDE, wlroots/Sway, and a **naked wlroots compositor** (Sway/cage) for a quiet lab machine with no panel, background or notification daemon. `auto` disables the overlay with a notice when no backend is available; an explicit `xwayland` mode returns a clear unsupported error.
 
 ---
 

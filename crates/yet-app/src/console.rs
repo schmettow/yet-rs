@@ -26,13 +26,14 @@ use yet_console::{
 };
 use yet_core::layout::StimulusPlacement;
 use yet_core::{
-    step, CalibrationGrid, CalibrationPhase, CalibrationRun, CameraConfig, ConsoleEvent, Effect,
-    EngineEvent, EngineState, FrameRecord, GazePoint, GazeSample, Phase, QuadBrightness,
-    QuickBackground, SessionPlan,
+    gaze_scene, step, CalibrationGrid, CalibrationPhase, CalibrationRun, CameraConfig,
+    ConsoleEvent, Effect, EngineEvent, EngineState, FrameRecord, GazeMarkerStyle, GazePoint,
+    GazeSample, Phase, QuadBrightness, QuickBackground, SessionPlan,
 };
-use yet_present::{Scene, SessionTime};
-use yet_present_egui::{EguiPresenter, PresenterConfig};
+use yet_present::{OverlayBackend, Scene, ScreenGeometry, SessionTime};
+use yet_present_egui::{EguiOverlay, EguiPresenter, PresenterConfig};
 
+use crate::desktop_overlay::{self, OverlayHost};
 use crate::driver::{gaze_sample, prepare, RunError, RunReport, SessionRunner};
 use crate::tracker::Tracker;
 
@@ -41,6 +42,9 @@ const TICK: Duration = Duration::from_micros(16_667);
 
 /// How often the console repaints while a session is active.
 const CONSOLE_REPAINT: Duration = Duration::from_millis(100);
+
+/// How often the console repaints while the gaze overlay is visible.
+const OVERLAY_REPAINT: Duration = Duration::from_millis(33);
 
 /// Camera preview update interval (about 15 Hz).
 const PREVIEW_INTERVAL: Duration = Duration::from_millis(66);
@@ -98,6 +102,16 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
     let display = prepared.loaded.config.display.clone();
     let camera_config = prepared.loaded.config.camera.clone();
     let audio_config = prepared.loaded.config.audio.clone();
+    let overlay = desktop_overlay::open(&prepared.loaded.config)?;
+    let overlay_monitor = overlay.monitor;
+    let overlay_notice = overlay.notice.clone();
+    let overlay_available = overlay.host.is_available();
+    let overlay_label = overlay.host.label();
+    let (egui_overlay, thread_overlay) = match overlay.host {
+        OverlayHost::Egui(overlay) => (Some(overlay), None),
+        OverlayHost::Thread(overlay) => (None, Some(overlay)),
+        OverlayHost::Off => (None, None),
+    };
     let trials = prepared.loaded.plan.trial_count();
     let participant = prepared.sink.identity().participant.clone();
 
@@ -147,6 +161,18 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
             "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F8 abort",
         );
         console.log(LogLevel::Info, "waiting for the stimulus window…");
+        console.overlay.available = overlay_available;
+        console.overlay.enabled = overlay_available;
+        console.overlay.error = overlay_notice.clone();
+        if let Some(notice) = overlay_notice {
+            console.log(LogLevel::Warning, notice);
+        }
+        if overlay_available {
+            console.log(
+                LogLevel::Info,
+                format!("gaze overlay: {overlay_label} on monitor {overlay_monitor}"),
+            );
+        }
     }
 
     let (commands, controller) = spawn_controller(
@@ -156,6 +182,8 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         Arc::clone(&shared),
         camera_config,
         options.device,
+        thread_overlay,
+        overlay_monitor,
     )?;
 
     let app = ConsoleApp {
@@ -164,6 +192,10 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         commands,
         controller: Some(controller),
         console: ConsoleUi::new(),
+        overlay: egui_overlay,
+        overlay_monitor,
+        overlay_style: GazeMarkerStyle::default(),
+        overlay_warned: false,
         logged_ready: false,
         sized: false,
     };
@@ -197,13 +229,25 @@ struct ConsoleApp {
     commands: Sender<ExperimentCommand>,
     controller: Option<JoinHandle<()>>,
     console: ConsoleUi,
+    overlay: Option<EguiOverlay>,
+    overlay_monitor: usize,
+    overlay_style: GazeMarkerStyle,
+    overlay_warned: bool,
     logged_ready: bool,
     sized: bool,
 }
 
 impl eframe::App for ConsoleApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // The overlay viewport uses this clear color; the console paints its own
+        // opaque background below.
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(12, 12, 12));
         if !self.sized {
             if let Some(monitor) = ctx.input(|input| input.viewport().monitor_size) {
                 let target = egui::vec2(1400.0, 860.0).min(monitor * 0.92);
@@ -286,7 +330,69 @@ impl eframe::App for ConsoleApp {
         }
 
         yet_present_egui::show_viewport(&ctx, &self.presenter.shared());
-        ctx.request_repaint_after(CONSOLE_REPAINT);
+        self.update_overlay(&ctx, &status);
+        let repaint = if self.overlay.as_ref().is_some_and(EguiOverlay::is_visible) {
+            OVERLAY_REPAINT
+        } else {
+            CONSOLE_REPAINT
+        };
+        ctx.request_repaint_after(repaint);
+    }
+}
+
+impl ConsoleApp {
+    fn update_overlay(&mut self, ctx: &egui::Context, status: &yet_present_egui::PresenterStatus) {
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
+        let (enabled, gaze, presenter_monitor, fullscreen, phase) = {
+            let console = lock_console(&self.shared);
+            (
+                console.overlay.enabled,
+                console.overlay.gaze,
+                console.presenter_monitor,
+                console.fullscreen,
+                console.phase,
+            )
+        };
+
+        if enabled && presenter_monitor != self.overlay_monitor && !self.overlay_warned {
+            self.overlay_warned = true;
+            let mut console = lock_console(&self.shared);
+            let message = format!(
+                "overlay is bound to monitor {}; restart to move it",
+                self.overlay_monitor
+            );
+            console.overlay.error = Some(message.clone());
+            console.log(LogLevel::Warning, message);
+        }
+
+        let usable = enabled
+            && presenter_monitor == self.overlay_monitor
+            && fullscreen
+            && status.ready
+            && phase == Phase::Running;
+        if !usable {
+            overlay.set_visible(false);
+            overlay.show_viewport(ctx);
+            return;
+        }
+
+        let geometry = ScreenGeometry::new(
+            self.overlay_monitor,
+            None,
+            status.size_px,
+            status.scale_factor,
+        );
+        overlay.set_scene(gaze_scene(geometry, geometry, gaze, &self.overlay_style));
+        if let Err(error) = overlay.show(self.overlay_monitor) {
+            let mut console = lock_console(&self.shared);
+            console.overlay.available = false;
+            console.overlay.error = Some(error.to_string());
+            console.overlay.enabled = false;
+            console.log(LogLevel::Warning, format!("overlay stopped: {error}"));
+        }
+        overlay.show_viewport(ctx);
     }
 }
 
@@ -299,6 +405,7 @@ impl Drop for ConsoleApp {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_controller(
     plan: SessionPlan,
     mut sink: yet_core::DataSink<std::io::BufWriter<std::fs::File>>,
@@ -306,6 +413,8 @@ fn spawn_controller(
     shared: Arc<Mutex<ConsoleState>>,
     camera_config: CameraConfig,
     device: Option<usize>,
+    overlay: Option<Box<dyn OverlayBackend + Send>>,
+    overlay_monitor: usize,
 ) -> Result<(Sender<ExperimentCommand>, JoinHandle<()>), RunError> {
     let (commands, receiver) = mpsc::channel();
     let handle = thread::Builder::new()
@@ -335,6 +444,8 @@ fn spawn_controller(
                 &latest_gaze,
                 &camera_config,
                 device,
+                overlay,
+                overlay_monitor,
             );
 
             if let Err(error) = runner.flush() {
@@ -362,6 +473,8 @@ fn run_loop<G>(
     latest_gaze: &Rc<Cell<Option<GazePoint>>>,
     camera_config: &CameraConfig,
     device: Option<usize>,
+    mut overlay: Option<Box<dyn OverlayBackend + Send>>,
+    overlay_monitor: usize,
 ) where
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
@@ -375,6 +488,10 @@ fn run_loop<G>(
     let mut preview_generation = 0_u64;
     let mut last_preview: Option<Instant> = None;
     let mut first_trial = false;
+    let overlay_style = GazeMarkerStyle::default();
+    let mut overlay_visible = false;
+    let mut overlay_gaze: Option<GazePoint> = None;
+    let mut overlay_warned = false;
 
     while !shut_down {
         let now = Instant::now();
@@ -382,6 +499,18 @@ fn run_loop<G>(
             let mut console = lock_console(shared);
             console.log_elapsed = now.duration_since(start);
         }
+        sync_overlay(
+            state,
+            overlay.as_mut(),
+            runner.geometry(),
+            shared,
+            latest_gaze.get(),
+            &mut overlay_visible,
+            &mut overlay_gaze,
+            &overlay_style,
+            overlay_monitor,
+            &mut overlay_warned,
+        );
 
         // Console intent: preview on/off and a retry request.
         let (preview_enabled, retry) = {
@@ -413,6 +542,7 @@ fn run_loop<G>(
                         if let Some(run) = &calibration {
                             if let Ok(point) = run.predict(polled.features) {
                                 latest_gaze.set(Some(point));
+                                lock_console(shared).overlay.gaze = Some(point);
                             }
                         }
                     }
@@ -484,7 +614,7 @@ fn run_loop<G>(
                                 );
                             }
                             let effects = step(state, EngineEvent::Start, at);
-                            latest_gaze.set(None);
+                            clear_gaze(shared, latest_gaze);
                             if let Err(error) = apply_effects(
                                 state,
                                 runner,
@@ -510,7 +640,7 @@ fn run_loop<G>(
                                 EngineEvent::Resume
                             };
                             if event == EngineEvent::Pause {
-                                latest_gaze.set(None);
+                                clear_gaze(shared, latest_gaze);
                             }
                             let effects = step(state, event, at);
                             if let Err(error) = apply_effects(
@@ -534,7 +664,7 @@ fn run_loop<G>(
                         }
                         if matches!(state.phase, Phase::Running | Phase::Paused) {
                             let effects = step(state, EngineEvent::Abort, at);
-                            latest_gaze.set(None);
+                            clear_gaze(shared, latest_gaze);
                             if let Err(error) = apply_effects(
                                 state,
                                 runner,
@@ -703,6 +833,68 @@ fn run_loop<G>(
             next_tick = now + TICK;
         }
     }
+}
+
+fn clear_gaze(shared: &Arc<Mutex<ConsoleState>>, latest_gaze: &Rc<Cell<Option<GazePoint>>>) {
+    latest_gaze.set(None);
+    lock_console(shared).overlay.gaze = None;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sync_overlay(
+    state: &EngineState,
+    overlay: Option<&mut Box<dyn OverlayBackend + Send>>,
+    geometry: ScreenGeometry,
+    shared: &Arc<Mutex<ConsoleState>>,
+    gaze: Option<GazePoint>,
+    visible: &mut bool,
+    last_gaze: &mut Option<GazePoint>,
+    style: &GazeMarkerStyle,
+    overlay_monitor: usize,
+    warned: &mut bool,
+) {
+    let Some(overlay) = overlay else {
+        return;
+    };
+    let (enabled, presenter_monitor) = {
+        let console = lock_console(shared);
+        (console.overlay.enabled, console.presenter_monitor)
+    };
+
+    if enabled && presenter_monitor != overlay_monitor && !*warned {
+        *warned = true;
+        let mut console = lock_console(shared);
+        let message = format!("overlay is bound to monitor {overlay_monitor}; restart to move it");
+        console.overlay.error = Some(message.clone());
+        console.log(LogLevel::Warning, message);
+    }
+
+    let show = enabled && presenter_monitor == overlay_monitor && state.phase == Phase::Running;
+    if show != *visible {
+        if show {
+            let _ = overlay.show(overlay_monitor);
+            let clear = gaze_scene(geometry, geometry, None, style);
+            let _ = overlay.present(&clear);
+        } else {
+            overlay.set_visible(false);
+        }
+        *visible = show;
+        *last_gaze = None;
+    }
+    if !show || gaze == *last_gaze {
+        return;
+    }
+
+    let scene = gaze_scene(geometry, geometry, gaze, style);
+    if let Err(error) = overlay.present(&scene) {
+        let mut console = lock_console(shared);
+        console.overlay.available = false;
+        console.overlay.error = Some(error.to_string());
+        console.overlay.enabled = false;
+        console.log(LogLevel::Warning, format!("overlay stopped: {error}"));
+        *visible = false;
+    }
+    *last_gaze = gaze;
 }
 
 #[allow(clippy::too_many_arguments)]

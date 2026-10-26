@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use yet_core::{
-    quad_brightness, rec601_luma, CalibrationSample, EyeRegion, GazeModel, GazePoint, GrayFrame,
+    quad_brightness, rec601_luma, CalibrationSample, EyeRegion, GazePoint, GrayFrame,
     LinearGazeModel, QuadBrightness,
 };
 

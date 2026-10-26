@@ -139,9 +139,12 @@ pub enum OverlayMode {
     Off,
     /// eframe overlay for Windows/macOS.
     Egui,
-    /// Wayland layer-shell overlay for KDE/wlroots/Sway.
+    /// Wayland layer-shell overlay for KDE, wlroots/Sway and naked compositors.
     LayerShell,
-    /// XWayland overlay fallback for GNOME.
+    /// XWayland overlay fallback.
+    ///
+    /// GNOME-on-Wayland overlay support is **not implemented**; selecting this
+    /// returns a clear error that points to layer-shell or `off`.
     Xwayland,
 }
 

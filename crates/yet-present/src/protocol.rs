@@ -150,6 +150,12 @@ pub enum OverlayError {
     /// The requested monitor does not exist.
     #[error("monitor {0} does not exist")]
     UnknownMonitor(usize),
+    /// The backend cannot render this command.
+    #[error("overlay cannot draw this command: {0}")]
+    Unsupported(String),
+    /// The overlay could not render a frame.
+    #[error("overlay render failed: {0}")]
+    Render(String),
 }
 
 /// Errors returned by a media sequence source.
@@ -220,6 +226,14 @@ pub trait OverlayBackend {
 
     /// Enable or disable click-through behavior.
     fn set_passthrough(&mut self, enabled: bool) -> Result<(), OverlayError>;
+
+    /// Submit one transparent overlay scene.
+    ///
+    /// Scenes are expected to clear to [`crate::Color::TRANSPARENT`] and only
+    /// use primitives the backend supports. A backend that cannot draw a
+    /// command returns [`OverlayError::Unsupported`] rather than dropping it
+    /// silently.
+    fn present(&mut self, scene: &Scene) -> Result<(), OverlayError>;
 }
 
 /// A source of pre-decoded media frames, such as a PNG sequence.

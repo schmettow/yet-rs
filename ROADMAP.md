@@ -25,8 +25,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - [x] **M5 Media complete (S8)** — PNG sequences and WAV audio play; the audio
   clock is master, drift and skipped frames are shown, and FFmpeg is a setup
   step only. A beep/flash A/V recording and the Windows/macOS runtime remain.
-- [ ] **M6 Overlay parity (S10)** — Windows, macOS, layer-shell Wayland and
-  GNOME/XWayland are tested or explicitly documented.
+- [ ] **M6 Overlay parity (S10)** — the overlay core is implemented: an egui
+  viewport for Windows/macOS and a Wayland layer-shell backend. Layer-shell was
+  protocol-validated against a live compositor; the Windows/macOS and
+  KDE/Sway/naked visual matrix is still open. GNOME is documented as unsupported.
 - [ ] **M7 v0.1.0 (S11)** — release checklist, pilot data and complete docs.
 
 ## Sprint status
@@ -74,12 +76,27 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   `RodioAudioPlayer`), controller-thread frame decoding with texture reuse,
   audio-master pacing, pause/resume through the engine, console drift/drop/
   underrun display, `yet-app media` validation, `tools/prepare_media.sh` and
-  `examples/media-demo`. 221 tests pass; audio and sequences were exercised on
-  the Linux workstation (`media 2.10 s · audio drift +24.9 ms` at 2.1 s).
-  Windows/macOS runtime, a beep/flash A/V measurement and background prefetch
-  remain.
-- **Next:** S9 overlay core (Windows/macOS `EguiOverlay`, layer-shell Wayland),
-  after the proposed S8.5 seam-hardening pass.
+  `examples/media-demo`. 221 tests passed at the end of the sprint; audio and
+  sequences were exercised on the Linux workstation (`media 2.10 s · audio
+  drift +24.9 ms` at 2.1 s). Windows/macOS runtime, a beep/flash A/V
+  measurement and background prefetch remain.
+- **S8.5 Seam hardening** — complete: `yet-gaze` (`no_std`, zero dependencies,
+  `FeatureLayout`, `FeatureVector`, `ModelParameters`, `LinearPredictor`,
+  `GazeInput`, `PoseSample`), predictor/trainer split with a `GazeModel`
+  blanket alias, `QuadExtractor`, `CameraRole`/`CameraFrame`/`FrameSet`/
+  `CameraRig`, and `docs/spikes/SPK-6.md` (ESP32-C design note, estimates not
+  measured). A CI job checks both Cortex-M targets. 230 tests pass; v1 output,
+  timing, CSV schema and the model equation are unchanged.
+- **S9 Overlay core** — implemented: the new `yet-overlay` crate with a
+  layer-shell thread (`smithay-client-toolkit` + calloop + `wl_shm`), the
+  `EguiOverlay` transparent viewport, `gaze_scene` composition, backend
+  selection (`auto`/`off`/`egui`/`layer-shell`, explicit `xwayland` error), the
+  console toggle, and `yet-app overlay` for manual checks. 250 tests pass. X11
+  is best effort and did not composite correctly on the local KWin session;
+  GNOME is unsupported; the Windows/macOS and real KDE/Sway/naked visual matrix
+  remains.
+- **Next:** S10 naked-compositor profile and platform parity (Sway config,
+  Windows/macOS matrix, GNOME limitation docs).
 
 ## Post-v1
 

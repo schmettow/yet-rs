@@ -72,6 +72,130 @@ fn alpha(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+fn paint_clear(painter: &egui::Painter, clip_rect: egui::Rect, fill: Color) {
+    painter.rect_filled(clip_rect, 0.0, color(fill));
+}
+
+fn paint_circle(
+    painter: &egui::Painter,
+    pixels_per_point: f32,
+    center_px: PointPx,
+    radius_px: f32,
+    stroke_px: f32,
+    fill: Color,
+) {
+    let center = snapped_pos(center_px, pixels_per_point);
+    let radius = radius_px.round() / pixels_per_point;
+    if stroke_px > 0.0 {
+        painter.circle_stroke(
+            center,
+            radius,
+            egui::Stroke::new(stroke_px / pixels_per_point, color(fill)),
+        );
+    } else {
+        painter.circle_filled(center, radius, color(fill));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_text(
+    painter: &egui::Painter,
+    pixels_per_point: f32,
+    pos_px: PointPx,
+    text: &str,
+    font: FontId,
+    size_px: f32,
+    fill: Color,
+    anchor: Anchor,
+) {
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        font_id(font, size_px, pixels_per_point),
+        color(fill),
+    );
+    let top_left = pos(pos_px, pixels_per_point) + anchor_offset(anchor, galley.size());
+    painter.galley(top_left, galley, color(fill));
+}
+
+fn paint_line(
+    painter: &egui::Painter,
+    pixels_per_point: f32,
+    from_px: PointPx,
+    to_px: PointPx,
+    width_px: f32,
+    fill: Color,
+) {
+    painter.line_segment(
+        [
+            snapped_pos(from_px, pixels_per_point),
+            snapped_pos(to_px, pixels_per_point),
+        ],
+        egui::Stroke::new(width_px / pixels_per_point, color(fill)),
+    );
+}
+
+/// Paint an overlay scene without a media store.
+///
+/// The overlay display list is intentionally small: transparent clears, gaze
+/// dots and short trails. Images and blurred images are not available; they
+/// are skipped rather than blocking the overlay thread.
+pub(crate) fn paint_overlay(
+    painter: &egui::Painter,
+    clip_rect: egui::Rect,
+    pixels_per_point: f32,
+    scene: &Scene,
+) {
+    for command in scene.commands() {
+        match command {
+            DrawCommand::Clear(fill) => paint_clear(painter, clip_rect, *fill),
+            DrawCommand::Circle {
+                center_px,
+                radius_px,
+                stroke_px,
+                color: fill,
+            } => paint_circle(
+                painter,
+                pixels_per_point,
+                *center_px,
+                *radius_px,
+                *stroke_px,
+                *fill,
+            ),
+            DrawCommand::Text {
+                pos_px,
+                text,
+                font,
+                size_px,
+                color: fill,
+                anchor,
+            } => paint_text(
+                painter,
+                pixels_per_point,
+                *pos_px,
+                text,
+                *font,
+                *size_px,
+                *fill,
+                *anchor,
+            ),
+            DrawCommand::Line {
+                from_px,
+                to_px,
+                width_px,
+                color: fill,
+            } => paint_line(
+                painter,
+                pixels_per_point,
+                *from_px,
+                *to_px,
+                *width_px,
+                *fill,
+            ),
+            DrawCommand::Image { .. } | DrawCommand::BlurredImage { .. } => {}
+        }
+    }
+}
+
 /// Paint a scene into `clip_rect`.
 pub(crate) fn paint_scene(
     painter: &egui::Painter,
@@ -84,7 +208,7 @@ pub(crate) fn paint_scene(
     for command in scene.commands() {
         match command {
             DrawCommand::Clear(fill) => {
-                painter.rect_filled(clip_rect, 0.0, color(*fill));
+                paint_clear(painter, clip_rect, *fill);
             }
             DrawCommand::Image {
                 media: id,
@@ -122,17 +246,14 @@ pub(crate) fn paint_scene(
                 stroke_px,
                 color: fill,
             } => {
-                let center = snapped_pos(*center_px, pixels_per_point);
-                let radius = radius_px.round() / pixels_per_point;
-                if *stroke_px > 0.0 {
-                    painter.circle_stroke(
-                        center,
-                        radius,
-                        egui::Stroke::new(stroke_px / pixels_per_point, color(*fill)),
-                    );
-                } else {
-                    painter.circle_filled(center, radius, color(*fill));
-                }
+                paint_circle(
+                    painter,
+                    pixels_per_point,
+                    *center_px,
+                    *radius_px,
+                    *stroke_px,
+                    *fill,
+                );
             }
             DrawCommand::Text {
                 pos_px,
@@ -142,14 +263,16 @@ pub(crate) fn paint_scene(
                 color: fill,
                 anchor,
             } => {
-                let galley = painter.layout_no_wrap(
-                    text.clone(),
-                    font_id(*font, *size_px, pixels_per_point),
-                    color(*fill),
+                paint_text(
+                    painter,
+                    pixels_per_point,
+                    *pos_px,
+                    text,
+                    *font,
+                    *size_px,
+                    *fill,
+                    *anchor,
                 );
-                let top_left =
-                    pos(*pos_px, pixels_per_point) + anchor_offset(*anchor, galley.size());
-                painter.galley(top_left, galley, color(*fill));
             }
             DrawCommand::Line {
                 from_px,
@@ -157,12 +280,13 @@ pub(crate) fn paint_scene(
                 width_px,
                 color: fill,
             } => {
-                painter.line_segment(
-                    [
-                        snapped_pos(*from_px, pixels_per_point),
-                        snapped_pos(*to_px, pixels_per_point),
-                    ],
-                    egui::Stroke::new(width_px / pixels_per_point, color(*fill)),
+                paint_line(
+                    painter,
+                    pixels_per_point,
+                    *from_px,
+                    *to_px,
+                    *width_px,
+                    *fill,
                 );
             }
         }

@@ -4025,6 +4025,7 @@ dependencies = [
  "yet-console",
  "yet-core",
  "yet-media",
+ "yet-overlay",
  "yet-present",
  "yet-present-egui",
 ]
@@ -4050,8 +4051,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml",
+ "yet-gaze",
  "yet-present",
 ]
+
+[[package]]
+name = "yet-gaze"
+version = "0.1.0"
 
 [[package]]
 name = "yet-media"
@@ -4061,6 +4067,14 @@ dependencies = [
  "image",
  "rodio",
  "tempfile",
+ "yet-present",
+]
+
+[[package]]
+name = "yet-overlay"
+version = "0.1.0"
+dependencies = [
+ "smithay-client-toolkit",
  "yet-present",
 ]
 

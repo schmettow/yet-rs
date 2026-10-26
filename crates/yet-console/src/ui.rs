@@ -603,6 +603,22 @@ impl ConsoleUi {
         if !can_configure {
             ui.label("Presenter settings are locked while the session is active.");
         }
+        ui.horizontal_wrapped(|ui| {
+            ui.add_enabled_ui(state.overlay.available, |ui| {
+                ui.checkbox(&mut state.overlay.enabled, "Gaze overlay");
+            });
+            if state.overlay.available {
+                ui.label(if state.overlay.enabled {
+                    "click-through"
+                } else {
+                    "off"
+                });
+            } else if let Some(error) = &state.overlay.error {
+                ui.colored_label(egui::Color32::YELLOW, format!("Overlay: {error}"));
+            } else {
+                ui.label("Overlay off");
+            }
+        });
         if state.presenter_monitor == state.console_monitor {
             ui.colored_label(
                 egui::Color32::YELLOW,

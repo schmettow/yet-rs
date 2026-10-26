@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use yet_core::{quad_brightness, rec601_luma, EyeRegion, FrameError, GrayFrame, QuadBrightness};
+use yet_core::{
+    quad_brightness, rec601_luma, CameraFrame, CameraRole, EyeRegion, FeatureExtractor, FrameError,
+    FrameSet, GrayFrame, QuadBrightness, QuadExtractor,
+};
+use yet_present::SessionTime;
 
 fn frame(width: u32, height: u32, data: Vec<u8>) -> GrayFrame {
     GrayFrame::new(width, height, data).unwrap()
@@ -123,4 +127,32 @@ fn rec601_luma_matches_opencv_bgr2gray() {
     assert_eq!(rec601_luma(0, 0, 255), 29);
     assert_eq!(rec601_luma(0, 0, 0), 0);
     assert_eq!(rec601_luma(255, 255, 255), 255);
+}
+
+#[test]
+fn the_quad_extractor_reads_the_left_eye_frame() {
+    let frame = frame(4, 4, (0..16).collect());
+    let frames = [CameraFrame {
+        role: CameraRole::EyeLeft,
+        captured_at: SessionTime::ZERO,
+        frame: &frame,
+    }];
+    let set = FrameSet {
+        frames: &frames,
+        reference_at: SessionTime::ZERO,
+    };
+    let extractor = QuadExtractor::new(CameraRole::EyeLeft, EyeRegion::new(0, 0, 4, 4));
+
+    let expected = quad_brightness(&frame, EyeRegion::new(0, 0, 4, 4))
+        .unwrap()
+        .to_feature_vector();
+    assert_eq!(extractor.layout().name, "quad");
+    assert_eq!(extractor.layout().len(), 4);
+    assert_eq!(extractor.extract(&set), Some(expected));
+
+    let empty = FrameSet {
+        frames: &[],
+        reference_at: SessionTime::ZERO,
+    };
+    assert_eq!(extractor.extract(&empty), None);
 }

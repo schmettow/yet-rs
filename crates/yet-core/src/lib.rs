@@ -19,6 +19,7 @@ pub mod data;
 pub mod engine;
 pub mod experiment;
 pub mod layout;
+pub mod overlay;
 pub mod plan;
 mod rng;
 pub mod tracking;
@@ -31,8 +32,8 @@ pub use calibration::{
     TARGET_RADIUS_PX, TARGET_STROKE_PX,
 };
 pub use camera::{
-    validate_eye_region, Camera, CameraError, CameraInfo, CameraStats, CaptureConfig, PixelFormat,
-    PreferredFormat,
+    validate_eye_region, Camera, CameraError, CameraFrame, CameraInfo, CameraRig, CameraRole,
+    CameraStats, CaptureConfig, FrameSet, PixelFormat, PreferredFormat,
 };
 pub use clock::{Clock, TestClock};
 pub use config::{
@@ -47,11 +48,15 @@ pub use engine::{
 pub use experiment::{
     Block, BlockId, Experiment, ExperimentError, Stimulus, StimulusId, StimulusKind, Trial,
 };
+pub use overlay::{gaze_scene, GazeMarkerStyle};
 pub use plan::{PlannedBlock, PlannedTrial, SessionPlan};
 pub use tracking::{
-    quad_brightness, rec601_luma, Calibration, CalibrationBuffer, CalibrationReport,
-    CalibrationSample, EyeRegion, FrameError, GazeModel, GazePoint, GrayFrame, LinearGazeModel,
-    LinearParameters, ModelError, QuadBrightness, MIN_CALIBRATION_SAMPLES,
+    minimum_samples, quad_brightness, rec601_luma, BodyPose, Calibration, CalibrationBuffer,
+    CalibrationReport, CalibrationSample, EyeRegion, FeatureExtractor, FeatureLayout,
+    FeatureVector, FrameError, GazeInput, GazeModel, GazePoint, GazePredictor, GazeTrainer,
+    GrayFrame, HeadPose, LinearGazeModel, LinearParameters, LinearPredictor, ModelError,
+    ModelParameters, PoseSample, PredictionError, QuadBrightness, QuadExtractor, MAX_FEATURES,
+    MIN_CALIBRATION_SAMPLES, MODEL_FORMAT_VERSION, OCTA_LAYOUT, QUAD_LAYOUT,
 };
 
 /// An experiment directory loaded into configuration, definition and plan.

@@ -2,7 +2,10 @@
 
 //! A calibration sample buffer and error metric.
 
-use super::{CalibrationSample, GazeModel, ModelError};
+use super::{
+    CalibrationSample, GazeInput, GazeModel, GazePredictor, GazeTrainer, ModelError,
+    PredictionError,
+};
 
 /// Calibration observations collected for one or more fits.
 ///
@@ -55,7 +58,7 @@ impl CalibrationBuffer {
 
     /// Fit `model` to every buffered observation.
     pub fn fit(&self, model: &mut dyn GazeModel) -> Result<(), ModelError> {
-        model.fit(&self.samples)
+        GazeTrainer::fit(model, &self.samples)
     }
 
     /// Root-mean-square Euclidean calibration error, in target units.
@@ -69,7 +72,14 @@ impl CalibrationBuffer {
 
         let mut squared_error = 0.0_f64;
         for sample in &self.samples {
-            let predicted = model.predict(sample.features)?;
+            let predicted = GazePredictor::predict(
+                model,
+                GazeInput::new(sample.features.as_slice(), sample.pose.as_ref()),
+            )
+            .map_err(|error| match error {
+                PredictionError::NotFitted => ModelError::NotFitted,
+                other => ModelError::Prediction(other),
+            })?;
             let dx = f64::from(predicted.x) - f64::from(sample.target.x);
             let dy = f64::from(predicted.y) - f64::from(sample.target.y);
             squared_error += dx * dx + dy * dy;
