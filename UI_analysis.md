@@ -574,7 +574,7 @@ below):
 
 **Recommendation:** implement `EguiOverlay` (Windows/macOS) and `LayerShellOverlay` (KDE/wlroots/Sway Wayland, dedicated event-loop thread) behind an `OverlayBackend` trait. Native X11 is best effort and deprecated. **Do not build `XwaylandOverlay` or a GNOME Shell extension.**
 
-**Decision 2026-10-25 (owner):** GNOME-on-Wayland incompatibility is accepted. The strategic overlay path is native layer-shell on KDE, wlroots/Sway, and a **naked wlroots compositor** (Sway/cage) for a quiet lab machine with no panel, background or notification daemon. `auto` disables the overlay with a notice when no backend is available; an explicit `xwayland` mode returns a clear unsupported error.
+**Decision 2026-10-25 (owner):** GNOME-on-Wayland incompatibility is accepted. The strategic overlay path is native layer-shell on KDE, wlroots/Sway, and a **naked wlroots compositor** (Sway/cage) for a quiet lab machine with no panel, background or notification daemon. On an X11 session, `auto` selects the best-effort egui overlay and emits a warning; an explicit `xwayland` mode returns a clear unsupported error.
 
 ---
 

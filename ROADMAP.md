@@ -90,11 +90,11 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - **S9 Overlay core** — implemented: the new `yet-overlay` crate with a
   layer-shell thread (`smithay-client-toolkit` + calloop + `wl_shm`), the
   `EguiOverlay` transparent viewport, `gaze_scene` composition, backend
-  selection (`auto`/`off`/`egui`/`layer-shell`, explicit `xwayland` error), the
-  console toggle, and `yet-app overlay` for manual checks. 250 tests pass. X11
-  is best effort and did not composite correctly on the local KWin session;
-  GNOME is unsupported; the Windows/macOS and real KDE/Sway/naked visual matrix
-  remains.
+  selection (`auto`/`off`/`egui`/`layer-shell`, explicit `xwayland` error; X11
+  auto-selects best-effort egui with a warning), the console toggle, and
+  `yet-app overlay` for manual checks. 254 tests pass. X11 did not composite
+  correctly on the local KWin session; GNOME is unsupported; the Windows/macOS
+  and real KDE/Sway/naked visual matrix remains.
 - **Next:** S10 naked-compositor profile and platform parity (Sway config,
   Windows/macOS matrix, GNOME limitation docs).
 

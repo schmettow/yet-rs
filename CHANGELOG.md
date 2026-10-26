@@ -87,9 +87,11 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   gaze point and backend errors; the presenter panel shows the toggle and
   click-through state.
 - `yet-app`: overlay backend selection (`auto`, `off`, `egui`, `layer-shell`;
-  explicit `xwayland` returns the GNOME error), controller-side layer-shell
-  updates at gaze rate, console-side egui updates at 30 Hz, and a
-  `RunError::Overlay` path.
+  explicit `xwayland` returns the GNOME error). `auto` uses layer-shell on
+  Wayland, egui on Windows/macOS, and the best-effort egui viewport on X11 with
+  a warning (detected through `XDG_SESSION_TYPE`, with `DISPLAY` as a fallback).
+  Controller-side layer-shell updates at gaze rate, console-side egui updates at
+  30 Hz, and a `RunError::Overlay` path.
 - `yet-app`: `yet-app overlay <experiment-dir> [--seconds <s>]` animates a gaze
   marker over the desktop for manual overlay validation.
 - `docs/naked-compositor.md` and `tools/sway-yet.conf`: a minimal Sway profile
@@ -202,7 +204,8 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - The overlay strategy changed: **GNOME Wayland is explicitly unsupported**
   (decision 18). `presenter.overlay = "xwayland"` now returns a clear error;
   layer-shell on KDE/wlroots/Sway or a naked compositor is the supported path.
-  `auto` disables the overlay with a notice instead of failing the session.
+  `auto` disables the overlay with a notice when layer-shell is unavailable, and
+  falls back to the best-effort egui overlay on an X11 session with a warning.
 - `config.toml` `[overlay] monitor` must equal `display.presenter_monitor` in
   v1. An explicit mismatch is an error; `auto` disables the overlay and logs it.
   The overlay is hidden when the presenter is not fullscreen or the monitor

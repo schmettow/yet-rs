@@ -139,7 +139,7 @@ cargo test -p yet-app --all-features --lib -- --ignored the_yet_camera_delivers_
 
 cargo run -p yet-app -- plan examples/demo
 cargo run -p yet-app -- media examples/media-demo
-# Overlay check; on X11 set presenter.overlay = "egui" first.
+# Overlay check; X11 auto-selects the best-effort egui path.
 cargo run --release -p yet-app -- overlay examples/demo-gui --seconds 10
 cargo run --release -p yet-app -- run examples/demo-gui --participant demo01
 cargo run --release -p yet-app -- run examples/media-demo --participant demo01
@@ -304,8 +304,9 @@ latest gaze point as a small white-haloed red dot and never receives input.
 | Linux X11 | `egui` (best effort) | May not composite and may take focus; X11 is deprecated |
 
 `auto` selects layer-shell on Wayland, the egui viewport on Windows/macOS, and
-no overlay on X11. If no backend is available, `auto` logs a warning and the
-session still runs. An explicit backend that cannot work is a startup error.
+the best-effort egui overlay on X11 with a warning. If no backend is available,
+the session still runs; an explicit backend that cannot work is a startup
+error.
 
 Layer-shell selects outputs in the compositor's order, which is not guaranteed
 to match eframe's monitor index. On a multi-output system, start with
@@ -335,9 +336,10 @@ cargo run --release -p yet-app -- overlay examples/demo-gui --seconds 10
 ```
 
 On Windows/macOS and layer-shell Wayland the marker should follow a circle and
-clicks should pass through to the window below. On X11 set
-`presenter.overlay = "egui"` explicitly; the compositor may not show the window
-content and `with_active(false)` is not supported there.
+clicks should pass through to the window below. On X11 `auto` selects the
+best-effort egui overlay and prints the warning shown above; it may not
+composite and `with_active(false)` is not supported there. An explicit
+`presenter.overlay = "egui"` gives the same path without the automatic fallback.
 
 During a session, the console has a **Gaze overlay** checkbox. The controller
 feeds the layer-shell backend at gaze rate; the console viewport repaints at

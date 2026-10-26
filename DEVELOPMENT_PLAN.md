@@ -4,7 +4,7 @@
 **Basis:** `UI_analysis.md`, `CV_analysis.md`, and the prior attempt in `Yex/`.
 **Style:** milestone-driven, sprint-based, test-first.
 
-> **Implementation snapshot (2026-10-25).** S0–S9 are implemented: 250
+> **Implementation snapshot (2026-10-25).** S0–S9 are implemented: 254
 > workspace tests pass, with three ignored hardware tests (camera, tracker,
 > audio) that pass on the lab machine. S7's pilot (UX-4), parts of the M3/M5
 > gates, and the Windows/macOS/GNOME runtime matrix remain open. The evolution
@@ -1052,7 +1052,7 @@ references only.
 **Gate:** R11 partially met; GNOME documented; no regression in presenter timing.
 
 **Implementation note (S9, 2026-10-25):** OVL-1 to OVL-4 are implemented; OVL-5
-is partially measured. 250 workspace tests pass (three ignored hardware tests).
+is partially measured. 254 workspace tests pass (three ignored hardware tests).
 
 - **`yet-overlay`:** a new crate with a software `Argb8888` rasterizer
   (`Clear`/`Circle`/`Line`, alpha blending) and `LayerShellOverlay`, which runs
@@ -1063,9 +1063,11 @@ is partially measured. 250 workspace tests pass (three ignored hardware tests).
   topmost, borderless, no-taskbar, no-activate and mouse-passthrough settings.
   It is selected on Windows/macOS and is best effort on X11.
 - **Selection:** `auto` picks layer-shell on Wayland, egui on Windows/macOS, and
-  disables the overlay on X11 with a notice. `egui`, `layer-shell` and `off` are
-  explicit; `xwayland` returns the documented GNOME error. A mismatched
-  `overlay.monitor` is an error for explicit modes and disables `auto`.
+  the best-effort egui viewport on an X11 session (detected through
+  `XDG_SESSION_TYPE`, with `DISPLAY` as a fallback) with a warning. `egui`,
+  `layer-shell` and `off` are explicit; `xwayland` returns the documented GNOME
+  error. A mismatched `overlay.monitor` is an error for explicit modes and
+  disables `auto`.
 - **Scene and wire-up:** `yet_core::gaze_scene` maps presenter pixels to the
   overlay and emits a transparent clear plus a white halo and red dot. The
   controller feeds the layer-shell backend at gaze rate; the console viewport
@@ -1285,7 +1287,7 @@ motion and the glance fallback boundary. Do not add these budgets to the v1 gate
 ## 13. First action
 
 Sprints 0–9 are complete, including the notebook console layout, media/audio and
-the overlay core. 250 tests pass; three ignored hardware tests pass on the lab
+the overlay core. 254 tests pass; three ignored hardware tests pass on the lab
 machine. The next v1 sprint is **S10 Naked compositor and platform parity**;
 decision 12 and decision 18 are closed.
 

@@ -2,8 +2,9 @@
 
 //! Overlay backend selection.
 //!
-//! `auto` never prevents a session from starting: if the platform backend is
-//! unavailable it returns `Off` plus a notice. An explicit mode that cannot be
+//! `auto` never prevents a session from starting: on X11 it falls back to the
+//! best-effort egui overlay with a warning, and on Wayland it returns `Off` plus
+//! a notice if layer-shell is unavailable. An explicit mode that cannot be
 //! satisfied is an error, so a configuration mistake is visible.
 
 use std::env;
@@ -56,8 +57,48 @@ pub struct OverlaySelection {
     pub notice: Option<String>,
 }
 
+/// Session information used to choose a backend.
+#[derive(Clone, Debug, Default)]
+struct SessionInfo {
+    session_type: Option<String>,
+    wayland_display: bool,
+    x11_display: bool,
+}
+
+impl SessionInfo {
+    fn detect() -> Self {
+        Self {
+            session_type: env::var("XDG_SESSION_TYPE").ok(),
+            wayland_display: env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty()),
+            x11_display: env::var_os("DISPLAY").is_some_and(|value| !value.is_empty()),
+        }
+    }
+
+    /// An explicit X11 session, or an untyped session with an X11 display and
+    /// no Wayland socket.
+    fn is_x11(&self) -> bool {
+        self.session_type.as_deref() == Some("x11")
+            || (self.session_type.is_none() && self.x11_display && !self.wayland_display)
+    }
+
+    fn is_wayland(&self) -> bool {
+        cfg!(target_os = "linux")
+            && (self.wayland_display || self.session_type.as_deref() == Some("wayland"))
+    }
+
+    fn x11_warning(&self) -> String {
+        "X11 session detected; using the best-effort egui overlay. X11 is deprecated: \
+         transparency, z-order and click-through may not work."
+            .to_owned()
+    }
+}
+
 /// Select the overlay backend for the configuration.
 pub fn open(config: &AppConfig) -> Result<OverlaySelection, OverlayError> {
+    open_with(config, &SessionInfo::detect())
+}
+
+fn open_with(config: &AppConfig, session: &SessionInfo) -> Result<OverlaySelection, OverlayError> {
     let presenter_monitor = config.display.presenter_monitor;
     let monitor = config.overlay.monitor.unwrap_or(presenter_monitor);
     let mode = config.presenter.overlay;
@@ -87,14 +128,14 @@ pub fn open(config: &AppConfig) -> Result<OverlaySelection, OverlayError> {
         };
     }
 
-    let wayland = cfg!(target_os = "linux")
-        && env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
+    let x11 = session.is_x11();
+    let wayland = session.is_wayland();
 
     match mode {
         OverlayMode::Off => unreachable!("handled above"),
         OverlayMode::Xwayland => Err(xwayland_unsupported()),
         OverlayMode::Egui => {
-            if wayland {
+            if wayland && !x11 {
                 let message = "the egui overlay targets Windows/macOS; use \
                                presenter.overlay = \"layer-shell\" on Wayland"
                     .to_owned();
@@ -107,28 +148,45 @@ pub fn open(config: &AppConfig) -> Result<OverlaySelection, OverlayError> {
                 Ok(OverlaySelection {
                     host: OverlayHost::Egui(EguiOverlay::new(monitor)),
                     monitor,
-                    notice: (!cfg!(any(target_os = "windows", target_os = "macos"))).then(|| {
-                        "egui overlay on X11 is best effort; X11 is deprecated".to_owned()
-                    }),
+                    notice: if x11 {
+                        Some(session.x11_warning())
+                    } else if !cfg!(any(target_os = "windows", target_os = "macos")) {
+                        Some("egui overlay on X11 is best effort; X11 is deprecated".to_owned())
+                    } else {
+                        None
+                    },
                 })
             }
         }
         OverlayMode::LayerShell | OverlayMode::Auto => {
             #[cfg(target_os = "linux")]
             {
+                if x11 {
+                    if mode == OverlayMode::LayerShell {
+                        return Err(OverlayError::Unavailable(
+                            "layer-shell requires a Wayland session, but XDG_SESSION_TYPE=x11; \
+                             use presenter.overlay = \"egui\" for the best-effort X11 path"
+                                .to_owned(),
+                        ));
+                    }
+                    return Ok(OverlaySelection {
+                        host: OverlayHost::Egui(EguiOverlay::new(monitor)),
+                        monitor,
+                        notice: Some(session.x11_warning()),
+                    });
+                }
                 if !wayland {
                     if mode == OverlayMode::LayerShell {
                         return Err(OverlayError::Unavailable(
-                            "layer-shell requires WAYLAND_DISPLAY; start a Wayland compositor \
-                             (KDE, Sway/wlroots, or a naked compositor)"
+                            "layer-shell requires a Wayland session (WAYLAND_DISPLAY or \
+                             XDG_SESSION_TYPE=wayland)"
                                 .to_owned(),
                         ));
                     }
                     return Ok(off_with_notice(
                         monitor,
-                        "X11 has no supported overlay backend; use a Wayland layer-shell \
-                         compositor or set presenter.overlay = \"egui\" to try the \
-                         best-effort X11 path"
+                        "no Wayland session detected; set presenter.overlay = \"egui\" to try \
+                         the best-effort X11 path"
                             .to_owned(),
                     ));
                 }
@@ -190,7 +248,7 @@ pub fn run_overlay(options: OverlayOptions<'_>) -> Result<(), RunError> {
     let loaded = yet_core::load_experiment(options.experiment_dir)?;
     let selection = open(&loaded.config)?;
     if let Some(notice) = &selection.notice {
-        eprintln!("overlay: {notice}");
+        eprintln!("overlay warning: {notice}");
     }
 
     let geometry = ScreenGeometry::new(
@@ -320,7 +378,7 @@ fn xwayland_unsupported() -> OverlayError {
 
 #[cfg(test)]
 mod tests {
-    use super::{open, OverlayHost};
+    use super::{open_with, OverlayHost, SessionInfo};
     use yet_core::{AppConfig, OverlayMode};
 
     fn config(mode: OverlayMode, overlay_monitor: Option<usize>) -> AppConfig {
@@ -342,9 +400,22 @@ mod tests {
         config
     }
 
+    fn headless() -> SessionInfo {
+        SessionInfo::default()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn x11() -> SessionInfo {
+        SessionInfo {
+            session_type: Some("x11".to_owned()),
+            wayland_display: false,
+            x11_display: true,
+        }
+    }
+
     #[test]
     fn off_selects_no_backend() {
-        let selection = open(&config(OverlayMode::Off, None)).unwrap();
+        let selection = open_with(&config(OverlayMode::Off, None), &headless()).unwrap();
 
         assert!(!selection.host.is_available());
         assert_eq!(selection.host.label(), "off");
@@ -353,7 +424,7 @@ mod tests {
 
     #[test]
     fn a_mismatched_overlay_monitor_is_an_error_when_explicit() {
-        let error = match open(&config(OverlayMode::Egui, Some(0))) {
+        let error = match open_with(&config(OverlayMode::Egui, Some(0)), &headless()) {
             Err(error) => error,
             Ok(_) => panic!("expected an error"),
         };
@@ -363,7 +434,7 @@ mod tests {
 
     #[test]
     fn a_mismatched_overlay_monitor_disables_auto_with_a_notice() {
-        let selection = open(&config(OverlayMode::Auto, Some(0))).unwrap();
+        let selection = open_with(&config(OverlayMode::Auto, Some(0)), &headless()).unwrap();
 
         assert!(matches!(selection.host, OverlayHost::Off));
         assert!(selection.notice.unwrap().contains("overlay.monitor"));
@@ -371,11 +442,58 @@ mod tests {
 
     #[test]
     fn xwayland_is_always_unsupported() {
-        let error = match open(&config(OverlayMode::Xwayland, None)) {
+        let error = match open_with(&config(OverlayMode::Xwayland, None), &headless()) {
             Err(error) => error,
             Ok(_) => panic!("expected an error"),
         };
 
         assert!(error.to_string().contains("GNOME"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn auto_on_x11_uses_the_best_effort_egui_overlay() {
+        let selection = open_with(&config(OverlayMode::Auto, None), &x11()).unwrap();
+
+        assert!(matches!(selection.host, OverlayHost::Egui(_)));
+        assert!(selection.notice.unwrap().contains("best-effort"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_takes_precedence_over_a_wayland_socket() {
+        let mut session = x11();
+        session.wayland_display = true;
+
+        let selection = open_with(&config(OverlayMode::Auto, None), &session).unwrap();
+
+        assert!(matches!(selection.host, OverlayHost::Egui(_)));
+        assert!(selection.notice.unwrap().contains("X11"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_untyped_x11_display_uses_best_effort() {
+        let session = SessionInfo {
+            session_type: None,
+            wayland_display: false,
+            x11_display: true,
+        };
+
+        let selection = open_with(&config(OverlayMode::Auto, None), &session).unwrap();
+
+        assert!(matches!(selection.host, OverlayHost::Egui(_)));
+        assert!(selection.notice.unwrap().contains("X11"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_layer_shell_on_x11_is_an_error() {
+        let error = match open_with(&config(OverlayMode::LayerShell, None), &x11()) {
+            Err(error) => error,
+            Ok(_) => panic!("expected an error"),
+        };
+
+        assert!(error.to_string().contains("XDG_SESSION_TYPE=x11"));
     }
 }
