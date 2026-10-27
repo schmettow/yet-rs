@@ -7,6 +7,29 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ## [Unreleased]
 
+### Changed
+
+- **Workspace reorganized from eight crates into three publishable libraries
+  and one binary**, with a strict dependency direction
+  `yet-zero -> yet-egui -> yet-stim -> yet-core`.
+- `yet-core` is now `#![no_std]` with `alloc`. It keeps only the abstract gaze
+  essentials (time/clock, camera roles and `FrameSet`, grayscale frames and
+  regions, Quadbright features, predictor and parameter block). The reference
+  trainer and calibration buffer moved behind the non-default `yet-zero`
+  feature; `libm` supplies the RMSE square root without `std`.
+- `yet-stim` is the new UI-free home for the engine, experiment/config/plan
+  model, CSV sink, calibration flow, media/audio/playback, presenter and
+  overlay protocols, the recording presenter and the Wayland layer-shell
+  overlay.
+- `yet-egui` is the new home for the eframe presenter, the experimenter console
+  and `EguiOverlay`. It depends on `yet-stim` and never on the binary crate.
+- `yet-zero` replaces the `yet-app` binary and owns camera capture, the session
+  driver, the headless runner, the CLI and backend selection. It keeps a
+  library target for tests only and is `publish = false`.
+- `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
+  `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
+  adapters moved to `yet-zero::camera`.
+
 ### Added
 
 - Cargo workspace with the `yet-present`, `yet-core` and `yet-app` crates.

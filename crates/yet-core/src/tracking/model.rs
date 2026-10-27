@@ -4,7 +4,7 @@
 //!
 //! Training is host-side and may use `nalgebra`; prediction is a plain
 //! fixed-size linear combination. The deployable [`ModelParameters`] block is
-//! `f32`-only and can be consumed by [`yet_gaze::LinearPredictor`] on a
+//! `f32`-only and can be consumed by [`crate::gaze::LinearPredictor`] on a
 //! microcontroller. The v1 implementation remains a four-feature glance model,
 //! but the solver and parameters are feature-count aware.
 

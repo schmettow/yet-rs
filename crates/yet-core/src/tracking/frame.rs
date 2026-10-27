@@ -6,6 +6,7 @@
 //! padding. Camera adapters convert their native format at the boundary; the
 //! tracker never sees YUYV, MJPEG or an `image` buffer.
 
+use alloc::vec::Vec;
 use thiserror::Error;
 
 /// Errors from constructing a [`GrayFrame`].
@@ -117,6 +118,18 @@ impl GrayFrame {
             data,
         })
     }
+}
+
+/// Whether a normalized eye region is finite and inside the unit square.
+pub fn validate_eye_region(normalized: [f32; 4]) -> bool {
+    let [x, y, width, height] = normalized;
+    [x, y, width, height].iter().all(|value| value.is_finite())
+        && x >= 0.0
+        && y >= 0.0
+        && width > 0.0
+        && height > 0.0
+        && x + width <= 1.0
+        && y + height <= 1.0
 }
 
 /// A rectangular eye region in frame pixels.

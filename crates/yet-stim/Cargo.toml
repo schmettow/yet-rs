@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[package]
+name = "yet-stim"
+description = "Stimulus, media and presentation protocols for yet-rs (no UI framework)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+yet-core = { workspace = true, features = ["yet-zero"] }
+thiserror.workspace = true
+serde.workspace = true
+toml.workspace = true
+csv.workspace = true
+image.workspace = true
+hound.workspace = true
+rodio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay-client-toolkit = { version = "0.19.2", default-features = false, features = [
+    "calloop",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

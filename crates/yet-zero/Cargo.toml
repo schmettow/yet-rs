@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[package]
+name = "yet-zero"
+description = "Yet-UI: the eye-tracking experiment application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "yet_zero"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yet-zero"
+path = "src/main.rs"
+
+[dependencies]
+yet-core = { workspace = true, features = ["yet-zero"] }
+yet-stim.workspace = true
+yet-egui.workspace = true
+thiserror.workspace = true
+eframe.workspace = true
+image.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linuxvideo = "0.3.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

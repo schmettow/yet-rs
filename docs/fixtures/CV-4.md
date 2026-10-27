@@ -44,10 +44,10 @@ identical numbers; only the solver differs.
 ## 2. Adding recorded eye-ROI frames
 
 Preferred format is raw 8-bit grayscale (`.gray`), because no image decoder is
-needed in the parity test. `yet-app camera` can write exactly this file:
+needed in the parity test. `yet-zero camera` can write exactly this file:
 
 ```sh
-cargo run --release -p yet-app -- camera examples/demo --save-roi /tmp/eye.gray
+cargo run --release -p yet-zero -- camera examples/demo --save-roi /tmp/eye.gray
 ```
 
 The command prints the negotiated frame size, the ROI rectangle and the

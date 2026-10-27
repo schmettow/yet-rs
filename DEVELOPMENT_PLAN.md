@@ -1,17 +1,18 @@
 # Development Plan — yet-rs
 
-**Status:** Living plan · v1 implemented through S8.5 (S9 next) · future-sensing guardrails implemented 2026-10-25
+**Status:** Living plan · v1 implemented through S9 · workspace reorganized 2026-10-26
 **Basis:** `UI_analysis.md`, `CV_analysis.md`, and the prior attempt in `Yex/`.
 **Style:** milestone-driven, sprint-based, test-first.
 
-> **Implementation snapshot (2026-10-25).** S0–S9 are implemented: 254
-> workspace tests pass, with three ignored hardware tests (camera, tracker,
-> audio) that pass on the lab machine. S7's pilot (UX-4), parts of the M3/M5
-> gates, and the Windows/macOS/GNOME runtime matrix remain open. The evolution
-> requirements E1–E3 in §0.2 are **guardrails, not v1 scope**: no Octabright,
-> world camera, motion sensor or MCU runtime is built in v1. S8.5 added the
-> portable `yet-gaze` crate and the role/pose types; S9 added the layer-shell
-> and egui overlay backends.
+> **Implementation snapshot (2026-10-26).** S0–S9 are implemented. The workspace
+> was reorganized into `yet-core`, `yet-stim`, `yet-egui` and `yet-zero` after
+> S9; 254 workspace tests pass, with three ignored hardware tests (camera,
+> tracker, audio) that pass on the lab machine. The reorganization changed crate
+> boundaries and imports only: behavior, timing, CSV schema and the model
+> equation are unchanged. S7's pilot (UX-4), parts of the M3/M5 gates, S10
+> overlay parity and the Windows/macOS/GNOME runtime matrix remain open. The
+> evolution requirements E1–E3 in §0.2 are **guardrails, not v1 scope**: no
+> Octabright, world camera, motion sensor or MCU runtime is built in v1.
 
 ---
 
@@ -55,12 +56,13 @@ family; Quadbright compression means reducing the frame to a **2×2 tile**; the
 internal representation may become **polar** with head movement, but the output
 stays **pixels** because fixed AOIs are defined in screen pixels.
 
-### 0.3 Plan health check (2026-10-25)
+### 0.3 Plan health check (2026-10-26)
 
 **On target:** the v1 scope is intact. S0–S9 delivered the workspace, spikes,
 experiment/CSV model, pure scheduler, CV parity, camera and calibration,
 presenter/console, calibration UX, media/audio, the seam pass and the overlay
-core. The current test suite and the manual media run match the S8 note. The
+core. The workspace is now organized for publication as three libraries plus a
+binary, and `yet-core` builds for Cortex-M without the default feature set. The
 remaining work is S10–S11.
 
 **Open gates, not plan failures:**
@@ -79,7 +81,7 @@ not a behavior change:
 | Gap before S8.5 | Resolution |
 |---|---|
 | `QuadBrightness` is a four-field struct, `CalibrationSample` stores it, and `LinearGazeModel` hard-codes four coefficients | `FeatureVector` + `FeatureLayout`, and a feature-count-aware fit; `QuadBrightness` remains a convenience for the v1 path |
-| `GazeModel` combines `fit` and `predict`; `nalgebra` and `f64` sit in the same module | `yet-gaze` is `#![no_std]` with `GazePredictor` and `ModelParameters`; `GazeTrainer` stays on the host |
+| `GazeModel` combines `fit` and `predict`; `nalgebra` and `f64` sit in the same module | `yet-core` (feature `yet-zero`) has `GazeTrainer`; the portable `GazePredictor`/`ModelParameters` path is in the always-built `yet-core` surface |
 | `Tracker` and `config.toml` assume exactly one camera; there is no role, frame-set timestamp or rig | `CameraRole`, `CameraFrame`, `FrameSet` and `CameraRig`; the v1 rig still has one camera |
 | There is no `GazeInput`, `PoseSample` or motion-source seam | `GazeInput { features, pose }`, `PoseSample`, `HeadPose` and `BodyPose` exist; no sensor is wired |
 
@@ -159,6 +161,9 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D20** | **Glance is the v1 model; gaze is the future pipeline.** Keep `LinearGazeModel` as the v1 glance implementation, but new APIs take a `GazeInput` that can grow a pose field without changing call sites. | E3, §3.4 |
 | **D21** | **Portable prediction is `no_std`-ready by construction.** The prediction path uses `f32`/fixed-point-capable arithmetic, fixed-capacity buffers and versioned plain parameters; host fitting may use `f64`, `alloc` and `nalgebra`. | E1, §3.4 |
 | **D22** | **GNOME incompatibility is accepted.** The overlay targets layer-shell compositors and a naked wlroots compositor; no XWayland or GNOME Shell extension is built. A backend that cannot work returns `OverlayError::Unavailable` with the supported alternatives. | Decision 18; UI §7.5 |
+| **D23** | **Three published libraries plus one unpublished binary.** `yet-core` (abstract gaze essentials), `yet-stim` (engine, media, stimulus and presentation protocols), `yet-egui` (egui components), `yet-zero` (binary and test-only library, `publish = false`). Dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`; no lower crate may depend on a higher one. | Reorganization decision 2026-10-26 |
+| **D24** | **`yet-core` is `#![no_std]` with `alloc`.** Time, frames, features, predictor and parameter block are always available; the reference Quadbright trainer and calibration buffer are behind the non-default `yet-zero` feature (`nalgebra` + `libm`). A `no_malloc` feature set may be added later. | E1; reorganization decision |
+| **D25** | **The UI framework lives only in `yet-egui`.** `yet-stim` owns the `OverlayBackend` trait and the layer-shell backend; `yet-egui` owns `EguiOverlay`. The binary selects and wires a backend. This avoids a dependency cycle and lets a different presenter replace egui later. | R4; reorganization decision |
 
 ---
 
@@ -166,44 +171,37 @@ These come from the two analyses. If one changes, **update the analysis first**,
 
 ### 3.1 Crate graph
 
-Arrows point to dependencies. `yet-present` is the leaf: protocols and traits, no UI and no I/O.
+The workspace now has **three publishable libraries and one unpublished binary**.
+Arrows point to dependencies. `yet-core` is the leaf: no UI, no I/O, `no_std`.
 
 ```mermaid
 flowchart TD
-    present["yet-present\nprotocols + traits"]
-    core["yet-core\nengine + CV modules"]
-    media["yet-media\nPNG sequences + WAV"]
-    pe["yet-present-egui\nEguiPresenter"]
-    overlay["yet-overlay\nplatform overlays"]
-    console["yet-console\nexperimenter UI"]
-    app["yet-app\nbinary + wiring"]
+    core["yet-core\ngaze essentials (no_std)"]
+    stim["yet-stim\nengine, media, protocols"]
+    egui["yet-egui\nEguiPresenter + console + EguiOverlay"]
+    zero["yet-zero\nbinary: camera, driver, CLI"]
 
-    core --> present
-    media --> present
-    pe --> present
-    overlay --> present
-    console --> core
-    console --> present
-    app --> core
-    app --> media
-    app --> pe
-    app --> overlay
-    app --> console
+    stim --> core
+    egui --> stim
+    egui --> core
+    zero --> egui
+    zero --> stim
+    zero --> core
 ```
 
-Target layout:
+| Crate | Contents | UI dependencies | Publication |
+|---|---|---|---|
+| `yet-core` | `#![no_std]` + `alloc`: `SessionTime`/`Clock`, `CameraRole`/`CameraFrame`/`FrameSet`, `GrayFrame`/`EyeRegion`, Quadbright features, `GazePredictor`, `ModelParameters`, `LinearPredictor`. Feature `yet-zero`: Quadbright trainer, calibration buffer, RMSE report. | None | Published |
+| `yet-stim` | Pure engine, experiment/config/plan, calibration flow, CSV sink, PNG sequences, WAV/rodio audio, playback, `Scene`/`DrawCommand`, presenter/overlay/audio traits, `RecordingPresenter`, Wayland layer-shell overlay and rasterizer. | None (no egui) | Published |
+| `yet-egui` | `EguiPresenter` (viewport, textures, text, shapes, media paint), experimenter console, `EguiOverlay`. | `egui` / `eframe` | Published |
+| `yet-zero` | Camera adapters (`linuxvideo`/`nokhwa`), capture mailbox, `SessionRunner`, headless runner, CLI, overlay-backend selection. Binary plus a library target used by integration tests. | via `yet-egui` | `publish = false` |
 
-| Crate | Contents | UI dependencies |
-|---|---|---|
-| `yet-present` | `Presenter`, `OverlayBackend`, `FrameSource`, `AudioPlayer`; `Scene`, `DrawCommand`, `PresenterCommand`, `FrameStamp`, geometry, IDs | None |
-| `yet-core` | `experiment/` state machine, `tracking/` (frame, features, model, calibration), `camera/` (`CameraSource` + adapters), config, data records | None |
-| `yet-media` | PNG sequence loader, prefetch, WAV audio player | None |
-| `yet-present-egui` | `EguiPresenter`: viewport, textures, text, shapes | `egui` / `eframe` |
-| `yet-overlay` | `EguiOverlay`, `LayerShellOverlay`, `XwaylandOverlay` | `egui` / `eframe`, `smithay-client-toolkit`, `calloop`, `x11rb` |
-| `yet-console` | experimenter console only | `egui` / `eframe` |
-| `yet-app` | config loading, wiring, CLI, lifecycle | all |
-
-The CV modules stay inside `yet-core` for v1 (CV R11). `yet-camera` and `yet-ml` are later mechanical splits; do not create them before the seams have tests.
+**Historical note:** sprint notes below were written when the workspace had eight
+crates (`yet-present`, `yet-gaze`, `yet-media`, `yet-present-egui`, `yet-console`,
+`yet-overlay`, and the `yet-app` binary). Those names are kept where they describe
+what a sprint delivered; the current home is the table above. The reorganization
+changed crate boundaries and imports only, not behavior, timing, CSV schema or
+model equations.
 
 **Platform build prerequisites found in Sprint 1:** Linux audio needs ALSA development metadata (`alsa.pc`), now installed and verified; the macOS `nokhwa` camera path needs Xcode Command Line Tools for `objc_exception`. Neither is a C/C++ dependency of our own code, but both must be documented.
 
@@ -622,8 +620,8 @@ a calibration protocol, not because it needs 8 features.
 | ENG-3 | Generate the trial order, including shuffle and seed, with a reproducible test | M | Same seed produces the same order; order is logged |
 
 **Prior work:** Yex `exp.rs` L14–L174, L454–L518; drop `Participant`/`Consent` for v1.
-**Status (2026-10-25):** implemented. `yet-core` loads `config.toml`, optional `Experiment.csv` and `Stimuli.csv`, validates typed errors, resolves media paths, and builds a deterministic per-block plan. `yet-app plan <dir>` prints it. 55 tests pass. The `block` column is optional and defaults to `default`; block `i` uses `seed + i` for an independent deterministic stream.
-**Demo:** `cargo run -p yet-app -- plan examples/demo`.
+**Status (2026-10-25):** implemented. `yet-core` loads `config.toml`, optional `Experiment.csv` and `Stimuli.csv`, validates typed errors, resolves media paths, and builds a deterministic per-block plan. `yet-zero plan <dir>` prints it. 55 tests pass. The `block` column is optional and defaults to `default`; block `i` uses `seed + i` for an independent deterministic stream.
+**Demo:** `cargo run -p yet-zero -- plan examples/demo`.
 **Gate:** met; the CSV schema is stable enough for the Sprint 3 data sink.
 
 ### Sprint 3 — Scheduler, data sink and headless slice
@@ -635,10 +633,10 @@ a calibration protocol, not because it needs 8 features.
 | ENG-4 | Absolute-deadline scheduler with pause/resume/abort and late-tick handling | M | Test-clock tests cover on-time, late, paused and aborted transitions; no accumulated `dt` drift |
 | ENG-5 | `RecordingPresenter` scene assertions and golden scenes | M | Calibration grid, stimulus placement and text are asserted from recorded commands |
 | ENG-6 | CSV data sink with trial and frame records, flush per trial | M | yet_zero-compatible column names; new columns appended; timestamps monotonic; interrupted session keeps completed rows |
-| ENG-7 | `yet-app --headless` CLI | S | Runs a 2-block, 6-trial experiment from config to CSV |
+| ENG-7 | `yet-zero --headless` CLI | S | Runs a 2-block, 6-trial experiment from config to CSV |
 
 **Prior work:** Yex `mod.rs` L84–L132 for the event shape; replace `YexRecord(Instant, …)` with `SessionTime`.
-**Demo:** `cargo run -p yet-app -- run --headless examples/demo --participant demo01`.
+**Demo:** `cargo run -p yet-zero -- run --headless examples/demo --participant demo01`.
 **Gate:** met; see status below.
 **Status (2026-10-25):** implemented. 89 workspace tests pass, including 22 engine
 scheduler tests, 11 golden-scene tests, 7 data-sink tests and 7 headless/CLI tests.
@@ -663,7 +661,7 @@ scheduler tests, 11 golden-scene tests, 7 data-sink tests and 7 headless/CLI tes
   coordinates use two decimals and normalized coordinates four. Header on
   creation, flush at every `AppendTrial`, so an aborted session keeps the rows
   up to the abort.
-- **ENG-7:** `yet-app run --headless <dir>` uses a 10 ms synthetic clock and
+- **ENG-7:** `yet-zero run --headless <dir>` uses a 10 ms synthetic clock and
   jumps to trial deadlines; the demo completes 5 of 5 trials in milliseconds.
   The result file defaults to the experiment directory as
   `yet1_<Exp>_<Part>.csv`. Without a camera the CSV has the header but no gaze
@@ -671,8 +669,8 @@ scheduler tests, 11 golden-scene tests, 7 data-sink tests and 7 headless/CLI tes
 
 **Findings:** the first headless demo exposed a loop guard that counted ticks
 instead of simulated time; the guard now derives from the sum of planned
-stimulus durations. Building `yet-app` as a library plus binary made the runner
-and the CLI testable through `CARGO_BIN_EXE_yet-app` without a window.
+stimulus durations. Building `yet-zero` as a library plus binary made the runner
+and the CLI testable through `CARGO_BIN_EXE_yet-zero` without a window.
 
 ### Sprint 4 — CV features and model
 
@@ -757,7 +755,7 @@ calibration window; CV-7 partially measured.
   configured index. A Windows all-targets check passes; macOS needs a real Mac.
 - **CV-6:** `Calibration` records target/feature pairs, fits or refits without
   resetting the session, and reports sample count and Euclidean RMSE. The
-  default `yet-app calibrate` now opens a borderless window on the presenter
+  default `yet-zero calibrate` now opens a borderless window on the presenter
   monitor, draws the 3×3 grid and collects frames automatically (Space starts,
   Escape cancels). Fitting uses the window's physical pixels, so model, grid
   and live dot share one coordinate system. `--terminal` retains the
@@ -809,7 +807,7 @@ below.
 static images. 174 workspace tests pass on stable and MSRV 1.95.
 
 - **Crate split:** `yet-present-egui` implements `Presenter` and owns the
-deferred viewport; `yet-console` owns the controls and status; `yet-app` wires
+deferred viewport; `yet-console` owns the controls and status; `yet-zero` wires
 both. `yet-present` and `yet-core` still contain no egui type. `yet-present`
 gained `Presenter::media_size` (the driver composes placed scenes without
 decoding media) and `DrawCommand::BlurredImage` (one cached box blur per media
@@ -886,7 +884,7 @@ camera.
   during calibration, and presenter settings stay locked while calibrating.
   Starting without a fit runs the experiment but logs that no gaze rows will be
   written.
-- **Camera in the session path:** `yet-app::tracker::Tracker` polls the capture
+- **Camera in the session path:** `yet-zero::tracker::Tracker` polls the capture
   thread only when `CameraStats::captured` advanced, so the 60 Hz controller does
   not count one frame repeatedly. The preview crops the eye region and
   downscales it to at most 480×320 on the controller thread; the console only
@@ -930,7 +928,7 @@ the Linux workstation. 221 workspace tests pass (three ignored hardware tests).
 - **Media separation:** the new `yet-media` crate owns PNG scanning/decoding
   (`PngSequence`), WAV decoding (`WavAudio`) and rodio playback
   (`RodioAudioPlayer`, `NullAudioPlayer`). It has no UI or experiment types;
-  `yet-present-egui` owns pacing and composition, and `yet-app` owns policy.
+  `yet-present-egui` owns pacing and composition, and `yet-zero` owns policy.
 - **Decoding off the UI thread:** `EguiPresenter::present` runs on the
   controller thread. It decodes the selected frame *before* locking the painting
   state, then hands the image over; the viewport reuses one GPU texture per
@@ -951,7 +949,7 @@ the Linux workstation. 221 workspace tests pass (three ignored hardware tests).
   the media position and the audio clock; Resume continued and finished the
   trial 14.7 ms late. The ignored audio test opened the default device and its
   clock advanced past 50 ms in 250 ms.
-- **Validation:** `yet-app media <dir>` reports frames, fps, duration, size and
+- **Validation:** `yet-zero media <dir>` reports frames, fps, duration, size and
   WAV metadata and warns about a >100 ms duration mismatch. `prepare_media.sh`
   produces frames plus a 48 kHz stereo WAV and fails clearly for a missing
   input, FFmpeg errors, zero frames or audio extraction errors.
@@ -986,7 +984,7 @@ sprint started.
 | SEAM-4 | Portability guard: a `no_std` compile check for the feature/prediction modules, plus SPK-6 (one-page MCU feasibility note: target class, RAM/flash, fixed-point error budget) | S | Guard runs in CI; SPK-6 names the target and constraints; no hardware required |
 
 **Prior work:** `crates/yet-core/src/tracking/{features,model,calibration}.rs`,
-`camera/mod.rs`, and `yet-app/src/tracker.rs` are the current single-camera,
+`camera/mod.rs`, and `yet-zero/src/tracker.rs` are the current single-camera,
 4-feature implementation. The seam pass moves code; it does not change the
 quadrant rule, the SVD fit, the RMSE or the CSV.
 
@@ -1073,7 +1071,7 @@ is partially measured. 254 workspace tests pass (three ignored hardware tests).
   controller feeds the layer-shell backend at gaze rate; the console viewport
   reads the same `ConsoleState.overlay.gaze` at 30 Hz. The console has a
   click-through toggle and shows backend errors.
-- **Validation tool:** `yet-app overlay <experiment-dir> [--seconds <s>]`
+- **Validation tool:** `yet-zero overlay <experiment-dir> [--seconds <s>]`
   animates a marker for manual checks.
 - **Measured:** the egui overlay window is created on the correct monitor with
   `_NET_WM_STATE_ABOVE` and fullscreen, and draws the marker on X11. On this

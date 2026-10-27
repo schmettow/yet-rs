@@ -1,7 +1,7 @@
 # Pre-decoded sequence and audio demo for the Sprint 8 console path.
 #
 # `frames/` holds 90 PNGs at 30 fps and `audio.wav` has the beep at 1 s.
-# `yet-app run` opens the console; add `--headless` to run without a window.
+# `yet-zero run` opens the console; add `--headless` to run without a window.
 
 [display]
 # Zero-based: 1 is the second monitor (labelled "2" in the console).

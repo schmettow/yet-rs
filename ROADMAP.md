@@ -38,10 +38,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   matrix remains.
 - **S2 Experiment model and configuration** — complete: `config.toml`,
   `Experiment.csv`, `Stimuli.csv`, typed validation, resolved paths and a
-  deterministic per-block plan; `yet-app plan examples/demo` prints it.
+  deterministic per-block plan; `yet-zero plan examples/demo` prints it.
 - **S3 Scheduler and headless slice** — complete: absolute-deadline scheduling
   with late-tick accounting, calibration and placement golden scenes, the CSV
-  sink, and `yet-app run --headless`. 89 tests passed at the end of the sprint.
+  sink, and `yet-zero run --headless`. 89 tests passed at the end of the sprint.
 - **S4 CV features and model** — implemented and parity-checked: `GrayFrame`/`EyeRegion`,
   canonical quadrant means with the odd-dimension rule, Rec. 601 luma,
   `LinearGazeModel` (SVD least squares), calibration buffer and RMSE. CV-4 uses
@@ -53,10 +53,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   demo targets the GEMBIRD Yet camera on `/dev/video2` (YUYV, 25.6 fps) and the
   portrait presenter. Linux hardware and the full window flow were exercised;
   macOS/Windows runtime and a human calibration RMSE remain.
-- **S6 Presenter and console shell** — complete for static images: `yet-present-egui`
+- **S6 Presenter and console shell** — complete for static images: `yet-egui`
   (deferred monitor-targeted viewport, physical-pixel mapping, images, text,
-  shapes, cached blur, texture reuse) and `yet-console` (controls, progress,
-  monitor selection, frame statistics, bounded log, errors). `yet-app run`
+  shapes, cached blur, texture reuse) and `yet-egui` (controls, progress,
+  monitor selection, frame statistics, bounded log, errors). `yet-zero run`
   opens both windows and shares effect handling with the headless runner.
   Measured on the two-monitor X11 workstation: 12.0 s demo, 60 Hz paint rate,
   ~7% coalesced frames, max lateness 0.4 ms, clean shutdown. Readiness waits
@@ -72,29 +72,36 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   run against the GEMBIRD Yet camera (10 frames, preview and quadrant means
   valid). The interactive desktop validation was blocked by a locked session,
   and the UX-4 pilot needs 2–3 people; the README documents the procedure.
-- **S8 Media and audio** — implemented: `yet-media` (`PngSequence`, `WavAudio`,
+- **S8 Media and audio** — implemented: `yet-stim` (`PngSequence`, `WavAudio`,
   `RodioAudioPlayer`), controller-thread frame decoding with texture reuse,
   audio-master pacing, pause/resume through the engine, console drift/drop/
-  underrun display, `yet-app media` validation, `tools/prepare_media.sh` and
+  underrun display, `yet-zero media` validation, `tools/prepare_media.sh` and
   `examples/media-demo`. 221 tests passed at the end of the sprint; audio and
   sequences were exercised on the Linux workstation (`media 2.10 s · audio
   drift +24.9 ms` at 2.1 s). Windows/macOS runtime, a beep/flash A/V
   measurement and background prefetch remain.
-- **S8.5 Seam hardening** — complete: `yet-gaze` (`no_std`, zero dependencies,
+- **S8.5 Seam hardening** — complete: `yet-core` (`no_std`, zero dependencies,
   `FeatureLayout`, `FeatureVector`, `ModelParameters`, `LinearPredictor`,
   `GazeInput`, `PoseSample`), predictor/trainer split with a `GazeModel`
   blanket alias, `QuadExtractor`, `CameraRole`/`CameraFrame`/`FrameSet`/
   `CameraRig`, and `docs/spikes/SPK-6.md` (ESP32-C design note, estimates not
   measured). A CI job checks both Cortex-M targets. 230 tests pass; v1 output,
   timing, CSV schema and the model equation are unchanged.
-- **S9 Overlay core** — implemented: the new `yet-overlay` crate with a
+- **S9 Overlay core** — implemented: the new `yet-stim` crate with a
   layer-shell thread (`smithay-client-toolkit` + calloop + `wl_shm`), the
   `EguiOverlay` transparent viewport, `gaze_scene` composition, backend
   selection (`auto`/`off`/`egui`/`layer-shell`, explicit `xwayland` error; X11
   auto-selects best-effort egui with a warning), the console toggle, and
-  `yet-app overlay` for manual checks. 254 tests pass. X11 did not composite
+  `yet-zero overlay` for manual checks. 254 tests pass. X11 did not composite
   correctly on the local KWin session; GNOME is unsupported; the Windows/macOS
   and real KDE/Sway/naked visual matrix remains.
+- **S9.5 Workspace reorganized (2026-10-26)** — the eight-crate layout was
+  consolidated into `yet-core` (no_std gaze essentials, feature `yet-zero` for
+  Quadbright training), `yet-stim` (engine, media and presentation protocols),
+  `yet-egui` (presenter, console, egui overlay) and the `yet-zero` binary. The
+  dependency direction is `yet-zero -> yet-egui -> yet-stim -> yet-core`; the
+  three libraries carry publishable path+version dependencies. 254 tests pass;
+  behavior, timing, CSV schema and the model equation are unchanged.
 - **Next:** S10 naked-compositor profile and platform parity (Sway config,
   Windows/macOS matrix, GNOME limitation docs).
 

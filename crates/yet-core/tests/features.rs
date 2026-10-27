@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use yet_core::SessionTime;
 use yet_core::{
     quad_brightness, rec601_luma, CameraFrame, CameraRole, EyeRegion, FeatureExtractor, FrameError,
     FrameSet, GrayFrame, QuadBrightness, QuadExtractor,
 };
-use yet_present::SessionTime;
 
 fn frame(width: u32, height: u32, data: Vec<u8>) -> GrayFrame {
     GrayFrame::new(width, height, data).unwrap()

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+#![cfg(feature = "yet-zero")]
+
 use yet_core::{Calibration, GazePoint, ModelError, QuadBrightness};
 
 fn features() -> Vec<QuadBrightness> {

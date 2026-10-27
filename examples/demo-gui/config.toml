@@ -1,7 +1,7 @@
 # Static-image experiment for the Sprint 6 console demo.
 #
 # The stimuli live in `../demo/stimuli` so both demos share one set of files.
-# `yet-app run` opens the console; add `--headless` to run without a window.
+# `yet-zero run` opens the console; add `--headless` to run without a window.
 
 [display]
 # Zero-based: 1 is the second monitor (labelled "2" in the console).

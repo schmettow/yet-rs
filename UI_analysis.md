@@ -1,9 +1,10 @@
-> **Implementation note (S6, 2026-10-25):** the MSRV is now Rust 1.95 and the
-> project uses eframe 0.37 throughout. The presenter is `yet-present-egui`, the
-> console is `yet-console`, and `yet-app run` wires them into one eframe event
-> loop with two viewports: a windowed console (root) and a deferred fullscreen
-> stimulus viewport on `display.presenter_monitor` via
-> `ViewportBuilder::with_monitor`. `DisplayConfig::presenter_origin` is gone.
+> **Implementation note (2026-10-26):** the MSRV is Rust 1.95 and the project
+> uses eframe 0.37 throughout. The workspace is now `yet-core`, `yet-stim`,
+> `yet-egui` and `yet-zero`; the presenter and console live in `yet-egui`, and
+> `yet-zero run` wires them into one eframe event loop with two viewports: a
+> windowed console (root) and a deferred fullscreen stimulus viewport on
+> `display.presenter_monitor` via `ViewportBuilder::with_monitor`.
+> `DisplayConfig::presenter_origin` is gone.
 > `yet-present` gained `Presenter::media_size` and `DrawCommand::BlurredImage`.
 > Measured on the X11 two-monitor workstation: the stimulus window is
 > `1440x2560+2560+0` on DP-3, a four-image 12 s run painted at 60.0 Hz with
@@ -670,6 +671,24 @@ The experiment controller (`yet-core`) is the only component that decides state 
 
 ### 9.1 Crate layout
 
+**As implemented (2026-10-26):** the analysis below originally proposed a
+finer split. The delivered workspace consolidates it into **three publishable
+libraries and one binary**, which keeps the same boundaries without forcing a
+release of eight packages:
+
+| Crate | Responsibility | UI dependencies | Publication |
+|---|---|---|---|
+| `yet-core` | `#![no_std]` + `alloc` gaze essentials: time/clock, camera roles and `FrameSet`, frames/regions, Quadbright features, predictor and `ModelParameters`. Feature `yet-zero` adds the Quadbright trainer and calibration math. | **None** | Published |
+| `yet-stim` | Experiment controller/state machine, calibration flow, data model, `Presenter`/`OverlayBackend`/`FrameSource`/`AudioPlayer` traits, `Scene`/`DrawCommand`, media (PNG/WAV/playback), recording presenter, layer-shell overlay. | **None** | Published |
+| `yet-egui` | egui experimenter console, `EguiPresenter` and `EguiOverlay`; the only crate that imports `egui`/`eframe`. | `egui` / `eframe` | Published |
+| `yet-zero` | Binary: config wiring, camera adapters, tracker, session driver, CLI, headless runner and backend selection. Library target for tests only. | via `yet-egui` | `publish = false` |
+
+The important rule survives the consolidation: **no `egui` types in `yet-core`
+or `yet-stim`.** The dependency direction is `yet-zero -> yet-egui ->
+yet-stim -> yet-core`; do not let a lower crate import a higher one.
+
+The original finer proposal (kept for rationale) was:
+
 | Crate | Responsibility | UI dependencies |
 |---|---|---|
 | `yet-core` | Experiment controller/state machine, tracker traits, calibration, regression, data model | **None** |
@@ -678,9 +697,7 @@ The experiment controller (`yet-core`) is the only component that decides state 
 | `yet-present-egui` | `EguiPresenter`; viewport, textures, text/shapes, frame upload | `egui` / `eframe` |
 | `yet-overlay` | `EguiOverlay` (Windows/macOS), `LayerShellOverlay` (KDE/wlroots Wayland), `XwaylandOverlay` (GNOME fallback) | `egui` / `eframe`, `smithay-client-toolkit`, `calloop`, `x11rb` |
 | `yet-media` | PNG frame-sequence loading, preloading, frame mailbox; WAV audio playback (`RodioAudioPlayer`); `FrameSource`/`AudioPlayer` implementations | `image`, `rodio`, `cpal`, `hound` |
-| `yet-app` | Binary: config, camera, tracker, wiring | all |
-| `yet-camera` (later) | Camera capture, frame mailbox | None |
-| `yet-ml` (later) | Regression/model | None |
+| `yet-zero` | Binary: config, camera, tracker, wiring | all |
 
 The important rule: **no `egui` types in `yet-core` or `yet-present`.** If the tracker or experiment logic imports `egui`, the separation has failed.
 

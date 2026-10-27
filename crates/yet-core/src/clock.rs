@@ -2,9 +2,9 @@
 
 //! Clock abstraction for a testable, non-blocking engine.
 
-use std::time::Duration;
+use core::time::Duration;
 
-use yet_present::SessionTime;
+use crate::time::SessionTime;
 
 /// A source of monotonic session time.
 pub trait Clock {

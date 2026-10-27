@@ -11,24 +11,30 @@
 //! CSV column order is `(nw, sw, ne, se)` and its own labels are swapped;
 //! conversion belongs at the data-import boundary.
 
+#[cfg(feature = "yet-zero")]
 mod buffer;
+#[cfg(feature = "yet-zero")]
 mod calibration;
 mod features;
 mod frame;
+#[cfg(feature = "yet-zero")]
 mod model;
 
-pub use buffer::CalibrationBuffer;
-pub use calibration::{Calibration, CalibrationReport};
-pub use features::{quad_brightness, FeatureExtractor, QuadBrightness, QuadExtractor};
-pub use frame::{rec601_luma, EyeRegion, FrameError, GrayFrame};
-pub use model::{
-    minimum_samples, GazeModel, GazeTrainer, LinearGazeModel, LinearParameters, ModelError,
-    MIN_CALIBRATION_SAMPLES,
-};
-pub use yet_gaze::{
+pub use crate::gaze::{
     BodyPose, FeatureLayout, FeatureVector, GazeInput, GazePoint, GazePredictor, HeadPose,
     LinearPredictor, ModelParameters, PoseSample, PredictionError, MAX_FEATURES,
     MODEL_FORMAT_VERSION, OCTA_LAYOUT, QUAD_LAYOUT,
+};
+#[cfg(feature = "yet-zero")]
+pub use buffer::CalibrationBuffer;
+#[cfg(feature = "yet-zero")]
+pub use calibration::{Calibration, CalibrationReport};
+pub use features::{quad_brightness, FeatureExtractor, QuadBrightness, QuadExtractor};
+pub use frame::{rec601_luma, validate_eye_region, EyeRegion, FrameError, GrayFrame};
+#[cfg(feature = "yet-zero")]
+pub use model::{
+    minimum_samples, GazeModel, GazeTrainer, LinearGazeModel, LinearParameters, ModelError,
+    MIN_CALIBRATION_SAMPLES,
 };
 
 /// One calibration observation: features paired with a known target.
@@ -47,6 +53,7 @@ pub type CalibrationObservation = CalibrationSample;
 
 impl CalibrationSample {
     /// Create a v1 Quadbright sample; pose is absent.
+    #[cfg(feature = "yet-zero")]
     pub fn new(features: QuadBrightness, target: GazePoint) -> Self {
         Self {
             features: FeatureVector::from(features),

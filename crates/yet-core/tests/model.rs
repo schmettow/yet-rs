@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+#![cfg(feature = "yet-zero")]
+
 use yet_core::{
     minimum_samples, CalibrationBuffer, CalibrationSample, FeatureVector, GazeInput, GazePoint,
     GazePredictor, GazeTrainer, LinearGazeModel, LinearPredictor, ModelError, PredictionError,

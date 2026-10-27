@@ -29,7 +29,7 @@ with a real target display?
 Command:
 
 ```sh
-cargo run --release -p yet-app -- camera examples/demo --seconds 3
+cargo run --release -p yet-zero -- camera examples/demo --seconds 3
 ```
 
 `examples/demo` points at the GEMBIRD. For the StreamCam, pass
@@ -60,7 +60,7 @@ calibration dataset or a controlled format comparison.
 
 ## Graphical calibration window
 
-`yet-app calibrate <dir>` now opens a borderless window on the presenter
+`yet-zero calibrate <dir>` now opens a borderless window on the presenter
 monitor, draws the 3×3 grid, and collects frames automatically:
 
 - Space starts; Escape cancels.
@@ -135,7 +135,7 @@ for v in /sys/class/video4linux/video*; do
 done
 ```
 
-`yet-app camera --device N` overrides the configured index for a single run. A
+`yet-zero camera --device N` overrides the configured index for a single run. A
 name/USB-ID selector is a candidate for S6/S7.
 
 ## Cross-platform

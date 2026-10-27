@@ -50,7 +50,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
 
   nostd:
     name: no_std guard (Cortex-M)
@@ -65,6 +65,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo check -p yet-gaze --target thumbv7em-none-eabi --all-features --locked
+      - run: cargo check -p yet-core --no-default-features --target thumbv7em-none-eabi --locked
 
-      - run: cargo check -p yet-gaze --target thumbv6m-none-eabi --all-features --locked
+      - run: cargo check -p yet-core --no-default-features --target thumbv6m-none-eabi --locked

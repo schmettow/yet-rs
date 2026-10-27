@@ -9,9 +9,9 @@ is the reference. GNOME is not supported.
 
 - Linux with a working camera and, for the overlay, a layer-shell compositor.
 - `sway` installed; `swaybg` only if you want an explicit background color.
-- A release build of `yet-app`:
+- A release build of `yet-zero`:
   ```sh
-  cargo build --release -p yet-app
+  cargo build --release -p yet-zero
   ```
 - An experiment directory whose `config.toml` uses the monitor names/indices of
   this machine. The presenter monitor and `[overlay] monitor` must match.
@@ -21,7 +21,7 @@ is the reference. GNOME is not supported.
 See [`tools/sway-yet.conf`](../tools/sway-yet.conf). Edit these values:
 
 - `output DP-1 ...` and `output DP-3 ...`: your console and presenter outputs.
-- `/path/to/yet-app` and `/path/to/experiment`: absolute paths.
+- `/path/to/yet-zero` and `/path/to/experiment`: absolute paths.
 - The presenter must be the taller/portrait output if that is how the experiment
   was authored.
 
@@ -37,7 +37,7 @@ seat * hide_cursor 1000
 
 for_window [app_id="yet-rs-console"] move to output DP-1
 for_window [app_id="yet-rs-presenter"] fullscreen enable, move to output DP-3
-exec /path/to/yet-app run /path/to/experiment --participant pilot01
+exec /path/to/yet-zero run /path/to/experiment --participant pilot01
 ```
 
 The overlay is a layer-shell surface, so Sway composites it above the presenter

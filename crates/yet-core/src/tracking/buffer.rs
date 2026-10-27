@@ -2,6 +2,8 @@
 
 //! A calibration sample buffer and error metric.
 
+use alloc::vec::Vec;
+
 use super::{
     CalibrationSample, GazeInput, GazeModel, GazePredictor, GazeTrainer, ModelError,
     PredictionError,
@@ -86,6 +88,6 @@ impl CalibrationBuffer {
         }
 
         let mean_squared = squared_error / self.samples.len() as f64;
-        Ok(Some(mean_squared.sqrt() as f32))
+        Ok(Some(libm::sqrt(mean_squared) as f32))
     }
 }

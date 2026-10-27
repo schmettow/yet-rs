@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+#![cfg(feature = "yet-zero")]
+
 //! Python-oracle parity fixtures for CV-4.
 //!
 //! The fixtures are synthetic and tiny; `tools/cv4_fixtures.py` generated them
