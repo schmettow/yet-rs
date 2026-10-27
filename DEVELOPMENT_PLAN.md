@@ -4,9 +4,10 @@
 **Basis:** `UI_analysis.md`, `CV_analysis.md`, and the prior attempt in `Yex/`.
 **Style:** milestone-driven, sprint-based, test-first.
 
-> **Implementation snapshot (2026-10-26).** S0–S9 are implemented. The workspace
+> **Implementation snapshot (2026-10-26).** S0–S10 are implemented, with the
+> S10 runtime matrix and 60-minute overlay soak still open. The workspace
 > was reorganized into `yet-core`, `yet-stim`, `yet-egui` and `yet-zero` after
-> S9; 254 workspace tests pass, with three ignored hardware tests (camera,
+> S9; 256 workspace tests pass, with three ignored hardware tests (camera,
 > tracker, audio) that pass on the lab machine. The reorganization changed crate
 > boundaries and imports only: behavior, timing, CSV schema and the model
 > equation are unchanged. S7's pilot (UX-4), parts of the M3/M5 gates, S10
@@ -58,12 +59,13 @@ stays **pixels** because fixed AOIs are defined in screen pixels.
 
 ### 0.3 Plan health check (2026-10-26)
 
-**On target:** the v1 scope is intact. S0–S9 delivered the workspace, spikes,
+**On target:** the v1 scope is intact. S0–S10 delivered the workspace, spikes,
 experiment/CSV model, pure scheduler, CV parity, camera and calibration,
-presenter/console, calibration UX, media/audio, the seam pass and the overlay
-core. The workspace is now organized for publication as three libraries plus a
-binary, and `yet-core` builds for Cortex-M without the default feature set. The
-remaining work is S10–S11.
+presenter/console, calibration UX, media/audio, the seam pass, the overlay core
+and the naked-compositor/parity scaffolding. The workspace is organized for
+publication as three libraries plus a binary, and `yet-core` builds for Cortex-M
+without the default feature set. The remaining work is S11 and the open runtime
+gates (Windows/macOS overlay matrix, 60-minute soak).
 
 **Open gates, not plan failures:**
 
@@ -554,7 +556,7 @@ flowchart TD
 | **M3 Eye tracking parity** | S5 | Quad features match Python; calibration works on the real camera | Partial: Linux and synthetic parity; human RMSE and macOS/Windows open |
 | **M4 End-to-end experiment** | S7 | Console + fullscreen presenter + calibration + pilot session | Partial: flow implemented; UX-4 pilot open |
 | **M5 Media complete** | S8 | PNG sequence + WAV in sync; drift and underruns logged | Partial: Linux point measurements; p95 and macOS/Windows open |
-| **M6 Overlay parity** | S10 | Windows/macOS/layer-shell Wayland or a naked compositor passes; GNOME is documented as unsupported | Partial: overlay core implemented; layer-shell protocol validated; visual matrix and naked-compositor profile open |
+| **M6 Overlay parity** | S10 | Windows/macOS/layer-shell Wayland or a naked compositor passes; GNOME is documented as unsupported | Partial: overlay core implemented; layer-shell protocol validated; naked-compositor launcher, decision record, coalescing counters and a 30 s X11 smoke are in place; Windows/macOS/HiDPI runtime and the 60-minute focus soak open |
 | **M7 v0.1.0** | S11 | Release checklist, pilot data and docs complete | Not started |
 
 ### 6.1 Post-v1 evolution path
@@ -1102,6 +1104,18 @@ evidence. No GNOME implementation work.
 **Prior work:** UI §7.5; the layer-shell backend from S9.
 **Demo:** naked-compositor session plus the platform matrix.
 **Gate:** R11 met or explicitly documented; no silent fallback.
+
+**Implementation note (2026-10-26):** OVL-6 and OVL-7 are implemented:
+`tools/run-naked.sh` renders the two-output Sway profile from
+`tools/sway-yet.conf` (no bar/background, XWayland disabled, console/presenter
+app-ID rules), and `docs/overlay-decision.md` records the GNOME/XWayland
+decision and troubleshooting. OVL-9's instrumentation is implemented:
+`OverlayStats` counts `requested`, `painted`, `superseded` and `errors`, the
+egui and layer-shell backends maintain the counters, and
+`yet-zero overlay --seconds 3600` prints a soak summary. The 60-minute visual
+and focus soak has not been run here. OVL-8 is scaffolded in
+`docs/platform-matrix.md`; Windows/macOS runtime and HiDPI/multi-monitor rows
+remain hardware gates. M6 therefore stays open.
 
 ### Sprint 11 — Hardening and release
 

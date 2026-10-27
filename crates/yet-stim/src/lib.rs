@@ -52,7 +52,8 @@ pub use crate::overlay::{gaze_scene, GazeMarkerStyle};
 pub use crate::plan::{PlannedBlock, PlannedTrial, SessionPlan};
 pub use crate::protocol::{
     AudioError, AudioPlayer, ClockSource, Frame, FrameSource, FrameStamp, MediaError,
-    OverlayBackend, OverlayError, PresentStats, Presenter, PresenterCommand, PresenterError,
+    OverlayBackend, OverlayError, OverlayStats, PresentStats, Presenter, PresenterCommand,
+    PresenterError,
 };
 pub use crate::recording::RecordingPresenter;
 pub use crate::scene::{Anchor, Color, DrawCommand, Filter, FontId, MediaId, Scene};

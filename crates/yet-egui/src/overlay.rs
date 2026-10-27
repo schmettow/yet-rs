@@ -6,12 +6,33 @@
 //! created by [`EguiOverlay::show_viewport`] from the console's eframe loop, so
 //! there is no second event loop and no extra thread.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use eframe::egui;
-use yet_stim::{OverlayBackend, OverlayError, Scene};
+use yet_stim::{OverlayBackend, OverlayError, OverlayStats, Scene};
 
 use crate::painter;
+
+/// Counters shared with the deferred viewport callback.
+#[derive(Debug, Default)]
+struct OverlayCounters {
+    requested: AtomicU64,
+    painted: AtomicU64,
+    superseded: AtomicU64,
+}
+
+impl OverlayCounters {
+    fn stats(&self) -> OverlayStats {
+        OverlayStats {
+            requested: self.requested.load(Ordering::Relaxed),
+            painted: self.painted.load(Ordering::Relaxed),
+            superseded: self.superseded.load(Ordering::Relaxed),
+            errors: 0,
+        }
+    }
+}
 
 /// A transparent overlay viewport driven by the console's eframe loop.
 pub struct EguiOverlay {
@@ -21,6 +42,7 @@ pub struct EguiOverlay {
     passthrough: bool,
     was_visible: bool,
     scene: Arc<Mutex<Scene>>,
+    counters: Arc<OverlayCounters>,
 }
 
 impl EguiOverlay {
@@ -34,15 +56,34 @@ impl EguiOverlay {
             passthrough: true,
             was_visible: false,
             scene: Arc::new(Mutex::new(Scene::new())),
+            counters: Arc::new(OverlayCounters::default()),
         }
     }
 
     /// Replace the overlay display list.
+    ///
+    /// This counts as one presentation request. The counters are updated while
+    /// the scene lock is held so the viewport cannot mark a newer scene as
+    /// painted than the one it actually drew.
     pub fn set_scene(&mut self, scene: Scene) {
-        *self
+        let mut current = self
             .scene
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = scene;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *current = scene;
+        let requested = self.counters.requested.load(Ordering::Relaxed);
+        let painted = self.counters.painted.load(Ordering::Relaxed);
+        let superseded = self.counters.superseded.load(Ordering::Relaxed);
+        if requested.saturating_sub(painted).saturating_sub(superseded) > 0 {
+            // A scene was still waiting for the viewport; the new one replaces it.
+            self.counters.superseded.fetch_add(1, Ordering::Relaxed);
+        }
+        self.counters.requested.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A snapshot of the coalescing counters.
+    pub fn stats(&self) -> OverlayStats {
+        self.counters.stats()
     }
 
     /// Whether the overlay is currently requested.
@@ -94,7 +135,13 @@ impl EguiOverlay {
             .with_monitor(self.monitor)
             .with_fullscreen(true);
 
+        // A deferred viewport does not inherit the root context's repaint
+        // schedule. Without this, the marker updates only when another event
+        // wakes the overlay window (measured ~4 Hz instead of ~30 Hz on X11).
+        ctx.request_repaint_after_for(Duration::from_millis(33), self.id);
+
         let scene = Arc::clone(&self.scene);
+        let counters = Arc::clone(&self.counters);
         ctx.show_viewport_deferred(self.id, builder, move |ui, _class| {
             let clip = ui.max_rect();
             let pixels_per_point = ui.ctx().pixels_per_point();
@@ -102,6 +149,13 @@ impl EguiOverlay {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             painter::paint_overlay(ui.painter(), clip, pixels_per_point, &scene);
+            let requested = counters.requested.load(Ordering::Relaxed);
+            let painted = counters.painted.load(Ordering::Relaxed);
+            let superseded = counters.superseded.load(Ordering::Relaxed);
+            if requested.saturating_sub(painted).saturating_sub(superseded) > 0 {
+                // This paint settles the newest outstanding scene.
+                counters.painted.fetch_add(1, Ordering::Relaxed);
+            }
         });
     }
 }
@@ -130,6 +184,10 @@ impl OverlayBackend for EguiOverlay {
     fn present(&mut self, scene: &Scene) -> Result<(), OverlayError> {
         self.set_scene(scene.clone());
         Ok(())
+    }
+
+    fn stats(&self) -> OverlayStats {
+        EguiOverlay::stats(self)
     }
 }
 
@@ -168,5 +226,19 @@ mod tests {
         overlay.set_passthrough(false).unwrap();
 
         assert!(!overlay.passthrough());
+    }
+
+    #[test]
+    fn unpainted_scenes_are_counted_as_superseded() {
+        let mut overlay = EguiOverlay::new(0);
+        for _ in 0..3 {
+            overlay.present(&Scene::new()).unwrap();
+        }
+
+        let stats = overlay.stats();
+        assert_eq!(stats.requested, 3);
+        assert_eq!(stats.painted, 0);
+        assert_eq!(stats.superseded, 2);
+        assert_eq!(stats.outstanding(), 1);
     }
 }

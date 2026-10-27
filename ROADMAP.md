@@ -27,8 +27,11 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   step only. A beep/flash A/V recording and the Windows/macOS runtime remain.
 - [ ] **M6 Overlay parity (S10)** — the overlay core is implemented: an egui
   viewport for Windows/macOS and a Wayland layer-shell backend. Layer-shell was
-  protocol-validated against a live compositor; the Windows/macOS and
-  KDE/Sway/naked visual matrix is still open. GNOME is documented as unsupported.
+  protocol-validated against a live compositor. S10 added the naked-compositor
+  launcher/profile, the GNOME/XWayland decision record, overlay coalescing
+  counters and a soak summary. The Windows/macOS runtime matrix, the real
+  KDE/Sway/naked visual matrix and the 60-minute focus/soak gate remain open;
+  GNOME is documented as unsupported.
 - [ ] **M7 v0.1.0 (S11)** — release checklist, pilot data and complete docs.
 
 ## Sprint status
@@ -102,8 +105,15 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   dependency direction is `yet-zero -> yet-egui -> yet-stim -> yet-core`; the
   three libraries carry publishable path+version dependencies. 254 tests pass;
   behavior, timing, CSV schema and the model equation are unchanged.
-- **Next:** S10 naked-compositor profile and platform parity (Sway config,
-  Windows/macOS matrix, GNOME limitation docs).
+- **S10 Naked compositor and parity scaffolding (2026-10-26)** — implemented:
+  `tools/run-naked.sh` and the two-output Sway profile (no bar/background,
+  XWayland disabled, console/presenter app-ID rules), the GNOME/XWayland
+  decision record, overlay `requested`/`painted`/`superseded`/`errors` counters,
+  and a 60-minute-capable soak command with a summary. The platform matrix is
+  scaffolded; Windows/macOS runtime and the 60-minute visual/focus soak remain
+  hardware gates.
+- **Next:** S11 hardening and release (metadata, package checks, pilot,
+  platform runtime matrix).
 
 ## Post-v1
 

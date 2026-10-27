@@ -26,11 +26,33 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `yet-zero` replaces the `yet-app` binary and owns camera capture, the session
   driver, the headless runner, the CLI and backend selection. It keeps a
   library target for tests only and is `publish = false`.
+- `yet-egui`: the deferred overlay viewport now requests its own repaint at
+  30 Hz. A 30 s X11 smoke raised the measured paint rate from 4.2 to 27.4
+  painted scenes/s with bounded coalescing (`requested=868 painted=823
+  superseded=44 outstanding=1 errors=0`).
 - `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
   `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
   adapters moved to `yet-zero::camera`.
 
 ### Added
+
+- `yet-stim`: `OverlayStats` (`requested`, `painted`, `superseded`, `errors`,
+  `outstanding`) and a default `OverlayBackend::stats()` accessor.
+- `yet-egui`/`yet-stim`: the egui and layer-shell overlays count accepted,
+  painted and coalesced scenes; the layer-shell thread also counts render
+  errors.
+- `yet-zero`: `overlay ... --seconds <s>` prints a soak summary with painted
+  rate and outstanding frames; pacing uses absolute deadlines instead of
+  sleeping after each presentation.
+- `tools/run-naked.sh`: one-command two-output Sway session with rendered
+  config, `--render-only`, output-name and participant overrides. The profile
+  disables XWayland and keeps the console/presenter app-ID rules.
+- `docs/overlay-decision.md`: GNOME/XWayland decision record, alternatives and
+  troubleshooting table.
+- `docs/platform-matrix.md`: build/test coverage and the overlay/HiDPI/
+  multi-monitor soak recording sheet.
+- README: overlay troubleshooting table, soak summary format and links to the
+  decision record and matrix.
 
 - Cargo workspace with the `yet-present`, `yet-core` and `yet-app` crates.
 - `yet-present`: `SessionTime`, physical-pixel geometry, `Scene`/`DrawCommand`

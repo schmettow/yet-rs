@@ -7,7 +7,9 @@
 //! does not implement it, so `LayerShell::bind` fails there and the caller gets
 //! a clear error rather than a silently missing overlay.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -32,14 +34,35 @@ use smithay_client_toolkit::{
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
 };
 
-use crate::{OverlayBackend, OverlayError, Scene};
+use crate::{OverlayBackend, OverlayError, OverlayStats, Scene};
 
 use super::raster;
+
+/// Counters shared between the controller thread and the overlay thread.
+#[derive(Debug, Default)]
+struct OverlayCounters {
+    requested: AtomicU64,
+    painted: AtomicU64,
+    superseded: AtomicU64,
+    errors: AtomicU64,
+}
+
+impl OverlayCounters {
+    fn stats(&self) -> OverlayStats {
+        OverlayStats {
+            requested: self.requested.load(Ordering::Relaxed),
+            painted: self.painted.load(Ordering::Relaxed),
+            superseded: self.superseded.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+        }
+    }
+}
 
 /// A layer-shell overlay bound to one output.
 pub struct LayerShellOverlay {
     monitor: usize,
     sender: channel::Sender<Message>,
+    counters: Arc<OverlayCounters>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -51,10 +74,14 @@ impl LayerShellOverlay {
     pub fn spawn(monitor: usize) -> Result<Self, OverlayError> {
         let (sender, receiver) = channel::channel();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let counters = Arc::new(OverlayCounters::default());
+        let thread_counters = Arc::clone(&counters);
+        let run_counters = Arc::clone(&thread_counters);
         let thread = thread::Builder::new()
             .name("yet-overlay".to_owned())
             .spawn(move || {
-                if let Err(error) = run(monitor, receiver, &ready_sender) {
+                if let Err(error) = run(monitor, receiver, &ready_sender, run_counters) {
+                    thread_counters.errors.fetch_add(1, Ordering::Relaxed);
                     let _ = ready_sender.try_send(Err(error));
                 }
             })
@@ -64,6 +91,7 @@ impl LayerShellOverlay {
             Ok(Ok(())) => Ok(Self {
                 monitor,
                 sender,
+                counters,
                 thread: Some(thread),
             }),
             Ok(Err(error)) => {
@@ -82,9 +110,15 @@ impl LayerShellOverlay {
     }
 
     fn send(&self, message: Message) -> Result<(), OverlayError> {
-        self.sender
-            .send(message)
-            .map_err(|_| OverlayError::Unavailable("overlay thread stopped".to_owned()))
+        self.sender.send(message).map_err(|_| {
+            self.counters.errors.fetch_add(1, Ordering::Relaxed);
+            OverlayError::Unavailable("overlay thread stopped".to_owned())
+        })
+    }
+
+    /// A snapshot of the coalescing counters.
+    pub fn stats(&self) -> OverlayStats {
+        self.counters.stats()
     }
 }
 
@@ -109,7 +143,12 @@ impl OverlayBackend for LayerShellOverlay {
     }
 
     fn present(&mut self, scene: &Scene) -> Result<(), OverlayError> {
+        self.counters.requested.fetch_add(1, Ordering::Relaxed);
         self.send(Message::Present(scene.clone()))
+    }
+
+    fn stats(&self) -> OverlayStats {
+        LayerShellOverlay::stats(self)
     }
 }
 
@@ -140,6 +179,7 @@ struct OverlayState {
     output: Option<wl_output::WlOutput>,
     empty_region: Region,
     pool: Option<SlotPool>,
+    counters: Arc<OverlayCounters>,
     width: u32,
     height: u32,
     scale: i32,
@@ -156,6 +196,7 @@ fn run(
     monitor: usize,
     receiver: channel::Channel<Message>,
     ready: &SyncSender<Result<(), OverlayError>>,
+    counters: Arc<OverlayCounters>,
 ) -> Result<(), OverlayError> {
     let connection = Connection::connect_to_env()
         .map_err(|error| OverlayError::Unavailable(format!("Wayland connection: {error}")))?;
@@ -185,6 +226,7 @@ fn run(
         output: None,
         empty_region,
         pool: None,
+        counters,
         width: 0,
         height: 0,
         scale: 1,
@@ -254,6 +296,7 @@ fn run(
 
     while !state.shutdown {
         if let Err(error) = event_loop.dispatch(None, &mut state) {
+            state.counters.errors.fetch_add(1, Ordering::Relaxed);
             state.error = Some(format!("overlay event loop: {error}"));
             break;
         }
@@ -268,6 +311,11 @@ impl OverlayState {
     fn handle(&mut self, message: Message) {
         match message {
             Message::Present(scene) => {
+                if self.pending {
+                    // The previously queued scene is replaced before it could
+                    // be painted; the newest gaze point wins.
+                    self.counters.superseded.fetch_add(1, Ordering::Relaxed);
+                }
                 self.scene = scene;
                 if self.frame_in_flight {
                     self.pending = true;
@@ -349,8 +397,10 @@ impl OverlayState {
             Ok(()) => {
                 self.frame_in_flight = true;
                 self.pending = false;
+                self.counters.painted.fetch_add(1, Ordering::Relaxed);
             }
             Err(error) => {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
                 self.error = Some(error.to_string());
             }
         }

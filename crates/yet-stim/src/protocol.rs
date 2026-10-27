@@ -217,6 +217,34 @@ pub trait Presenter {
 }
 
 /// A platform overlay backend.
+/// Counters reported by an overlay backend.
+///
+/// Overlay scenes are coalesced on purpose: a backend may still be
+/// compositing one frame when the next gaze point arrives. Such a scene is
+/// *superseded*, not painted. A soak run should show that the overlay keeps up
+/// without accumulating an unbounded backlog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OverlayStats {
+    /// Scenes accepted by [`OverlayBackend::present`].
+    pub requested: u64,
+    /// Scenes actually painted or committed to the compositor.
+    pub painted: u64,
+    /// Scenes replaced by a newer scene before they were painted.
+    pub superseded: u64,
+    /// Render or compositor errors observed by the backend.
+    pub errors: u64,
+}
+
+impl OverlayStats {
+    /// Scenes requested but neither painted nor superseded yet.
+    pub const fn outstanding(self) -> u64 {
+        self.requested
+            .saturating_sub(self.painted)
+            .saturating_sub(self.superseded)
+    }
+}
+
+/// A click-through overlay surface.
 pub trait OverlayBackend {
     /// Show the overlay on a monitor.
     fn show(&mut self, monitor: usize) -> Result<(), OverlayError>;
@@ -234,6 +262,14 @@ pub trait OverlayBackend {
     /// command returns [`OverlayError::Unsupported`] rather than dropping it
     /// silently.
     fn present(&mut self, scene: &Scene) -> Result<(), OverlayError>;
+
+    /// A snapshot of the backend's coalescing counters.
+    ///
+    /// The default is all-zero for simple test backends. Real backends should
+    /// override it so a soak run can report dropped overlay frames.
+    fn stats(&self) -> OverlayStats {
+        OverlayStats::default()
+    }
 }
 
 /// A source of pre-decoded media frames, such as a PNG sequence.

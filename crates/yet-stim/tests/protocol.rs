@@ -3,9 +3,9 @@
 use std::time::{Duration, Instant};
 
 use yet_stim::{
-    Anchor, ClockSource, Color, DrawCommand, Filter, FontId, FrameStamp, MediaId, PointPx,
-    Presenter, PresenterCommand, RecordingPresenter, RectPx, Scene, ScreenGeometry, SessionTime,
-    SizePx,
+    Anchor, ClockSource, Color, DrawCommand, Filter, FontId, FrameStamp, MediaId, OverlayStats,
+    PointPx, Presenter, PresenterCommand, RecordingPresenter, RectPx, Scene, ScreenGeometry,
+    SessionTime, SizePx,
 };
 
 fn geometry() -> ScreenGeometry {
@@ -175,6 +175,19 @@ fn recording_presenter_records_commands_scenes_and_frames() {
     assert_eq!(stats.dropped_frames, 0);
     assert_eq!(stats.audio_drift_ms, None);
     assert_eq!(stats.audio_underruns, 0);
+}
+
+#[test]
+fn overlay_stats_distinguish_painted_and_superseded_scenes() {
+    let stats = OverlayStats {
+        requested: 10,
+        painted: 7,
+        superseded: 2,
+        errors: 1,
+    };
+
+    assert_eq!(stats.outstanding(), 1);
+    assert_eq!(OverlayStats::default().outstanding(), 0);
 }
 
 #[test]

@@ -68,3 +68,18 @@ jobs:
       - run: cargo check -p yet-core --no-default-features --target thumbv7em-none-eabi --locked
 
       - run: cargo check -p yet-core --no-default-features --target thumbv6m-none-eabi --locked
+
+  scripts:
+    name: launcher profile
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: sh -n tools/run-naked.sh
+
+      - run: tools/run-naked.sh examples/demo-gui --render-only --config-out "$RUNNER_TEMP/sway.conf"
+
+      - run: grep -F 'xwayland disable' "$RUNNER_TEMP/sway.conf"
+
+      - run: grep -F 'exec "' "$RUNNER_TEMP/sway.conf"

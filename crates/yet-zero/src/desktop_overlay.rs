@@ -275,13 +275,18 @@ pub fn run_overlay(options: OverlayOptions<'_>) -> Result<(), RunError> {
         OverlayHost::Thread(mut overlay) => {
             overlay.show(selection.monitor)?;
             let start = Instant::now();
+            let frame_step = Duration::from_millis(33);
+            let mut next = start;
             while start.elapsed() < duration {
                 let point = marker_at(geometry, start.elapsed());
                 let scene = gaze_scene(geometry, geometry, Some(point), &style);
                 overlay.present(&scene)?;
-                std::thread::sleep(Duration::from_millis(33));
+                next += frame_step;
+                std::thread::sleep(next.saturating_duration_since(Instant::now()));
             }
             overlay.set_visible(false);
+            let elapsed = start.elapsed();
+            print_overlay_stats(overlay.stats(), elapsed);
             Ok(())
         }
         OverlayHost::Egui(overlay) => {
@@ -292,6 +297,7 @@ pub fn run_overlay(options: OverlayOptions<'_>) -> Result<(), RunError> {
                 monitor: selection.monitor,
                 start: Instant::now(),
                 duration,
+                reported: false,
             };
             let native = eframe::NativeOptions {
                 viewport: eframe::egui::ViewportBuilder::default()
@@ -323,6 +329,7 @@ struct OverlayTestApp {
     monitor: usize,
     start: Instant,
     duration: Duration,
+    reported: bool,
 }
 
 impl eframe::App for OverlayTestApp {
@@ -343,6 +350,10 @@ impl eframe::App for OverlayTestApp {
         self.overlay.show_viewport(ui.ctx());
         ui.label("Moving gaze marker; close this window to stop.");
         if elapsed >= self.duration {
+            if !self.reported {
+                self.reported = true;
+                print_overlay_stats(self.overlay.stats(), elapsed);
+            }
             ui.ctx()
                 .send_viewport_cmd(eframe::egui::ViewportCommand::Close);
         }
@@ -358,6 +369,21 @@ fn marker_at(geometry: ScreenGeometry, elapsed: Duration) -> GazePoint {
         width * 0.5 + width * 0.35 * angle.cos(),
         height * 0.5 + height * 0.35 * angle.sin(),
     )
+}
+
+fn print_overlay_stats(stats: yet_stim::OverlayStats, elapsed: Duration) {
+    let seconds = elapsed.as_secs_f64().max(f64::EPSILON);
+    println!(
+        "overlay stats: {:.1} s · requested={} painted={} superseded={} \
+         outstanding={} errors={} · {:.1} painted/s",
+        seconds,
+        stats.requested,
+        stats.painted,
+        stats.superseded,
+        stats.outstanding(),
+        stats.errors,
+        stats.painted as f64 / seconds
+    );
 }
 
 fn off_with_notice(monitor: usize, notice: String) -> OverlaySelection {
