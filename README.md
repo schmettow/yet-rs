@@ -70,9 +70,10 @@ dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`.
   Windows/macOS `nokhwa`. Selecting another device reopens capture and drops
   the camera-specific calibration.
 - `yet-zero present <workspace>`: a presenter-only window with no console.
-  **F** toggles a purely visual gaze circle; **Space** starts/pauses; **F7/F9**
-  calibrate; **F8/Esc** abort or quit. The console has the same **F** follow
-  toggle.
+  **F** toggles a purely visual gaze circle; **P**/**Q** toggle the camera and
+  Quadbright picture-in-picture; **Space** starts/pauses; **F7/F9** calibrate;
+  **F8/Esc** abort or quit. The console has the same **F** follow toggle and
+  offers both PiP toggles as checkboxes.
 - `tools/run-naked.sh` — renders the two-output Sway profile and starts a naked
   compositor session, with `--render-only`, output-name, participant and binary
   overrides. The profile disables XWayland and keeps the console on one output
@@ -168,10 +169,14 @@ fall back to one column, and the left column scrolls independently. Log lines
 wrap instead of being clipped. The camera preview is served at up to 480×320.
 
 Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
-is enabled), **Abort** (F8), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
-center target; requires an existing fit), **Cancel calibration** (Esc), the
-**Camera preview** toggle (F10), and **Follow** (F; draws a gaze circle over the
-stimulus). The presenter selector lists the monitors reported by the platform,
+is enabled), **Abort** (F8), **Reset** (F4; returns a finished or aborted
+session to Idle so it can be calibrated and started again), **Calibrate** (F7,
+full 3×3 grid), **Quick** (F9, center target; requires an existing fit),
+**Cancel calibration** (Esc), the **Camera preview** toggle (F10), **Follow**
+(F; draws a gaze circle over the stimulus), and the **PiP camera** / **PiP
+quad** toggles (camera stream and Quadbright quadrant means drawn over the
+stimulus; presenter-only keys P and Q). The presenter selector lists the
+monitors reported by the platform,
 labelled from 1 with resolution and output name; the configuration index stays
 zero-based. On a two-monitor desk the presenter defaults to monitor 2 (index 1).
 Changing the selection recreates the stimulus window borderless-fullscreen on
@@ -228,15 +233,20 @@ cargo run --release -p yet-zero -- present examples/demo --participant demo01
 
 This opens only the stimulus window (or the 900×900 window of a Python
 workspace); there is no console. It is the quickest way to test the tracker on
-a single monitor. Keys: **F** toggles the follow circle, **Space** starts or
+a single monitor. Keys: **F** toggles the follow circle, **P** the camera
+picture-in-picture, **Q** the Quadbright picture-in-picture, **Space** starts or
 pauses, **F7** runs a full calibration, **F9** a quick recalibration, **F8**
 aborts and **Esc** quits. Follow is a live tracker view: while idle or paused it
 paints the circle over the current (or a neutral white) scene and keeps the
 camera polling, so it is visible immediately after calibration without starting
 a trial. The circle is purely visual: it is composed into a temporary scene for
-painting and never changes the trial scene or a CSV row. A small status strip
-shows calibration and camera errors outside a running trial. `--follow` starts
-with the circle enabled, which is useful for an automated or scripted check.
+painting and never changes the trial scene or a CSV row. The picture-in-picture
+views are visual, too: the camera stream sits in the bottom-right corner and
+the four quadrant means in the bottom-left, drawn after the scene and never
+written to the result file. A small status strip shows calibration, PiP and
+camera state outside a running trial. `--follow`, `--pip-camera` and
+`--pip-quad` start with the corresponding views enabled, which is useful for an
+automated or scripted check.
 
 ### Calibrating in the console
 
@@ -259,15 +269,28 @@ remains useful for camera checks without an experiment session.
 4. **F9** reruns a single center target. It requires an existing fit (calibrate
    with F7 first). The console reports the new RMSE and the drift against the
    previous quick run, or against the full run for the first quick run.
-5. **F5** starts the experiment. Gaze samples are mapped to stimulus pixels and
-   normalized coordinates and written per tick; without a fit the CSV keeps its
-   header and no gaze rows. Full calibration is available while idle or after a
-   session; quick recalibration also while paused, and the session stays paused
-   when it finishes.
+5. **F5** starts the experiment. With a fitted calibration, every trial is
+gated by an automatic quick recalibration: the next stimulus is composed, the
+session clock pauses, and one center target is shown over the blurred stimulus
+for the same settle/collect/report cycle as F9. When the run finishes, the
+clock resumes with the trial deadline shifted by the recalibration, so the
+stimulus is visible for its full `SLIDE_TIME`. Without a fit, the gate is
+skipped and the CSV keeps its header and no gaze rows. Gaze samples are mapped
+to stimulus pixels and normalized coordinates and written per tick. Full
+calibration is available while idle or after a session; a manual quick
+recalibration (**F9**) also works while paused and leaves the session paused
+when it finishes.
+
+A trial interrupted by a calibration failure resumes with the previous model;
+a cancelled automatic recalibration also resumes the trial. The gate is a
+console-flow feature: the headless runner and the pure engine stay deterministic
+and never start a calibration on their own.
 
 The preview is a diagnostic view on the console. It never touches the stimulus
 window, and preview updates are capped at about 15 Hz while the controller keeps
-its 60 Hz tick.
+its 60 Hz tick. The PiP toggles reuse the same preview frame; enabling either
+one makes the controller open the camera and keep it polling even when the
+console preview is off.
 
 ### Pilot test (UX-4)
 
@@ -569,12 +592,10 @@ cargo run --release -p yet-zero -- present /path/to/my-python-workspace --device
 `yet-zero plan <dir>` prints `Workspace: yet_zero Python (Config.csv)` for this
 layout.
 
-**Known parity difference:** the Python prototype runs a quick center-target
-recalibration before every stimulus. yet-rs keeps quick recalibration manual
-(**F9** in the console or presenter-only window); there is no automatic
-per-trial quick calibration yet. Full calibration is also automatic in yet-rs
-(targets are collected without a key press), which is an intentional
-improvement.
+**Known parity difference:** the Python prototype requires a key press to
+finish a calibration target, while yet-rs settles and collects automatically.
+That is an intentional improvement; the per-trial quick recalibration now
+matches the prototype, including the blurred stimulus preview.
 
 ## Design
 

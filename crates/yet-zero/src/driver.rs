@@ -220,6 +220,23 @@ where
         &mut self.report
     }
 
+    /// Clear per-run counters while keeping the result path and trial total.
+    pub fn reset_report(&mut self) {
+        let result_file = self.report.result_file.take();
+        let trials = self.report.trials;
+        self.report = RunReport {
+            result_file,
+            trials,
+            ..RunReport::default()
+        };
+    }
+
+    /// The presenter behind this runner, for visual-only overlays such as the
+    /// camera picture-in-picture.
+    pub fn presenter_mut(&mut self) -> &mut P {
+        self.presenter
+    }
+
     /// The scene that will be presented next.
     pub fn scene(&self) -> &Scene {
         &self.scene

@@ -39,12 +39,29 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   white) scene with the circle while idle or paused. This is the immediate
   tracker check presenter-only mode needs. A small presenter-only status strip
   shows calibration/camera state and errors, and hides during a running trial.
+- `yet-egui`: `PreviewFrame` carries the Quadbright quadrant means
+  (`quad`) and `PreviewState` has `pip_stream` / `pip_quad`; the preview panel
+  keeps its image when only the presenter PiP is enabled.
 - `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
   `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
   adapters moved to `yet-zero::camera`.
 
 ### Added
 
+- Console **Reset** button (F4): returns a finished or aborted session to
+  `Idle`, clears the session error and re-enables Start and Calibrate, so the
+  experimenter no longer has to restart the application after an abort.
+- Automatic per-trial quick recalibration with the Python control flow: after a
+  trial ends, the controller composes the next stimulus, pauses the engine
+  clock and runs one center target over the **blurred** stimulus. When the run
+  finishes or is cancelled, the trial resumes with its deadline shifted by the
+  recalibration. This is a console/presenter flow; the pure engine and the
+  headless runner stay deterministic.
+- Presenter picture-in-picture: the camera stream (bottom-right) and the
+  Quadbright quadrant means (bottom-left, labelled `Quadbright · eye ROI`) are
+  painted over the stimulus. Console checkboxes **PiP camera** / **PiP quad**,
+  presenter-only keys `P`/`Q`, and launch flags `--pip-camera` / `--pip-quad`.
+  Purely visual; the PiP never enters the trial scene or the result CSV.
 - Python `yet_zero` workspace compatibility: `Config.csv` plus
   `Stimuli/Stimuli.csv` loads without conversion, using `SLIDE_TIME`,
   `SHUFFLE`/`SEED`, `STIM_FILE`, the `File` column and the Python result prefix

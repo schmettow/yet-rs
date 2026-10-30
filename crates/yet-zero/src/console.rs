@@ -10,7 +10,9 @@
 //!
 //! Keyboard shortcuts: `F5` starts, `F6` pauses or resumes, `F7` runs a full
 //! calibration, `F9` a quick recalibration, `F10` toggles the camera preview,
-//! `Esc` cancels calibration, and `F8` aborts the session.
+//! `Esc` cancels calibration, `F8` aborts the session, and `F4` resets a
+//! finished or aborted session to idle. The camera and Quadbright picture-in-
+//! picture toggles are console checkboxes and presenter-only `P`/`Q`.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -25,7 +27,7 @@ use yet_core::{GazePoint, QuadBrightness};
 use yet_egui::console::{
     CameraChoice, ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, MonitorChoice, PreviewFrame,
 };
-use yet_egui::{EguiOverlay, EguiPresenter, PresenterConfig};
+use yet_egui::{EguiOverlay, EguiPresenter, PresenterConfig, PresenterPreview};
 use yet_stim::layout::StimulusPlacement;
 use yet_stim::{
     gaze_scene, step, CalibrationGrid, CalibrationPhase, CalibrationRun, CameraConfig,
@@ -498,6 +500,7 @@ fn run_loop<G>(
     let mut preview_generation = 0_u64;
     let mut last_preview: Option<Instant> = None;
     let mut first_trial = false;
+    let mut auto_quick = false;
     let overlay_style = GazeMarkerStyle::default();
     let mut overlay_visible = false;
     let mut overlay_gaze: Option<GazePoint> = None;
@@ -557,14 +560,17 @@ fn run_loop<G>(
         );
 
         // Console intent: preview on/off, gaze circle and a retry request.
-        let (preview_enabled, retry, follow) = {
+        let (preview_enabled, pip_stream, pip_quad, retry, follow) = {
             let console = lock_console(shared);
             (
                 console.preview.enabled,
+                console.preview.pip_stream,
+                console.preview.pip_quad,
                 console.preview.retry,
                 console.follow,
             )
         };
+        let preview_active = preview_enabled || pip_stream || pip_quad;
         if retry {
             let mut console = lock_console(shared);
             console.preview.retry = false;
@@ -583,11 +589,11 @@ fn run_loop<G>(
         let calibrating = calibration.as_ref().is_some_and(CalibrationRun::is_active);
         let running = state.phase == Phase::Running;
         let fitted = calibration.as_ref().is_some_and(CalibrationRun::is_fitted);
-        if (preview_enabled || (follow && fitted)) && tracker.is_none() {
+        if (preview_active || (follow && fitted)) && tracker.is_none() {
             tracker = open_tracker(camera_config, shared);
         }
 
-        let want_features = calibrating || preview_enabled || (fitted && (running || follow));
+        let want_features = calibrating || preview_active || (fitted && (running || follow));
         let mut features: Option<QuadBrightness> = None;
 
         if want_features {
@@ -604,26 +610,26 @@ fn run_loop<G>(
                             }
                         }
                     }
-                    if preview_enabled
+                    if preview_active
                         && last_preview
                             .is_none_or(|last| now.duration_since(last) >= PREVIEW_INTERVAL)
                     {
                         update_preview(
                             shared,
                             tracker,
-                            polled,
+                            &polled,
                             calibration.as_ref(),
                             runner.geometry().size_px,
                             &mut preview_generation,
                         );
                         last_preview = Some(now);
                     }
-                    if preview_enabled {
+                    if preview_active {
                         let mut console = lock_console(shared);
                         console.preview.error = None;
                         console.preview.capture_fps = tracker.capture_fps();
                     }
-                } else if preview_enabled {
+                } else if preview_active {
                     if let Some(age) = tracker.last_frame_age(now) {
                         if age > CAMERA_STALE {
                             let mut console = lock_console(shared);
@@ -636,6 +642,7 @@ fn run_loop<G>(
                 }
             }
         }
+        sync_presenter_preview(runner, shared, pip_stream, pip_quad);
 
         // Wait for a command or the next tick.
         let active = running || calibrating || (follow && fitted);
@@ -671,7 +678,8 @@ fn run_loop<G>(
                                     "starting without calibration; no gaze rows will be written",
                                 );
                             }
-                            let effects = step(state, EngineEvent::Start, at);
+                            let mut effects = step(state, EngineEvent::Start, at);
+                            let trial_effect = split_trial_start(&mut effects);
                             clear_gaze(shared, latest_gaze);
                             if let Err(error) = apply_effects(
                                 state,
@@ -683,6 +691,34 @@ fn run_loop<G>(
                                 &mut first_trial,
                             ) {
                                 fail(state, runner, shared, error);
+                            } else if let Some(effect) = trial_effect {
+                                if let Err(error) = apply_effects(
+                                    state,
+                                    runner,
+                                    vec![effect],
+                                    shared,
+                                    at,
+                                    start,
+                                    &mut first_trial,
+                                ) {
+                                    fail(state, runner, shared, error);
+                                } else {
+                                    match begin_auto_quick(
+                                        start,
+                                        at,
+                                        state,
+                                        runner,
+                                        &mut calibration,
+                                        &mut tracker,
+                                        camera_config,
+                                        shared,
+                                        &mut last_calibration_phase,
+                                        &mut last_calibration_target,
+                                    ) {
+                                        Ok(started) => auto_quick = started,
+                                        Err(error) => fail(state, runner, shared, error),
+                                    }
+                                }
                             }
                             last_tick = Instant::now();
                             next_tick = last_tick;
@@ -719,6 +755,7 @@ fn run_loop<G>(
                     ExperimentCommand::Abort => {
                         if calibrating {
                             cancel_calibration(state, runner, calibration.as_mut(), shared, start);
+                            auto_quick = false;
                         }
                         if matches!(state.phase, Phase::Running | Phase::Paused) {
                             let effects = step(state, EngineEvent::Abort, at);
@@ -734,6 +771,40 @@ fn run_loop<G>(
                             ) {
                                 fail(state, runner, shared, error);
                             }
+                        }
+                        last_tick = Instant::now();
+                        next_tick = last_tick;
+                    }
+                    ExperimentCommand::Reset => {
+                        if calibrating {
+                            cancel_calibration(state, runner, calibration.as_mut(), shared, start);
+                        }
+                        let effects = step(state, EngineEvent::Reset, at);
+                        clear_gaze(shared, latest_gaze);
+                        if let Err(error) = apply_effects(
+                            state,
+                            runner,
+                            effects,
+                            shared,
+                            at,
+                            start,
+                            &mut first_trial,
+                        ) {
+                            fail(state, runner, shared, error);
+                        }
+                        runner.reset_report();
+                        update_progress(shared, runner.report(), state, at);
+                        first_trial = false;
+                        auto_quick = false;
+                        {
+                            let mut console = lock_console(shared);
+                            console.error = None;
+                            console.elapsed = Duration::ZERO;
+                            console.current_block = None;
+                            console.current_trial = None;
+                            console.current_stimulus = None;
+                            console
+                                .log(LogLevel::Info, "session reset; ready to calibrate or start");
                         }
                         last_tick = Instant::now();
                         next_tick = last_tick;
@@ -782,13 +853,21 @@ fn run_loop<G>(
                                 shared,
                                 &mut last_calibration_phase,
                                 &mut last_calibration_target,
+                                false,
                             );
                             last_tick = Instant::now();
                             next_tick = last_tick;
                         }
                     }
                     ExperimentCommand::CancelCalibration => {
-                        cancel_calibration(state, runner, calibration.as_mut(), shared, start);
+                        let cancelled =
+                            cancel_calibration(state, runner, calibration.as_mut(), shared, start);
+                        if cancelled && auto_quick {
+                            auto_quick = false;
+                            if let Err(error) = resume_after_auto_quick(state, runner, shared, at) {
+                                fail(state, runner, shared, error);
+                            }
+                        }
                     }
                 }
             }
@@ -840,7 +919,13 @@ fn run_loop<G>(
             }
             let finished = calibration.as_ref().is_none_or(|run| !run.is_active());
             let phase = calibration.as_ref().map(CalibrationRun::phase);
-            if failed {
+            if finished && auto_quick {
+                auto_quick = false;
+                if let Err(error) = resume_after_auto_quick(state, runner, shared, at) {
+                    fail(state, runner, shared, error);
+                    continue;
+                }
+            } else if failed {
                 finish_calibration_view(state, runner, at);
             } else if finished {
                 if phase == Some(CalibrationPhase::Done) {
@@ -898,12 +983,45 @@ fn run_loop<G>(
         let at = session_time(start, now);
         let dt = now.duration_since(last_tick).max(Duration::from_micros(1));
         last_tick = now;
-        let effects = step(state, EngineEvent::Tick, at);
+        let mut effects = step(state, EngineEvent::Tick, at);
+        let trial_effect = split_trial_start(&mut effects);
         if let Err(error) =
             apply_effects(state, runner, effects, shared, at, start, &mut first_trial)
         {
             fail(state, runner, shared, error);
             continue;
+        }
+        if let Some(effect) = trial_effect {
+            if let Err(error) = apply_effects(
+                state,
+                runner,
+                vec![effect],
+                shared,
+                at,
+                start,
+                &mut first_trial,
+            ) {
+                fail(state, runner, shared, error);
+                continue;
+            }
+            match begin_auto_quick(
+                start,
+                at,
+                state,
+                runner,
+                &mut calibration,
+                &mut tracker,
+                camera_config,
+                shared,
+                &mut last_calibration_phase,
+                &mut last_calibration_target,
+            ) {
+                Ok(started) => auto_quick = started,
+                Err(error) => {
+                    fail(state, runner, shared, error);
+                    continue;
+                }
+            }
         }
         if state.phase == Phase::Running {
             let experiment_t = SessionTime::from_duration(state.elapsed(at).unwrap_or_default());
@@ -1055,6 +1173,7 @@ fn start_quick_calibration<G>(
     shared: &Arc<Mutex<ConsoleState>>,
     last_phase: &mut CalibrationPhase,
     last_target: &mut Option<usize>,
+    automatic: bool,
 ) where
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
@@ -1111,9 +1230,13 @@ fn start_quick_calibration<G>(
                 console.calibration.error = None;
                 console.log(
                     LogLevel::Info,
-                    "quick recalibration: look at the orange center target",
+                    if automatic {
+                        "automatic quick recalibration: look at the orange center target"
+                    } else {
+                        "quick recalibration: look at the orange center target"
+                    },
                 );
-                if state.phase == Phase::Paused {
+                if !automatic && state.phase == Phase::Paused {
                     console.log(
                         LogLevel::Info,
                         "the session is paused; it stays paused after recalibration",
@@ -1127,6 +1250,108 @@ fn start_quick_calibration<G>(
         }
         Err(error) => log_error(shared, format!("quick recalibration: {error}")),
     }
+}
+
+/// Remove a `TrialStarted` effect from a batch so the controller can gate the
+/// trial behind an automatic quick recalibration.
+fn split_trial_start(effects: &mut Vec<Effect>) -> Option<Effect> {
+    let index = effects
+        .iter()
+        .position(|effect| matches!(effect, Effect::TrialStarted { .. }))?;
+    Some(effects.remove(index))
+}
+
+/// Pause a freshly started trial and run a quick recalibration over its blurred
+/// stimulus, mirroring the Python `prepareStimulus`/`Quick` states.
+///
+/// The engine keeps the trial deadline fixed while paused; resuming shifts it by
+/// the duration of the recalibration. Returns whether a run is now active.
+#[allow(clippy::too_many_arguments)]
+fn begin_auto_quick<G>(
+    start: Instant,
+    at: SessionTime,
+    state: &mut EngineState,
+    runner: &mut SessionRunner<'_, std::io::BufWriter<std::fs::File>, EguiPresenter, G>,
+    calibration: &mut Option<CalibrationRun>,
+    tracker: &mut Option<Tracker>,
+    camera_config: &CameraConfig,
+    shared: &Arc<Mutex<ConsoleState>>,
+    last_phase: &mut CalibrationPhase,
+    last_target: &mut Option<usize>,
+) -> Result<bool, RunError>
+where
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
+{
+    let eligible = calibration
+        .as_ref()
+        .is_some_and(|run| run.is_fitted() && !run.is_active());
+    if !eligible {
+        return Ok(false);
+    }
+    if tracker.is_none() {
+        *tracker = open_tracker(camera_config, shared);
+    }
+    if tracker.is_none() {
+        return Ok(false);
+    }
+    let surface = runner.geometry().size_px;
+    if calibration
+        .as_ref()
+        .is_some_and(|run| run.grid().surface_px() != surface)
+    {
+        log_warning(
+            shared,
+            "the presenter surface changed; run a full calibration first",
+        );
+        return Ok(false);
+    }
+
+    for effect in step(state, EngineEvent::Pause, at) {
+        record_effect(shared, &effect);
+        runner.apply(effect)?;
+    }
+    start_quick_calibration(
+        start,
+        state,
+        runner,
+        calibration,
+        tracker,
+        camera_config,
+        shared,
+        last_phase,
+        last_target,
+        true,
+    );
+    if calibration.as_ref().is_some_and(CalibrationRun::is_active) {
+        Ok(true)
+    } else {
+        resume_after_auto_quick(state, runner, shared, at)?;
+        Ok(false)
+    }
+}
+
+/// Resume a trial that was paused for an automatic quick recalibration.
+fn resume_after_auto_quick<G>(
+    state: &mut EngineState,
+    runner: &mut SessionRunner<'_, std::io::BufWriter<std::fs::File>, EguiPresenter, G>,
+    shared: &Arc<Mutex<ConsoleState>>,
+    at: SessionTime,
+) -> Result<(), RunError>
+where
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
+{
+    if state.phase != Phase::Paused {
+        return Ok(());
+    }
+    for effect in step(state, EngineEvent::Resume, at) {
+        record_effect(shared, &effect);
+        runner.apply(effect)?;
+    }
+    lock_console(shared).log(
+        LogLevel::Info,
+        "quick recalibration done; the trial resumes",
+    );
+    Ok(())
 }
 
 fn cancel_calibration<G>(
@@ -1254,7 +1479,7 @@ fn log_calibration_transition(
 fn update_preview(
     shared: &Arc<Mutex<ConsoleState>>,
     tracker: &Tracker,
-    polled: crate::tracker::PolledFrame,
+    polled: &crate::tracker::PolledFrame,
     run: Option<&CalibrationRun>,
     surface_px: (u32, u32),
     generation: &mut u64,
@@ -1279,6 +1504,7 @@ fn update_preview(
         height,
         data: Arc::from(data),
         generation: *generation,
+        quad: Some(polled.features),
         gaze,
         gaze_normalized,
     };
@@ -1286,6 +1512,36 @@ fn update_preview(
     console.preview.frame = Some(frame);
     console.preview.error = None;
     console.preview.capture_fps = tracker.capture_fps();
+}
+
+/// Mirror the shared preview frame and the PiP flags onto the presenter.
+fn sync_presenter_preview<G>(
+    runner: &mut SessionRunner<'_, std::io::BufWriter<std::fs::File>, EguiPresenter, G>,
+    shared: &Arc<Mutex<ConsoleState>>,
+    pip_stream: bool,
+    pip_quad: bool,
+) where
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
+{
+    let preview = if pip_stream || pip_quad {
+        let console = lock_console(shared);
+        console
+            .preview
+            .frame
+            .as_ref()
+            .map(|frame| PresenterPreview {
+                width: frame.width,
+                height: frame.height,
+                data: Arc::clone(&frame.data),
+                generation: frame.generation,
+                quad: frame.quad,
+                show_stream: pip_stream,
+                show_quad: pip_quad,
+            })
+    } else {
+        None
+    };
+    runner.presenter_mut().set_preview(preview);
 }
 
 fn refresh_camera_devices(shared: &Arc<Mutex<ConsoleState>>) {
@@ -1544,4 +1800,54 @@ fn log_warning(shared: &Arc<Mutex<ConsoleState>>, message: impl Into<String>) {
 
 fn log_error(shared: &Arc<Mutex<ConsoleState>>, message: impl Into<String>) {
     lock_console(shared).log(LogLevel::Error, message);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use yet_stim::{BlockId, PresenterCommand, Scene, Stimulus, StimulusId, StimulusKind};
+
+    use super::{split_trial_start, Effect};
+
+    fn trial_start() -> Effect {
+        Effect::TrialStarted {
+            block: BlockId::from("B1"),
+            trial_index: 0,
+            stimulus: Stimulus {
+                id: StimulusId::from("face"),
+                kind: StimulusKind::Image,
+                path: PathBuf::from("stimuli/face.png"),
+                duration: Duration::from_secs(3),
+                fps: None,
+                looped: false,
+                audio: None,
+            },
+        }
+    }
+
+    #[test]
+    fn the_trial_start_is_split_out_and_other_effects_keep_their_order() {
+        let mut effects = vec![
+            Effect::Present(Scene::new()),
+            trial_start(),
+            Effect::Presenter(PresenterCommand::Stop),
+        ];
+
+        let trial = split_trial_start(&mut effects).expect("a trial start");
+
+        assert!(matches!(trial, Effect::TrialStarted { .. }));
+        assert_eq!(effects.len(), 2);
+        assert!(matches!(effects[0], Effect::Present(_)));
+        assert!(matches!(effects[1], Effect::Presenter(_)));
+    }
+
+    #[test]
+    fn a_tick_without_a_new_trial_yields_no_gate() {
+        let mut effects = vec![Effect::Presenter(PresenterCommand::Pause)];
+
+        assert!(split_trial_start(&mut effects).is_none());
+        assert_eq!(effects.len(), 1);
+    }
 }

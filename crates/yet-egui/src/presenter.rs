@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use image::RgbaImage;
+use yet_core::QuadBrightness;
 use yet_stim::media::NullAudioPlayer;
 use yet_stim::{
     AudioPlayer, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
@@ -96,6 +97,28 @@ pub struct PresenterStatus {
     pub last_frame_at: Option<SessionTime>,
 }
 
+/// Camera picture-in-picture data for the presenter.
+///
+/// The controller sends this at preview rate; painting happens in the deferred
+/// viewport. It is purely visual and never changes the trial scene.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PresenterPreview {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Row-major 8-bit grayscale pixels.
+    pub data: Arc<[u8]>,
+    /// Generation used to decide when to re-upload the texture.
+    pub generation: u64,
+    /// Quadrant means of the eye region.
+    pub quad: Option<QuadBrightness>,
+    /// Whether to draw the camera stream.
+    pub show_stream: bool,
+    /// Whether to draw the Quadbright visualization.
+    pub show_quad: bool,
+}
+
 /// The painting side of a presenter, shared with the controller thread.
 pub struct PresenterState {
     config: PresenterConfig,
@@ -103,6 +126,8 @@ pub struct PresenterState {
     media: MediaStore,
     scene: Scene,
     frame: Option<FrameStamp>,
+    preview: Option<PresenterPreview>,
+    preview_texture: Option<(u64, egui::TextureHandle)>,
     dirty: bool,
     ready: bool,
     focused: bool,
@@ -132,6 +157,8 @@ impl PresenterState {
             media: MediaStore::default(),
             scene: Scene::new(),
             frame: None,
+            preview: None,
+            preview_texture: None,
             dirty: false,
             ready: false,
             focused: true,
@@ -234,6 +261,29 @@ impl PresenterState {
         self.scene = Scene::new();
         self.frame = None;
         self.dirty = true;
+    }
+
+    /// Replace the camera picture-in-picture over the stimulus.
+    ///
+    /// Purely visual: the preview is painted after the scene and never enters
+    /// the scene itself or the result file.
+    pub fn set_preview(&mut self, preview: Option<PresenterPreview>) {
+        let changed = match (&self.preview, &preview) {
+            (Some(old), Some(new)) => {
+                old.generation != new.generation
+                    || old.show_stream != new.show_stream
+                    || old.show_quad != new.show_quad
+                    || old.quad != new.quad
+            }
+            (None, None) => false,
+            _ => true,
+        };
+        self.preview = preview;
+        if changed {
+            if let Some(ctx) = &self.ctx {
+                ctx.request_repaint_of(self.active_viewport);
+            }
+        }
     }
 
     /// Record a scene for the next paint.
@@ -356,9 +406,147 @@ impl PresenterState {
             &mut self.media,
             &ctx,
         );
+        self.paint_preview(ui, clip_rect);
 
         self.paints += 1;
         self.dirty = false;
+    }
+
+    /// Paint the camera stream and Quadbright picture-in-picture overlays.
+    fn paint_preview(&mut self, ui: &egui::Ui, clip_rect: egui::Rect) {
+        let Some(preview) = self.preview.clone() else {
+            return;
+        };
+        if !preview.show_stream && !preview.show_quad {
+            return;
+        }
+
+        let width = (clip_rect.width() * 0.20).clamp(120.0, 320.0);
+        let margin = (clip_rect.width() * 0.015).clamp(10.0, 28.0);
+        let painter = ui.painter();
+
+        if preview.show_stream {
+            if let Some(texture) = self.preview_texture(ui.ctx(), &preview) {
+                let natural = egui::vec2(preview.width.max(1) as f32, preview.height.max(1) as f32);
+                let mut size = egui::vec2(width, width * natural.y / natural.x);
+                let max_height = clip_rect.height() * 0.4;
+                if size.y > max_height {
+                    size = egui::vec2(max_height * natural.x / natural.y, max_height);
+                }
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        clip_rect.right() - margin - size.x,
+                        clip_rect.bottom() - margin - size.y,
+                    ),
+                    size,
+                );
+                painter.rect_filled(rect.expand(2.0), 4.0, egui::Color32::from_black_alpha(170));
+                painter.image(
+                    texture,
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+                painter.rect_stroke(
+                    rect,
+                    2.0,
+                    egui::Stroke::new(1.5, egui::Color32::WHITE),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+
+        if preview.show_quad {
+            let quad = preview.quad.unwrap_or_default().to_array();
+            let size = egui::vec2(width, width * 0.75);
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    clip_rect.left() + margin,
+                    clip_rect.bottom() - margin - size.y,
+                ),
+                size,
+            );
+            painter.rect_filled(rect.expand(2.0), 4.0, egui::Color32::from_black_alpha(170));
+            let font = (width * 0.075).clamp(11.0, 24.0);
+            for (index, value) in quad.iter().enumerate() {
+                let column = index % 2;
+                let row = index / 2;
+                let cell = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(column as f32 * size.x / 2.0, row as f32 * size.y / 2.0),
+                    egui::vec2(size.x / 2.0, size.y / 2.0),
+                );
+                let level = value.clamp(0.0, 255.0).round() as u8;
+                painter.rect_filled(cell, 0.0, egui::Color32::from_gray(level));
+                let text_color = if level > 140 {
+                    egui::Color32::BLACK
+                } else {
+                    egui::Color32::WHITE
+                };
+                painter.text(
+                    cell.center(),
+                    egui::Align2::CENTER_CENTER,
+                    level.to_string(),
+                    egui::FontId::monospace(font),
+                    text_color,
+                );
+            }
+            let cross = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(120));
+            painter.line_segment([rect.center_top(), rect.center_bottom()], cross);
+            painter.line_segment([rect.left_center(), rect.right_center()], cross);
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.5, egui::Color32::WHITE),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.left_top() - egui::vec2(0.0, 4.0),
+                egui::Align2::LEFT_BOTTOM,
+                "Quadbright · eye ROI",
+                egui::FontId::proportional(font),
+                egui::Color32::WHITE,
+            );
+        }
+    }
+
+    fn preview_texture(
+        &mut self,
+        ctx: &egui::Context,
+        preview: &PresenterPreview,
+    ) -> Option<egui::TextureId> {
+        let expected = preview.width as usize * preview.height as usize;
+        if expected == 0 || preview.data.len() != expected {
+            return None;
+        }
+        let uploaded = self
+            .preview_texture
+            .as_ref()
+            .map(|(generation, _)| *generation);
+        if uploaded != Some(preview.generation) {
+            let image = egui::ColorImage::from_gray(
+                [preview.width as usize, preview.height as usize],
+                &preview.data,
+            );
+            match &mut self.preview_texture {
+                Some((generation, texture)) => {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                    *generation = preview.generation;
+                }
+                None => {
+                    self.preview_texture = Some((
+                        preview.generation,
+                        ctx.load_texture(
+                            "yet-presenter-preview",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    ));
+                }
+            }
+        }
+        self.preview_texture
+            .as_ref()
+            .map(|(_, texture)| texture.id())
     }
 
     fn paint_rate(&self) -> Option<f32> {
@@ -443,6 +631,11 @@ impl EguiPresenter {
         if let Some(ctx) = ctx {
             ctx.request_repaint_of(viewport);
         }
+    }
+
+    /// Replace the camera picture-in-picture over the stimulus.
+    pub fn set_preview(&self, preview: Option<PresenterPreview>) {
+        self.lock().set_preview(preview);
     }
 
     fn request_repaint(&self) {
@@ -569,6 +762,7 @@ pub(crate) fn lock_state(state: &Arc<Mutex<PresenterState>>) -> MutexGuard<'_, P
 mod tests {
     use std::time::{Duration, Instant};
 
+    use eframe::egui;
     use yet_stim::{
         ClockSource, FrameStamp, MediaId, Presenter, PresenterCommand, PresenterError, Scene,
         SessionTime,
@@ -685,5 +879,56 @@ mod tests {
             }
             other => panic!("unexpected result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_presenter_preview_is_painted_over_the_scene() {
+        use std::sync::Arc;
+
+        use yet_core::QuadBrightness;
+
+        use super::PresenterPreview;
+
+        let ctx = egui::Context::default();
+        let mut state = PresenterState::new(PresenterConfig::new(0, false, (320, 240), 1.0));
+        state.set_preview(Some(PresenterPreview {
+            width: 2,
+            height: 2,
+            data: Arc::from(vec![10_u8, 20, 30, 40, 50, 60, 70, 80]),
+            generation: 1,
+            quad: Some(QuadBrightness::new(10.0, 20.0, 30.0, 40.0)),
+            show_stream: true,
+            show_quad: true,
+        }));
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| state.ui(ui));
+
+        assert!(!output.shapes.is_empty());
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn an_unchanged_preview_does_not_request_a_new_generation() {
+        use std::sync::Arc;
+
+        use super::PresenterPreview;
+
+        let ctx = egui::Context::default();
+        let mut state = PresenterState::new(PresenterConfig::new(0, false, (320, 240), 1.0));
+        state.ctx = Some(ctx);
+        let preview = PresenterPreview {
+            width: 1,
+            height: 1,
+            data: Arc::from(vec![128_u8]),
+            generation: 3,
+            quad: None,
+            show_stream: true,
+            show_quad: false,
+        };
+
+        state.set_preview(Some(preview.clone()));
+        state.set_preview(Some(preview));
+
+        assert_eq!(state.preview.as_ref().map(|p| p.generation), Some(3));
     }
 }

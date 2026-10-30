@@ -21,7 +21,8 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - [ ] **M4 End-to-end experiment (S7)** — console, fullscreen presenter,
   calibration and a pilot session. The S7 console now runs full and quick
   calibration, shows a live camera preview and writes gaze rows once fitted;
-  the interactive desktop validation and the 2–3-person pilot remain.
+  S8.6 adds the Python per-trial quick gate, presenter PiP and console Reset.
+  The 2–3-person pilot remains.
 - [x] **M5 Media complete (S8)** — PNG sequences and WAV audio play; the audio
   clock is master, drift and skipped frames are shown, and FFmpeg is a setup
   step only. A beep/flash A/V recording and the Windows/macOS runtime remain.
@@ -119,9 +120,20 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   and a console camera selector (Linux V4L2, Windows/macOS `nokhwa`) that
   reopens capture and invalidates calibration. Added `yet-zero present`, a
   presenter-only window with `F` follow, and a purely visual gaze circle in the
-  console/presenter. 274 tests pass. Follow polls and paints while idle or
-  paused, and the windowed presenter uses a stable logical size (the growth
-  loop on `yet-zero run` is fixed).
+  console/presenter. Follow polls and paints while idle or paused, and the
+  windowed presenter uses a stable logical size (the growth loop on `yet-zero
+  run` is fixed).
+- **S8.6 Python control-flow parity (2026-10-30)** — automatic per-trial quick
+  recalibration over the blurred next stimulus, exactly like `main.py`: the
+  controller pauses the clock, collects one center target, and resumes with the
+  trial deadline shifted. The pure engine and headless runner stay
+  deterministic. Added presenter PiP for the camera stream and the Quadbright
+  means (console checkboxes, presenter `P`/`Q`, `--pip-camera`/`--pip-quad`),
+  and a console **Reset** (`F4`) that returns an aborted or finished session to
+  Idle. 283 tests pass; the full calibration → quick → stimulus cycle and both
+  PiP views were exercised on the X11 workstation with the StreamCam. The
+  console buttons could not be driven by XTest (window-manager focus), so the
+  Reset path is validated by engine and UI-state tests.
 - **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1

@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-use yet_core::{CalibrationReport, GazePoint};
+use yet_core::{CalibrationReport, GazePoint, QuadBrightness};
 use yet_stim::{BlockId, CalibrationPhase, CalibrationSnapshot, Phase, StimulusId};
 
 /// Maximum number of log lines kept in memory.
@@ -137,6 +137,8 @@ pub struct PreviewFrame {
     pub data: Arc<[u8]>,
     /// Monotonic generation; the UI re-uploads the texture when it changes.
     pub generation: u64,
+    /// Quadrant means of the eye region at this generation.
+    pub quad: Option<QuadBrightness>,
     /// Predicted gaze in monitor pixels.
     pub gaze: Option<GazePoint>,
     /// Predicted gaze normalized to the presenter size.
@@ -146,8 +148,13 @@ pub struct PreviewFrame {
 /// Live camera preview state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewState {
-    /// Whether the experimenter enabled the preview.
+    /// Whether the experimenter enabled the console preview.
     pub enabled: bool,
+    /// Draw the camera stream as a picture-in-picture on the presenter.
+    pub pip_stream: bool,
+    /// Draw the Quadbright quadrant means as a picture-in-picture on the
+    /// presenter.
+    pub pip_quad: bool,
     /// Ask the controller to retry opening the camera.
     pub retry: bool,
     /// Camera or ROI error.
@@ -483,6 +490,11 @@ impl ConsoleState {
         !self.calibration.active
             && matches!(self.phase, Phase::Idle | Phase::Finished | Phase::Aborted)
     }
+
+    /// Whether a finished or aborted session can return to idle.
+    pub fn can_reset(&self) -> bool {
+        !self.calibration.active && matches!(self.phase, Phase::Finished | Phase::Aborted)
+    }
 }
 
 #[cfg(test)]
@@ -516,6 +528,8 @@ mod tests {
         assert!(state.camera_devices.is_empty());
         assert!(!state.camera_rescan);
         assert!(!state.follow);
+        assert!(!state.preview.pip_stream);
+        assert!(!state.preview.pip_quad);
     }
 
     #[test]
@@ -683,6 +697,24 @@ mod tests {
         assert!(!state.can_abort());
         assert!(state.can_cancel_calibration());
         assert!(!state.can_configure());
+    }
+
+    #[test]
+    fn reset_is_available_after_abort_or_finish() {
+        let mut state = state();
+        assert!(!state.can_reset());
+
+        state.phase = Phase::Running;
+        assert!(!state.can_reset());
+
+        state.phase = Phase::Aborted;
+        assert!(state.can_reset());
+
+        state.phase = Phase::Finished;
+        assert!(state.can_reset());
+
+        state.calibration.active = true;
+        assert!(!state.can_reset());
     }
 
     #[test]

@@ -169,6 +169,9 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D26** | **Python workspaces are first-class.** A directory with `Config.csv` and `Stimuli/` loads without conversion; `SLIDE_TIME`, `SHUFFLE`/`SEED`, `STIM_FILE` and the `File` column map to the native model, results go to `Data/` with the `Yeta1` prefix, and an optional `config.toml` overrides machine settings. | 1.0 parity decision 2026-10-26 |
 | **D27** | **Camera selection is a session setting.** Enumeration is per platform (`linuxvideo` V4L2, `nokhwa` Windows/macOS). Changing the device reopens capture and invalidates calibration; selection is locked while a session or calibration is active. | 1.0 parity decision |
 | **D28** | **Follow is purely visual.** The gaze circle is appended to a temporary scene for painting and never changes the stored stimulus scene or CSV. Presenter-only mode has no console and exposes `F`/`Space`/`F7`/`F9`/`F8`/`Esc`. | 1.0 parity decision |
+| **D29** | **Per-trial quick recalibration is a controller gate, not an engine state.** Before a new trial is presented, the controller applies `TrialStarted`, pauses the engine at the same session time, runs `CalibrationRun::quick` over the blurred next stimulus, then resumes; the pause shifts the trial deadline by the recalibration duration. The pure `step` engine and the headless runner never calibrate on their own, so headless output stays deterministic. The gate is skipped without a fitted model. | Python parity decision 2026-10-30; `main.py` `prepareStimulus`/`Quick` |
+| **D30** | **Presenter PiP is purely visual and shares the preview capture.** Camera stream (bottom-right) and Quadbright means (bottom-left) are painted after the scene by `PresenterState`, outside `Scene`, so they never reach the CSV or a recorded scene. Toggles: console checkboxes, presenter-only `P`/`Q`, and `--pip-camera`/`--pip-quad`. `PreviewState::pip_stream`/`pip_quad` open the camera even when the console preview is off. | 1.0 parity decision |
+| **D31** | **Abort is recoverable in the console.** `ExperimentCommand::Reset` / `F4` returns `Finished` or `Aborted` to `Idle`, clears the session error and re-enables Start and Calibrate; the engine rejects Reset while Running or Paused. The plan, calibration model and result path are kept. | Usability finding 2026-10-30 |
 
 ---
 
@@ -557,7 +560,7 @@ flowchart TD
 | **M1 Risks retired** | S1 | Spike reports and go/no-go for eframe, overlay, camera, audio | Conditional go; target-platform runtime matrix open |
 | **M2 Headless experiment** | S3 | A 2-block experiment runs without a window and writes a compatible CSV | Met |
 | **M3 Eye tracking parity** | S5 | Quad features match Python; calibration works on the real camera | Partial: Linux and synthetic parity; human RMSE and macOS/Windows open |
-| **M4 End-to-end experiment** | S7 | Console + fullscreen presenter + calibration + pilot session | Partial: flow implemented; UX-4 pilot open |
+| **M4 End-to-end experiment** | S7 | Console + fullscreen presenter + calibration + pilot session | Partial: flow implemented, including the S8.6 Python per-trial quick gate and presenter PiP; UX-4 pilot open |
 | **M5 Media complete** | S8 | PNG sequence + WAV in sync; drift and underruns logged | Partial: Linux point measurements; p95 and macOS/Windows open |
 | **M6 Overlay parity** | S10 | Windows/macOS/layer-shell Wayland or a naked compositor passes; GNOME is documented as unsupported | Partial: overlay core implemented; layer-shell protocol validated; naked-compositor launcher, decision record, coalescing counters and a 30 s X11 smoke are in place; Windows/macOS/HiDPI runtime and the 60-minute focus soak open |
 | **M7 v0.1.0** | S11 | Release checklist, pilot data and docs complete | Not started |
@@ -1034,6 +1037,47 @@ and all S8 media/demo output are untouched.
 
 **Gate status:** met. The later E1–E3 work is additive; `LinearGazeModel` is
 still the v1 glance model.
+
+### Sprint 8.6 — Python control-flow parity and presenter feedback (implemented 2026-10-30)
+
+**Goal:** match the Python `main.py` flow — full calibration, then per-trial
+quick recalibration over a blurred next stimulus, then the stimulus — and give
+the experimenter immediate visual feedback on the presenter.
+
+| ID | Story | Size | Done when |
+|---|---|---|---|
+| PAR-1 | Automatic per-trial quick recalibration with the blurred next stimulus | M | After a trial, one center target runs over the blurred next stimulus, the session clock pauses, and the trial resumes with its deadline shifted; no fit means no gate |
+| PAR-2 | Presenter camera and Quadbright PiP | M | Both views are purely visual, toggleable in console and presenter-only mode, and never enter the scene or CSV |
+| PAR-3 | Console Reset after Abort or Finish | S | Reset returns to Idle, clears the session error and re-enables Start/Calibrate; the engine rejects Reset while running or paused |
+
+**Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented.
+283 workspace tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
+`clippy -D warnings` and `doc` are green.
+
+- **The gate is controller-side (D29):** the console applies `TrialStarted`,
+  pauses the engine at the same `SessionTime`, starts `CalibrationRun::quick`
+  with a `QuickBackground` built from `runner.current_media()` and
+  `runner.placement()`, and resumes when the run is `Done`/`Failed`/cancelled.
+  The pure engine and `--headless` remain deterministic. Manual **F9** is
+  unchanged and still leaves a paused session paused.
+- **PiP is painted, not composed (D30):** `PresenterPreview` carries the
+  grayscale ROI frame, its generation, the four quadrant means and two flags.
+  `PresenterState::set_preview` requests a repaint of the active viewport only;
+  the painter draws the stream bottom-right and a labelled 2×2 Quadbright box
+  bottom-left. The console preview and PiP share one capture; either PiP toggle
+  opens the camera.
+- **Reset (D31):** `EngineEvent::Reset` is valid in `Idle`/`Finished`/`Aborted`
+  and clears indices, timers and pause bookkeeping. `ExperimentCommand::Reset`
+  also clears `ConsoleState::error`, resets the report counters and the
+  first-trial timer. **F4** and the button are gated by `can_reset`.
+- **Measured:** on the X11 workstation with the StreamCam at `/dev/video0`, the
+  Python `Demo` workspace ran the full flow: F7 full calibration (9 targets),
+  Space, then per-trial quick collect over a blurred face, quick report, and a
+  crisp 3 s stimulus; six distinct stimuli were written with 132 gaze rows. The
+  camera PiP showed the ROI and the Quadbright box showed live means (91/108/83/96).
+  The console's own buttons could not be driven by XTest in this session because
+  the window manager kept focus elsewhere; the Reset path is covered by engine
+  and console-state tests.
 
 ### Sprint 9 — Overlay core
 

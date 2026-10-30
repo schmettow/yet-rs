@@ -226,6 +226,13 @@ impl ConsoleUi {
             {
                 commands.push(ExperimentCommand::Abort);
             }
+            if ui
+                .add_enabled(state.can_reset(), egui::Button::new("Reset"))
+                .on_hover_text("Return to idle after Finish or Abort (F4)")
+                .clicked()
+            {
+                commands.push(ExperimentCommand::Reset);
+            }
         });
 
         if let Some(error) = &state.error {
@@ -355,9 +362,15 @@ impl ConsoleUi {
     }
 
     fn preview_panel(&mut self, ui: &mut egui::Ui, state: &mut ConsoleState) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut state.preview.enabled, "Camera preview");
             ui.label("F10");
+            ui.checkbox(&mut state.preview.pip_stream, "PiP camera")
+                .on_hover_text("Draw the camera stream over the stimulus (presenter key P)");
+            ui.checkbox(&mut state.preview.pip_quad, "PiP quad")
+                .on_hover_text(
+                    "Draw the eye-region quadrant means over the stimulus (presenter key Q)",
+                );
             if let Some(fps) = state.preview.capture_fps {
                 ui.label(format!("{fps:.1} fps capture"));
             }
@@ -713,18 +726,20 @@ impl ConsoleUi {
         presenter_ready: bool,
         commands: &mut Vec<ExperimentCommand>,
     ) {
-        let (start, pause, abort, calibrate, quick, cancel, preview, follow) = ui.input(|input| {
-            (
-                input.key_pressed(egui::Key::F5),
-                input.key_pressed(egui::Key::F6),
-                input.key_pressed(egui::Key::F8),
-                input.key_pressed(egui::Key::F7),
-                input.key_pressed(egui::Key::F9),
-                input.key_pressed(egui::Key::Escape),
-                input.key_pressed(egui::Key::F10),
-                input.key_pressed(egui::Key::F),
-            )
-        });
+        let (start, pause, abort, calibrate, quick, cancel, preview, follow, reset) =
+            ui.input(|input| {
+                (
+                    input.key_pressed(egui::Key::F5),
+                    input.key_pressed(egui::Key::F6),
+                    input.key_pressed(egui::Key::F8),
+                    input.key_pressed(egui::Key::F7),
+                    input.key_pressed(egui::Key::F9),
+                    input.key_pressed(egui::Key::Escape),
+                    input.key_pressed(egui::Key::F10),
+                    input.key_pressed(egui::Key::F),
+                    input.key_pressed(egui::Key::F4),
+                )
+            });
 
         if start && state.can_start() && presenter_ready {
             commands.push(ExperimentCommand::Start);
@@ -738,6 +753,9 @@ impl ConsoleUi {
         }
         if abort && state.can_abort() {
             commands.push(ExperimentCommand::Abort);
+        }
+        if reset && state.can_reset() {
+            commands.push(ExperimentCommand::Reset);
         }
         if calibrate && state.can_calibrate(presenter_ready) {
             commands.push(ExperimentCommand::Calibrate);
@@ -892,6 +910,7 @@ mod tests {
             height: 2,
             data: Arc::from(vec![0_u8, 64, 128, 255]),
             generation: 1,
+            quad: None,
             gaze: Some(GazePoint::new(100.0, 200.0)),
             gaze_normalized: Some(GazePoint::new(0.5, 0.5)),
         });

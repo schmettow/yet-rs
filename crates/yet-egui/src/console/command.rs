@@ -22,6 +22,8 @@ pub enum ExperimentCommand {
     QuickCalibrate,
     /// Cancel the active calibration and restore the previous model.
     CancelCalibration,
+    /// Return a finished or aborted session to Idle.
+    Reset,
     /// Abort if necessary, flush the result file, and stop the controller.
     Shutdown,
 }
@@ -37,6 +39,7 @@ impl ExperimentCommand {
             Self::Calibrate => "calibrate",
             Self::QuickCalibrate => "quick calibrate",
             Self::CancelCalibration => "cancel calibration",
+            Self::Reset => "reset",
             Self::Shutdown => "shutdown",
         }
     }
@@ -58,6 +61,7 @@ mod tests {
             ExperimentCommand::CancelCalibration.label(),
             "cancel calibration"
         );
+        assert_eq!(ExperimentCommand::Reset.label(), "reset");
         assert_eq!(ExperimentCommand::Shutdown.label(), "shutdown");
     }
 }

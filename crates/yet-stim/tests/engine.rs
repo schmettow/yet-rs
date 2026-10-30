@@ -409,6 +409,76 @@ fn start_after_abort_is_an_error() {
 }
 
 #[test]
+fn reset_after_abort_returns_to_idle() {
+    let mut state = EngineState::default();
+    step(&mut state, EngineEvent::Start, at(0));
+    step(&mut state, EngineEvent::Abort, at(10));
+
+    let effects = step(&mut state, EngineEvent::Reset, at(20));
+
+    assert_eq!(state.phase, Phase::Idle);
+    assert!(
+        effects.contains(&Effect::NotifyConsole(ConsoleEvent::PhaseChanged(
+            Phase::Idle
+        )))
+    );
+    assert!(effects.contains(&Effect::Presenter(PresenterCommand::Stop)));
+}
+
+#[test]
+fn reset_clears_session_bookkeeping() {
+    let mut state = EngineState::default();
+    step(&mut state, EngineEvent::Start, at(0));
+    step(&mut state, EngineEvent::Pause, at(4));
+    step(&mut state, EngineEvent::Abort, at(10));
+
+    step(&mut state, EngineEvent::Reset, at(20));
+
+    assert_eq!(state.block_index, 0);
+    assert_eq!(state.trial_index, 0);
+    assert_eq!(state.session_start, None);
+    assert_eq!(state.last_tick, None);
+    assert_eq!(state.paused_at, None);
+    assert_eq!(state.paused_total, Duration::ZERO);
+    assert_eq!(state.trial_started_at, None);
+    assert_eq!(state.deadline, None);
+}
+
+#[test]
+fn reset_while_running_is_an_error() {
+    let mut state = EngineState::default();
+    step(&mut state, EngineEvent::Start, at(0));
+
+    let effects = step(&mut state, EngineEvent::Reset, at(10));
+
+    assert_eq!(
+        effects,
+        vec![Effect::Error(EngineError::InvalidTransition {
+            phase: Phase::Running,
+            event: "reset",
+        })]
+    );
+    assert_eq!(state.phase, Phase::Running);
+}
+
+#[test]
+fn start_after_reset_runs() {
+    let mut state = EngineState::default();
+    step(&mut state, EngineEvent::Start, at(0));
+    step(&mut state, EngineEvent::Abort, at(10));
+    step(&mut state, EngineEvent::Reset, at(20));
+
+    let effects = step(&mut state, EngineEvent::Start, at(30));
+
+    assert_eq!(state.phase, Phase::Running);
+    assert!(
+        effects.contains(&Effect::NotifyConsole(ConsoleEvent::PhaseChanged(
+            Phase::Running
+        )))
+    );
+}
+
+#[test]
 fn escape_aborts_an_active_session() {
     let mut state = EngineState::default();
     step(&mut state, EngineEvent::Start, at(0));

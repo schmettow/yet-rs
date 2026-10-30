@@ -153,6 +153,8 @@ pub enum EngineEvent {
     Resume,
     /// Abort the session.
     Abort,
+    /// Return to Idle after a finished or aborted session.
+    Reset,
     /// Advance the clock.
     Tick,
     /// A keyboard event from the presenter or console.
@@ -262,6 +264,7 @@ pub fn step(state: &mut EngineState, event: EngineEvent, now: SessionTime) -> Ve
         EngineEvent::Pause => pause(state, now),
         EngineEvent::Resume => resume(state, now),
         EngineEvent::Abort => abort(state, now),
+        EngineEvent::Reset => reset(state),
         EngineEvent::Tick => tick(state, now),
         EngineEvent::Key(Key::Escape) => abort(state, now),
         EngineEvent::Key(key) => notify(ConsoleEvent::Key(key)),
@@ -388,6 +391,31 @@ fn abort(state: &mut EngineState, now: SessionTime) -> Vec<Effect> {
         Phase::Finished | Phase::Aborted => {
             notify(ConsoleEvent::Warning("engine is already inactive".into()))
         }
+    }
+}
+
+/// Return a finished or aborted session to Idle.
+///
+/// The plan and any calibration model are kept; the result sink is unchanged.
+/// Running or paused sessions must be aborted first.
+fn reset(state: &mut EngineState) -> Vec<Effect> {
+    match state.phase {
+        Phase::Idle | Phase::Finished | Phase::Aborted => {
+            state.phase = Phase::Idle;
+            state.block_index = 0;
+            state.trial_index = 0;
+            state.session_start = None;
+            state.last_tick = None;
+            state.paused_at = None;
+            state.paused_total = Duration::ZERO;
+            state.trial_started_at = None;
+            state.deadline = None;
+            vec![
+                Effect::NotifyConsole(ConsoleEvent::PhaseChanged(Phase::Idle)),
+                Effect::Presenter(PresenterCommand::Stop),
+            ]
+        }
+        Phase::Running | Phase::Paused => invalid(state.phase, "reset"),
     }
 }
 

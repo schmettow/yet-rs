@@ -7,6 +7,8 @@
 //! console window. Keys:
 //!
 //! * `F` toggle the follow circle
+//! * `P` toggle the camera picture-in-picture
+//! * `Q` toggle the Quadbright picture-in-picture
 //! * `Space` start, pause or resume
 //! * `F7` full calibration, `F9` quick recalibration
 //! * `F8` abort, `Esc` quit
@@ -41,6 +43,10 @@ pub struct PresenterOptions<'a> {
     pub device: Option<usize>,
     /// Start with the follow circle enabled.
     pub follow: bool,
+    /// Start with the camera picture-in-picture enabled.
+    pub pip_stream: bool,
+    /// Start with the Quadbright picture-in-picture enabled.
+    pub pip_quad: bool,
 }
 
 impl<'a> PresenterOptions<'a> {
@@ -52,6 +58,8 @@ impl<'a> PresenterOptions<'a> {
             output: None,
             device: None,
             follow: false,
+            pip_stream: false,
+            pip_quad: false,
         }
     }
 
@@ -76,6 +84,18 @@ impl<'a> PresenterOptions<'a> {
     /// Start with the follow circle enabled.
     pub fn follow(mut self, follow: bool) -> Self {
         self.follow = follow;
+        self
+    }
+
+    /// Start with the camera picture-in-picture enabled.
+    pub fn pip_stream(mut self, enabled: bool) -> Self {
+        self.pip_stream = enabled;
+        self
+    }
+
+    /// Start with the Quadbright picture-in-picture enabled.
+    pub fn pip_quad(mut self, enabled: bool) -> Self {
+        self.pip_quad = enabled;
         self
     }
 }
@@ -122,6 +142,8 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         let mut console = lock_console(&shared);
         console.camera_usb_index = initial_device;
         console.follow = options.follow;
+        console.preview.pip_stream = options.pip_stream;
+        console.preview.pip_quad = options.pip_quad;
         console.log(
             LogLevel::Info,
             format!(
@@ -132,7 +154,7 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F follow · Space start/pause · F7 calibrate · F9 quick · F8 abort · Esc quit",
+            "keys: F follow · P camera PiP · Q Quadbright PiP · Space start/pause · F7 calibrate · F9 quick · F8 abort · Esc quit",
         );
     }
 
@@ -210,20 +232,31 @@ impl eframe::App for PresenterOnlyApp {
         self.presenter.show_root(ui);
         self.draw_status(ui);
 
-        let (follow, space, calibrate, quick, abort, quit) = ctx.input(|input| {
-            (
-                input.key_pressed(egui::Key::F),
-                input.key_pressed(egui::Key::Space),
-                input.key_pressed(egui::Key::F7),
-                input.key_pressed(egui::Key::F9),
-                input.key_pressed(egui::Key::F8),
-                input.key_pressed(egui::Key::Escape),
-            )
-        });
+        let (follow, space, calibrate, quick, abort, quit, pip_stream, pip_quad) =
+            ctx.input(|input| {
+                (
+                    input.key_pressed(egui::Key::F),
+                    input.key_pressed(egui::Key::Space),
+                    input.key_pressed(egui::Key::F7),
+                    input.key_pressed(egui::Key::F9),
+                    input.key_pressed(egui::Key::F8),
+                    input.key_pressed(egui::Key::Escape),
+                    input.key_pressed(egui::Key::P),
+                    input.key_pressed(egui::Key::Q),
+                )
+            });
 
         if follow {
             let mut console = lock_console(&self.shared);
             console.follow = !console.follow;
+        }
+        if pip_stream {
+            let mut console = lock_console(&self.shared);
+            console.preview.pip_stream = !console.preview.pip_stream;
+        }
+        if pip_quad {
+            let mut console = lock_console(&self.shared);
+            console.preview.pip_quad = !console.preview.pip_quad;
         }
         if space {
             let phase = lock_console(&self.shared).phase;
@@ -286,8 +319,14 @@ impl PresenterOnlyApp {
         } else {
             "follow off"
         };
+        let pip = match (console.preview.pip_stream, console.preview.pip_quad) {
+            (true, true) => " · PiP camera+quad",
+            (true, false) => " · PiP camera",
+            (false, true) => " · PiP quad",
+            (false, false) => "",
+        };
         let line = format!(
-            "{} · {calibration} · {follow}\nF7 calibrate · F9 quick · F follow · Space start/pause · F8 abort · Esc quit",
+            "{} · {calibration} · {follow}{pip}\nF7 calibrate · F9 quick · F follow · P camera PiP · Q quad PiP · Space start/pause · F8 abort · Esc quit",
             console.phase.label()
         );
 
