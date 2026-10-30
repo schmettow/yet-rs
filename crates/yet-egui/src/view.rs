@@ -52,15 +52,20 @@ pub fn viewport_builder(monitor: usize, fullscreen: bool) -> egui::ViewportBuild
 /// Call this once per console frame. The viewport's closure paints the current
 /// scene; it runs only when that viewport needs a repaint.
 pub fn show_viewport(ctx: &egui::Context, state: &Arc<Mutex<PresenterState>>) {
-    let (monitor, fullscreen, viewport) = {
+    let (monitor, fullscreen, viewport, size_px) = {
         let mut state = lock_state(state);
         let (monitor, fullscreen) = state.target_monitor();
         let viewport = viewport_id(monitor);
         state.set_active_viewport(viewport);
-        (monitor, fullscreen, viewport)
+        (monitor, fullscreen, viewport, state.geometry().size_px)
     };
 
     let builder = viewport_builder(monitor, fullscreen);
+    let builder = if fullscreen {
+        builder
+    } else {
+        builder.with_inner_size([size_px.0 as f32, size_px.1 as f32])
+    };
 
     let state = Arc::clone(state);
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {

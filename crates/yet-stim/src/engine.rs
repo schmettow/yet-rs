@@ -31,6 +31,19 @@ pub enum Phase {
     Aborted,
 }
 
+impl Phase {
+    /// Short label for logs and status displays.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Finished => "finished",
+            Self::Aborted => "aborted",
+        }
+    }
+}
+
 /// Engine state. This is data, not a runtime handle.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EngineState {

@@ -19,8 +19,10 @@ use yet_zero::{run, run_console, ConsoleOptions, HeadlessOptions, RunReport};
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.as_slice() {
+        [command] if command == "devices" => run_devices(),
         [command, path] if command == "plan" => run_plan(path),
         [command, path] if command == "media" => run_media(path),
+        [command, rest @ ..] if command == "present" => run_presenter_command(rest),
         [command, rest @ ..] if command == "run" => run_session(rest),
         [command, rest @ ..] if command == "camera" => run_camera(rest),
         [command, rest @ ..] if command == "calibrate" => run_calibrate(rest),
@@ -49,7 +51,9 @@ fn usage() {
     eprintln!(
         "usage:\n  yet-zero plan <experiment-dir>\n  \
          yet-zero media <experiment-dir>\n  \
+         yet-zero devices\n  \
          yet-zero run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>]\n  \
+         yet-zero present <experiment-dir> [--participant <id>] [--output <csv>] [--device <n>]\n  \
          yet-zero camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
          yet-zero calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]\n  \
          yet-zero overlay <experiment-dir> [--seconds <s>]"
@@ -63,6 +67,7 @@ enum CliError {
     Run(yet_zero::RunError),
     Live(live::LiveError),
     Media(String),
+    Camera(String),
 }
 
 impl fmt::Display for CliError {
@@ -73,6 +78,7 @@ impl fmt::Display for CliError {
             Self::Run(error) => error.fmt(f),
             Self::Live(error) => error.fmt(f),
             Self::Media(error) => f.write_str(error),
+            Self::Camera(error) => f.write_str(error),
         }
     }
 }
@@ -99,6 +105,7 @@ fn run_plan(directory: &str) -> Result<(), CliError> {
     let loaded = load_experiment(directory)?;
 
     println!("Experiment root: {}", loaded.root.display());
+    println!("Workspace: {}", loaded.kind);
     if let Some(experimenter) = &loaded.experiment.experimenter {
         println!("Experimenter: {experimenter}");
     }
@@ -189,6 +196,53 @@ fn run_media(directory: &str) -> Result<(), CliError> {
     }
 
     println!("Validated {sequences} sequence(s).");
+    Ok(())
+}
+
+fn run_presenter_command(args: &[String]) -> Result<(), CliError> {
+    let mut directory: Option<&Path> = None;
+    let mut participant: Option<&str> = None;
+    let mut output: Option<&Path> = None;
+    let mut device: Option<usize> = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--participant" => {
+                index += 1;
+                participant = Some(args.get(index).ok_or(CliError::Usage)?.as_str());
+            }
+            "--output" => {
+                index += 1;
+                output = Some(Path::new(args.get(index).ok_or(CliError::Usage)?));
+            }
+            "--device" => {
+                index += 1;
+                device = Some(
+                    args.get(index)
+                        .ok_or(CliError::Usage)?
+                        .parse()
+                        .map_err(|_| CliError::Usage)?,
+                );
+            }
+            flag if flag.starts_with('-') => return Err(CliError::Usage),
+            path if directory.is_none() => directory = Some(Path::new(path)),
+            _ => return Err(CliError::Usage),
+        }
+        index += 1;
+    }
+
+    let mut options = yet_zero::PresenterOptions::new(directory.ok_or(CliError::Usage)?);
+    if let Some(participant) = participant {
+        options = options.participant(participant);
+    }
+    if let Some(output) = output {
+        options = options.output(output);
+    }
+    if let Some(device) = device {
+        options = options.device(device);
+    }
+    yet_zero::run_presenter(options)?;
     Ok(())
 }
 
@@ -290,6 +344,19 @@ fn run_overlay(directory: &str, args: &[String]) -> Result<(), CliError> {
         }
     }
     yet_zero::run_overlay(yet_zero::OverlayOptions::new(Path::new(directory)).seconds(seconds))?;
+    Ok(())
+}
+
+fn run_devices() -> Result<(), CliError> {
+    let devices =
+        yet_zero::camera::list_devices().map_err(|error| CliError::Camera(error.to_string()))?;
+    if devices.is_empty() {
+        println!("No cameras found.");
+        return Ok(());
+    }
+    for device in devices {
+        println!("{}: {} ({})", device.index, device.name, device.detail);
+    }
     Ok(())
 }
 

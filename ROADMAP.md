@@ -112,8 +112,15 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   and a 60-minute-capable soak command with a summary. The platform matrix is
   scaffolded; Windows/macOS runtime and the 60-minute visual/focus soak remain
   hardware gates.
-- **Next:** S11 hardening and release (metadata, package checks, pilot,
-  platform runtime matrix).
+- **S10.5 Python parity increment (2026-10-26)** — a `yet_zero` Python
+  workspace (`Config.csv` + `Stimuli/Stimuli.csv`) loads unchanged, including
+  `SLIDE_TIME`, `SHUFFLE`/`SEED`, `STIM_FILE` and `Data/Yeta1_...` results;
+  optional `config.toml` overrides machine settings. Added `yet-zero devices`
+  and a console camera selector (Linux V4L2, Windows/macOS `nokhwa`) that
+  reopens capture and invalidates calibration. Added `yet-zero present`, a
+  presenter-only window with `F` follow, and a purely visual gaze circle in the
+  console/presenter. 273 tests pass.
+- **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1
 

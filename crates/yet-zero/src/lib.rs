@@ -13,9 +13,11 @@ mod desktop_overlay;
 pub mod driver;
 pub mod headless;
 pub mod live;
+pub mod presenter_only;
 pub mod tracker;
 pub mod window;
 
 pub use console::{run_console, ConsoleOptions};
 pub use desktop_overlay::{run_overlay, OverlayOptions};
 pub use headless::{drive, run, HeadlessOptions, RunError, RunReport};
+pub use presenter_only::{run_presenter, PresenterOptions};

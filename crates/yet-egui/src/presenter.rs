@@ -274,6 +274,7 @@ impl PresenterState {
     /// Paint the current scene. Called from the deferred viewport.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        self.active_viewport = ctx.viewport_id();
         let pixels_per_point = ctx.pixels_per_point().max(0.1);
         let clip_rect = ui.max_rect();
         let size_px = (
@@ -381,6 +382,14 @@ impl EguiPresenter {
     /// Shared state for the viewport closure.
     pub fn shared(&self) -> Arc<Mutex<PresenterState>> {
         Arc::clone(&self.state)
+    }
+
+    /// Paint the presenter into the current root viewport.
+    ///
+    /// The console uses [`crate::show_viewport`] instead; presenter-only mode
+    /// makes the stimulus window the root viewport and calls this each frame.
+    pub fn show_root(&self, ui: &mut egui::Ui) {
+        self.lock().ui(ui);
     }
 
     /// Current status snapshot.

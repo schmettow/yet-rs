@@ -4,7 +4,10 @@ A Rust port of the Python `yet_zero` eye-tracking experiment runner.
 
 > **Status:** Sprints 0–9 implemented. Sprint 10 adds the naked-compositor
 > launcher/profile, the GNOME/XWayland decision record, overlay coalescing
-> counters and soak output, and the platform-matrix scaffold. The workspace runs
+> counters and soak output, and the platform-matrix scaffold. The parity
+> increment adds unchanged loading of Python `yet_zero` workspaces, a camera
+> device selector, a presenter-only window and a purely visual follow circle.
+> The workspace runs
 > an experiment without a window or in a two-window console: the console controls
 > the session, calibrates the tracker and shows a camera preview, while a
 > deferred fullscreen viewport on the presenter monitor draws static images and
@@ -57,6 +60,19 @@ dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`.
   the latest-frame mailbox, the session driver, the headless runner, the CLI and
   the overlay-backend selection that binds the `yet-stim` protocols to the
   `yet-egui` implementations.
+- Python `yet_zero` workspace compatibility: `Config.csv` plus
+  `Stimuli/Stimuli.csv` loads unchanged; `SLIDE_TIME`, `SHUFFLE`/`SEED`,
+  `STIM_FILE` and `File` map to the native model, with results in
+  `Data/Yeta1_...csv`. An optional `config.toml` selects monitors and machine
+  settings. Python workspaces open as a 900×900 window by default, matching the
+  prototype.
+- Console **Camera** selector with `Scan` and `yet-zero devices`: Linux V4L2,
+  Windows/macOS `nokhwa`. Selecting another device reopens capture and drops
+  the camera-specific calibration.
+- `yet-zero present <workspace>`: a presenter-only window with no console.
+  **F** toggles a purely visual gaze circle; **Space** starts/pauses; **F7/F9**
+  calibrate; **F8/Esc** abort or quit. The console has the same **F** follow
+  toggle.
 - `tools/run-naked.sh` — renders the two-output Sway profile and starts a naked
   compositor session, with `--render-only`, output-name, participant and binary
   overrides. The profile disables XWayland and keeps the console on one output
@@ -91,9 +107,11 @@ cargo test -p yet-zero --all-features --lib -- --ignored the_yet_camera_delivers
 
 cargo run -p yet-zero -- plan examples/demo
 cargo run -p yet-zero -- media examples/media-demo
+cargo run -p yet-zero -- devices
 # Overlay check; X11 auto-selects the best-effort egui path.
 cargo run --release -p yet-zero -- overlay examples/demo-gui --seconds 10
 cargo run --release -p yet-zero -- run examples/demo-gui --participant demo01
+cargo run --release -p yet-zero -- present examples/demo-gui --participant demo01
 cargo run --release -p yet-zero -- run examples/media-demo --participant demo01
 cargo run -p yet-zero -- run --headless examples/demo --participant demo01
 cargo run --release -p yet-zero -- camera examples/demo --seconds 3
@@ -151,17 +169,26 @@ wrap instead of being clipped. The camera preview is served at up to 480×320.
 
 Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
 is enabled), **Abort** (F8), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
-center target; requires an existing fit), **Cancel calibration** (Esc) and the
-**Camera preview** toggle (F10). The presenter selector lists the monitors
-reported by the platform, labelled from 1 with resolution and output name; the
-configuration index stays zero-based. On a two-monitor desk the presenter
-defaults to monitor 2 (index 1). Changing the selection recreates the stimulus
-window borderless-fullscreen on that monitor, including after the fullscreen box
-was unticked. If the configured index is out of range, the console logs a
-warning and uses the last monitor instead of leaving a windowed presenter.
-Presenter settings are locked while a session or calibration is active. If the
-console monitor matches the presenter monitor, the console warns that the
-fullscreen stimulus will cover it.
+center target; requires an existing fit), **Cancel calibration** (Esc), the
+**Camera preview** toggle (F10), and **Follow** (F; draws a gaze circle over the
+stimulus). The presenter selector lists the monitors reported by the platform,
+labelled from 1 with resolution and output name; the configuration index stays
+zero-based. On a two-monitor desk the presenter defaults to monitor 2 (index 1).
+Changing the selection recreates the stimulus window borderless-fullscreen on
+that monitor, including after the fullscreen box was unticked. If the configured
+index is out of range, the console logs a warning and uses the last monitor
+instead of leaving a windowed presenter. Presenter and camera settings are
+locked while a session or calibration is active. If the console monitor matches
+the presenter monitor, the console warns that the fullscreen stimulus will cover
+it.
+
+The **Camera** selector is populated from the platform device list (`Scan`
+refreshes it). On Linux it filters V4L2 capture nodes; on Windows/macOS it uses
+the `nokhwa` device query. Selecting another camera stops and reopens the
+capture thread and invalidates the calibration, because the model is
+camera-specific. If enumeration is unavailable, the control falls back to a
+numeric index. `yet-zero devices` prints the same list from the CLI; `--device`
+preselects an index.
 
 `examples/demo-gui` is the static-image demo for this path: four images shared
 with `examples/demo`, 3 s each, no sequence and no audio. The S6 full run on the
@@ -192,6 +219,19 @@ are still outstanding, and Windows/macOS media playback is compile-checked only.
 If the console reports "waiting for fullscreen", confirm that the window manager
 granted fullscreen to the stimulus viewport; an out-of-range monitor index is now
 clamped and logged.
+
+### Presenter-only mode
+
+```sh
+cargo run --release -p yet-zero -- present examples/demo --participant demo01
+```
+
+This opens only the stimulus window (or the 900×900 window of a Python
+workspace); there is no console. It is the quickest way to test the tracker on
+a single monitor. Keys: **F** toggles the follow circle, **Space** starts or
+pauses, **F7** runs a full calibration, **F9** a quick recalibration, **F8**
+aborts and **Esc** quits. The circle is purely visual: it is composed into a
+temporary scene for painting and never changes the trial scene or a CSV row.
 
 ### Calibrating in the console
 
@@ -348,13 +388,17 @@ format = "yuyv"               # auto, gray, yuyv or mjpeg
 eye_region = [0.25, 0.25, 0.5, 0.5]   # normalized x, y, width, height
 ```
 
-The Yet camera is the **GEMBIRD/AppoTech UVC** device on `/dev/video2`; it
+The Yet camera is the **GEMBIRD/AppoTech UVC** device, usually `/dev/video2`; it
 advertises YUYV only at 640×480 and sustained 25.6 fps in the SPK-5 measurement.
 `/dev/video0` is the StreamCam, which is faster in MJPG but is not the tracker
-camera. Device indices can move across reboots; check the names in
-`/sys/class/video4linux/` or override a run with `--device N`.
+camera. Device indices can move across reboots. Use `yet-zero devices` or the
+console **Camera** selector to see the current names and indices; `--device N`
+preselects an index for a run.
 
 ```sh
+# List cameras as index, name and device path.
+cargo run --release -p yet-zero -- devices
+
 # Measure the camera, print format/fps/statistics and the last quadrant means.
 cargo run --release -p yet-zero -- camera examples/demo --seconds 3
 cargo run --release -p yet-zero -- camera examples/demo --device 0 --seconds 3
@@ -481,6 +525,51 @@ cargo run -p yet-zero -- plan examples/demo
 cargo run -p yet-zero -- plan examples/demo-gui
 cargo run -p yet-zero -- media examples/media-demo
 ```
+
+### Python `yet_zero` workspaces
+
+A workspace from the Python prototype is detected by `Config.csv` plus a
+`Stimuli/` directory; no conversion is required:
+
+```text
+my-python-workspace/
+  Config.csv
+  Stimuli/
+    Stimuli.csv
+    18.jpg
+    ...
+```
+
+- `Config.csv` supplies `USB`, `EXP_ID`, `EXPERIMENTER`, `WIDTH`, `HEIGHT`,
+  `SLIDE_TIME`, `STIM_FILE` and `SHUFFLE`. Missing optional values fall back to
+  the Python defaults; `SEED` is an accepted extension for a reproducible
+  shuffle.
+- `Stimuli/Stimuli.csv` uses the Python `File` column; every row is an image
+  shown for `SLIDE_TIME`. The file name is the stimulus id, so result rows keep
+  the Python `Stim` values.
+- `STIM_FILE` may select `Stimuli_short.csv` or another table in `Stimuli/`.
+- Without a `config.toml`, the presenter is a 900×900 window on monitor 1
+  (index 0), the desktop overlay is off, and the camera index comes from
+  `Config.csv`. This matches the prototype on a single monitor. Add a
+  `config.toml` to choose monitors/fullscreen and other machine settings; its
+  `camera.usb_index`, when present, wins over `Config.csv`.
+- Results go to `Data/` with the Python prefix `Yeta1_...csv`; native
+  workspaces keep `yet1_...csv` at the workspace root.
+
+```sh
+cargo run --release -p yet-zero -- run /path/to/my-python-workspace --device 0
+cargo run --release -p yet-zero -- present /path/to/my-python-workspace --device 0
+```
+
+`yet-zero plan <dir>` prints `Workspace: yet_zero Python (Config.csv)` for this
+layout.
+
+**Known parity difference:** the Python prototype runs a quick center-target
+recalibration before every stimulus. yet-rs keeps quick recalibration manual
+(**F9** in the console or presenter-only window); there is no automatic
+per-trial quick calibration yet. Full calibration is also automatic in yet-rs
+(targets are collected without a key press), which is an intentional
+improvement.
 
 ## Design
 

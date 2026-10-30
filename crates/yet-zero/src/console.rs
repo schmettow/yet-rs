@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use yet_core::{GazePoint, QuadBrightness};
 use yet_egui::console::{
-    ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, MonitorChoice, PreviewFrame,
+    CameraChoice, ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, MonitorChoice, PreviewFrame,
 };
 use yet_egui::{EguiOverlay, EguiPresenter, PresenterConfig};
 use yet_stim::layout::StimulusPlacement;
@@ -101,7 +101,9 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
     let prepared = prepare(options.experiment_dir, options.participant, options.output)?;
     let experiment_id = prepared.loaded.experiment.id.clone();
     let display = prepared.loaded.config.display.clone();
-    let camera_config = prepared.loaded.config.camera.clone();
+    let mut camera_config = prepared.loaded.config.camera.clone();
+    let initial_device = options.device.unwrap_or(camera_config.usb_index);
+    camera_config.usb_index = initial_device;
     let audio_config = prepared.loaded.config.audio.clone();
     let overlay = desktop_overlay::open(&prepared.loaded.config)?;
     let overlay_monitor = overlay.monitor;
@@ -143,6 +145,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
     )));
     {
         let mut console = lock_console(&shared);
+        console.camera_usb_index = initial_device;
         console.log(
             LogLevel::Info,
             format!(
@@ -159,7 +162,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F8 abort",
+            "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F8 abort · F follow",
         );
         console.log(LogLevel::Info, "waiting for the stimulus window…");
         console.overlay.available = overlay_available;
@@ -175,6 +178,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
             );
         }
     }
+    refresh_camera_devices(&shared);
 
     let (commands, controller) = spawn_controller(
         prepared.loaded.plan,
@@ -182,7 +186,6 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         presenter.clone(),
         Arc::clone(&shared),
         camera_config,
-        options.device,
         thread_overlay,
         overlay_monitor,
     )?;
@@ -247,6 +250,15 @@ impl eframe::App for ConsoleApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let rescan = {
+            let mut console = lock_console(&self.shared);
+            let rescan = console.camera_rescan;
+            console.camera_rescan = false;
+            rescan
+        };
+        if rescan {
+            refresh_camera_devices(&self.shared);
+        }
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(12, 12, 12));
         if !self.sized {
@@ -407,13 +419,12 @@ impl Drop for ConsoleApp {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_controller(
+pub(crate) fn spawn_controller(
     plan: SessionPlan,
     mut sink: yet_stim::DataSink<std::io::BufWriter<std::fs::File>>,
     mut presenter: EguiPresenter,
     shared: Arc<Mutex<ConsoleState>>,
-    camera_config: CameraConfig,
-    device: Option<usize>,
+    mut camera_config: CameraConfig,
     overlay: Option<Box<dyn OverlayBackend + Send>>,
     overlay_monitor: usize,
 ) -> Result<(Sender<ExperimentCommand>, JoinHandle<()>), RunError> {
@@ -443,8 +454,7 @@ fn spawn_controller(
                 &receiver,
                 &shared,
                 &latest_gaze,
-                &camera_config,
-                device,
+                &mut camera_config,
                 overlay,
                 overlay_monitor,
             );
@@ -472,8 +482,7 @@ fn run_loop<G>(
     commands: &Receiver<ExperimentCommand>,
     shared: &Arc<Mutex<ConsoleState>>,
     latest_gaze: &Rc<Cell<Option<GazePoint>>>,
-    camera_config: &CameraConfig,
-    device: Option<usize>,
+    camera_config: &mut CameraConfig,
     mut overlay: Option<Box<dyn OverlayBackend + Send>>,
     overlay_monitor: usize,
 ) where
@@ -495,6 +504,38 @@ fn run_loop<G>(
     let mut overlay_warned = false;
 
     while !shut_down {
+        let selected_camera = lock_console(shared).camera_usb_index;
+        if selected_camera != camera_config.usb_index {
+            let active = matches!(state.phase, Phase::Running | Phase::Paused)
+                || calibration.as_ref().is_some_and(CalibrationRun::is_active);
+            if active {
+                let mut console = lock_console(shared);
+                console.camera_usb_index = camera_config.usb_index;
+                console.camera_error =
+                    Some("stop or pause the session before changing camera".to_owned());
+                console.log(
+                    LogLevel::Warning,
+                    "camera selection is locked while the session is active",
+                );
+            } else {
+                camera_config.usb_index = selected_camera;
+                tracker = None;
+                calibration = None;
+                latest_gaze.set(None);
+                let mut console = lock_console(shared);
+                console.preview.frame = None;
+                console.preview.error = None;
+                console.preview.capture_fps = None;
+                console.calibration = Default::default();
+                console.overlay.gaze = None;
+                console.camera_error = None;
+                console.log(
+                    LogLevel::Info,
+                    format!("camera switched to index {selected_camera}; recalibrate"),
+                );
+            }
+        }
+
         let now = Instant::now();
         {
             let mut console = lock_console(shared);
@@ -513,10 +554,14 @@ fn run_loop<G>(
             &mut overlay_warned,
         );
 
-        // Console intent: preview on/off and a retry request.
-        let (preview_enabled, retry) = {
+        // Console intent: preview on/off, gaze circle and a retry request.
+        let (preview_enabled, retry, follow) = {
             let console = lock_console(shared);
-            (console.preview.enabled, console.preview.retry)
+            (
+                console.preview.enabled,
+                console.preview.retry,
+                console.follow,
+            )
         };
         if retry {
             let mut console = lock_console(shared);
@@ -526,7 +571,7 @@ fn run_loop<G>(
             tracker = None;
         }
         if preview_enabled && tracker.is_none() {
-            tracker = open_tracker(camera_config, device, shared);
+            tracker = open_tracker(camera_config, shared);
         }
 
         let calibrating = calibration.as_ref().is_some_and(CalibrationRun::is_active);
@@ -544,6 +589,13 @@ fn run_loop<G>(
                             if let Ok(point) = run.predict(polled.features) {
                                 latest_gaze.set(Some(point));
                                 lock_console(shared).overlay.gaze = Some(point);
+                            }
+                        }
+                    }
+                    if calibrating && fitted {
+                        if let Some(run) = &calibration {
+                            if let Ok(point) = run.predict(polled.features) {
+                                latest_gaze.set(Some(point));
                             }
                         }
                     }
@@ -606,7 +658,7 @@ fn run_loop<G>(
                             if calibration.as_ref().is_some_and(CalibrationRun::is_fitted)
                                 && tracker.is_none()
                             {
-                                tracker = open_tracker(camera_config, device, shared);
+                                tracker = open_tracker(camera_config, shared);
                             }
                             if !calibration.as_ref().is_some_and(CalibrationRun::is_fitted) {
                                 log_warning(
@@ -690,13 +742,13 @@ fn run_loop<G>(
                                 "a full calibration is available when the session is idle",
                             );
                         } else {
+                            clear_gaze(shared, latest_gaze);
                             start_full_calibration(
                                 start,
                                 runner,
                                 &mut calibration,
                                 &mut tracker,
                                 camera_config,
-                                device,
                                 shared,
                                 &mut last_calibration_phase,
                                 &mut last_calibration_target,
@@ -714,6 +766,7 @@ fn run_loop<G>(
                         ) {
                             log_warning(shared, "pause the session before a quick recalibration");
                         } else {
+                            clear_gaze(shared, latest_gaze);
                             start_quick_calibration(
                                 start,
                                 state,
@@ -721,7 +774,6 @@ fn run_loop<G>(
                                 &mut calibration,
                                 &mut tracker,
                                 camera_config,
-                                device,
                                 shared,
                                 &mut last_calibration_phase,
                                 &mut last_calibration_target,
@@ -763,7 +815,8 @@ fn run_loop<G>(
                 let result = run.tick(at, features);
                 (result, run.scene())
             };
-            runner.present_scene(at, dt, &scene);
+            let marker = follow.then(|| latest_gaze.get()).flatten();
+            runner.present_scene_with_marker(at, dt, &scene, marker);
             if let Some(run) = &calibration {
                 sync_calibration(shared, run, start);
                 log_calibration_transition(
@@ -817,7 +870,8 @@ fn run_loop<G>(
         }
         if state.phase == Phase::Running {
             let experiment_t = SessionTime::from_duration(state.elapsed(at).unwrap_or_default());
-            let stats = runner.present(experiment_t, dt);
+            let marker = follow.then(|| latest_gaze.get()).flatten();
+            let stats = runner.present_with_marker(experiment_t, dt, marker);
             let mut console = lock_console(shared);
             if let Some(message) = console.record_present(
                 stats.dropped_frames,
@@ -905,7 +959,6 @@ fn start_full_calibration<G>(
     calibration: &mut Option<CalibrationRun>,
     tracker: &mut Option<Tracker>,
     camera_config: &CameraConfig,
-    device: Option<usize>,
     shared: &Arc<Mutex<ConsoleState>>,
     last_phase: &mut CalibrationPhase,
     last_target: &mut Option<usize>,
@@ -913,7 +966,7 @@ fn start_full_calibration<G>(
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
     if tracker.is_none() {
-        *tracker = open_tracker(camera_config, device, shared);
+        *tracker = open_tracker(camera_config, shared);
     }
     if tracker.is_none() {
         let mut console = lock_console(shared);
@@ -962,7 +1015,6 @@ fn start_quick_calibration<G>(
     calibration: &mut Option<CalibrationRun>,
     tracker: &mut Option<Tracker>,
     camera_config: &CameraConfig,
-    device: Option<usize>,
     shared: &Arc<Mutex<ConsoleState>>,
     last_phase: &mut CalibrationPhase,
     last_target: &mut Option<usize>,
@@ -992,7 +1044,7 @@ fn start_quick_calibration<G>(
         return;
     }
     if tracker.is_none() {
-        *tracker = open_tracker(camera_config, device, shared);
+        *tracker = open_tracker(camera_config, shared);
     }
     if tracker.is_none() {
         let mut console = lock_console(shared);
@@ -1199,12 +1251,34 @@ fn update_preview(
     console.preview.capture_fps = tracker.capture_fps();
 }
 
-fn open_tracker(
-    config: &CameraConfig,
-    device: Option<usize>,
-    shared: &Arc<Mutex<ConsoleState>>,
-) -> Option<Tracker> {
-    match Tracker::open(config, device) {
+fn refresh_camera_devices(shared: &Arc<Mutex<ConsoleState>>) {
+    let result = crate::camera::list_devices();
+    let mut console = lock_console(shared);
+    match result {
+        Ok(devices) => {
+            console.camera_devices = devices
+                .into_iter()
+                .map(|device| CameraChoice {
+                    index: device.index as usize,
+                    name: device.name,
+                    detail: device.detail,
+                })
+                .collect();
+            console.camera_error = None;
+            if console.camera_devices.is_empty() {
+                console.log(LogLevel::Warning, "camera scan found no devices");
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            console.camera_error = Some(message.clone());
+            console.log(LogLevel::Warning, format!("camera scan: {message}"));
+        }
+    }
+}
+
+fn open_tracker(config: &CameraConfig, shared: &Arc<Mutex<ConsoleState>>) -> Option<Tracker> {
+    match Tracker::open(config, None) {
         Ok(tracker) => {
             let info = tracker.info().clone();
             let roi = tracker.roi();
@@ -1396,7 +1470,7 @@ fn session_time(start: Instant, now: Instant) -> SessionTime {
     SessionTime::from_duration(now.saturating_duration_since(start))
 }
 
-fn plan_has_audio(plan: &SessionPlan) -> bool {
+pub(crate) fn plan_has_audio(plan: &SessionPlan) -> bool {
     plan.blocks
         .iter()
         .flat_map(|block| &block.trials)
@@ -1421,7 +1495,7 @@ fn monitor_choices(frame: &eframe::Frame) -> Vec<MonitorChoice> {
         .collect()
 }
 
-fn lock_console(state: &Arc<Mutex<ConsoleState>>) -> MutexGuard<'_, ConsoleState> {
+pub(crate) fn lock_console(state: &Arc<Mutex<ConsoleState>>) -> MutexGuard<'_, ConsoleState> {
     state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

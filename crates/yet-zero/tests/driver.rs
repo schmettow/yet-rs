@@ -3,6 +3,7 @@
 //! Scene composition and presenter wiring for the shared session driver.
 
 use std::cell::Cell;
+use std::fs;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -15,8 +16,8 @@ use yet_stim::{
     BlockId, DataSink, Effect, FrameRecord, SessionIdentity, Stimulus, StimulusId, StimulusKind,
 };
 use yet_stim::{
-    DrawCommand, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
-    RecordingPresenter, RectPx, Scene, ScreenGeometry, SessionTime,
+    Color, DrawCommand, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand,
+    PresenterError, RecordingPresenter, RectPx, Scene, ScreenGeometry, SessionTime,
 };
 use yet_zero::driver::{gaze_sample, RunError, SessionRunner};
 
@@ -280,4 +281,60 @@ fn a_surface_resize_recomposes_the_current_scene() {
     let second = runner.placement().unwrap();
     assert_ne!(second, first);
     assert_eq!(second.dest_px, RectPx::new(120.0, 0.0, 720.0, 540.0));
+}
+
+#[test]
+fn a_python_workspace_writes_yeta1_results_under_data() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("Stimuli")).unwrap();
+    fs::write(
+        dir.path().join("Config.csv"),
+        "Config,Value\nUSB,0\nEXP_ID,Demo\nEXPERIMENTER,MS\nWIDTH,900\nHEIGHT,900\nSLIDE_TIME,1\nSTIM_FILE,Stimuli.csv\nSHUFFLE,0\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Stimuli/Stimuli.csv"),
+        "File,width,height\n18.jpg,450,450\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Stimuli/18.jpg"),
+        [0xff_u8, 0xd8, 0xff, 0xd9],
+    )
+    .unwrap();
+
+    let prepared = yet_zero::driver::prepare(dir.path(), Some("p1"), None).unwrap();
+
+    assert_eq!(
+        prepared.result_file,
+        dir.path().join("Data/Yeta1_DemoMS_p1.csv")
+    );
+    assert!(prepared.result_file.is_file());
+}
+
+#[test]
+fn a_follow_marker_is_painted_but_not_stored_in_the_trial_scene() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sink = sink(directory.path());
+    let mut presenter = RecordingPresenter::new(ScreenGeometry::new(0, None, (800, 600), 1.0));
+    let mut runner = SessionRunner::new(&mut sink, &mut presenter, |_, _| None);
+
+    let mut scene = Scene::new();
+    scene.clear(Color::BLACK);
+    runner.apply(Effect::Present(scene)).unwrap();
+
+    runner.present_with_marker(
+        SessionTime::from_duration(Duration::from_secs(1)),
+        Duration::from_millis(16),
+        Some(GazePoint::new(400.0, 300.0)),
+    );
+
+    let recorded = {
+        let stored = runner.scene().len();
+        drop(runner);
+        let recorded = presenter.scenes().last().expect("a presented scene");
+        (stored, recorded)
+    };
+    assert_eq!(recorded.1.len(), 3, "clear plus halo and dot");
+    assert_eq!(recorded.0, 1, "the stored scene is unchanged");
 }

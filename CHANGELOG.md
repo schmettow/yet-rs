@@ -36,6 +36,24 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Added
 
+- Python `yet_zero` workspace compatibility: `Config.csv` plus
+  `Stimuli/Stimuli.csv` loads without conversion, using `SLIDE_TIME`,
+  `SHUFFLE`/`SEED`, `STIM_FILE`, the `File` column and the Python result prefix
+  `Yeta1` under `Data/`. An optional `config.toml` overrides machine settings.
+- `yet-zero devices` and `CameraDevice` enumeration: Linux V4L2 capture nodes
+  via `linuxvideo`, Windows/macOS via `nokhwa`. The console has a **Camera**
+  dropdown with **Scan**; changing the device reopens capture and invalidates
+  the calibration.
+- `yet-zero present <workspace>`: a presenter-only window with no console. Keys:
+  `F` follow circle, `Space` start/pause, `F7`/`F9` calibration, `F8` abort,
+  `Esc` quit.
+- Follow circle in the console and presenter-only mode: a gaze marker scaled to
+  the surface (1/50 radius, 1/200 halo) is appended to a temporary scene for
+  painting only and never reaches the trial scene or CSV.
+- Native `yet-stim` workspace loading now reports its layout
+  (`Workspace: ...`) and keeps results at the workspace root with `yet1_...`;
+  Python workspaces write `Data/Yeta1_...`.
+
 - `yet-stim`: `OverlayStats` (`requested`, `painted`, `superseded`, `errors`,
   `outstanding`) and a default `OverlayBackend::stats()` accessor.
 - `yet-egui`/`yet-stim`: the egui and layer-shell overlays count accepted,

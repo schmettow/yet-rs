@@ -10,7 +10,7 @@ use eframe::egui;
 use yet_stim::Phase;
 
 use super::command::ExperimentCommand;
-use super::state::{ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
+use super::state::{CameraChoice, ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
 
 /// Fallback number of monitor choices when the platform reports no monitors.
 pub const MONITOR_CHOICES: usize = 4;
@@ -604,6 +604,48 @@ impl ConsoleUi {
             ui.label("Presenter settings are locked while the session is active.");
         }
         ui.horizontal_wrapped(|ui| {
+            ui.label("Camera");
+            ui.add_enabled_ui(can_configure, |ui| {
+                if state.camera_devices.is_empty() {
+                    ui.add(
+                        egui::DragValue::new(&mut state.camera_usb_index)
+                            .range(0..=31)
+                            .prefix("index "),
+                    );
+                } else {
+                    let selected = state
+                        .camera_devices
+                        .iter()
+                        .find(|camera| camera.index == state.camera_usb_index)
+                        .map(CameraChoice::label)
+                        .unwrap_or_else(|| format!("{} · unavailable", state.camera_usb_index));
+                    egui::ComboBox::from_id_salt("yet-console-camera")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for camera in &state.camera_devices {
+                                ui.selectable_value(
+                                    &mut state.camera_usb_index,
+                                    camera.index,
+                                    camera.label(),
+                                );
+                            }
+                        });
+                }
+                if ui.button("Scan").clicked() {
+                    state.camera_rescan = true;
+                }
+            });
+        });
+        if let Some(error) = &state.camera_error {
+            ui.colored_label(egui::Color32::YELLOW, format!("Camera: {error}"));
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut state.follow, "Follow [F]");
+            if state.follow {
+                ui.label("gaze circle over the stimulus");
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(state.overlay.available, |ui| {
                 ui.checkbox(&mut state.overlay.enabled, "Gaze overlay");
             });
@@ -671,7 +713,7 @@ impl ConsoleUi {
         presenter_ready: bool,
         commands: &mut Vec<ExperimentCommand>,
     ) {
-        let (start, pause, abort, calibrate, quick, cancel, preview) = ui.input(|input| {
+        let (start, pause, abort, calibrate, quick, cancel, preview, follow) = ui.input(|input| {
             (
                 input.key_pressed(egui::Key::F5),
                 input.key_pressed(egui::Key::F6),
@@ -680,6 +722,7 @@ impl ConsoleUi {
                 input.key_pressed(egui::Key::F9),
                 input.key_pressed(egui::Key::Escape),
                 input.key_pressed(egui::Key::F10),
+                input.key_pressed(egui::Key::F),
             )
         });
 
@@ -707,6 +750,9 @@ impl ConsoleUi {
         }
         if preview {
             state.preview.enabled = !state.preview.enabled;
+        }
+        if follow && !ui.ctx().egui_wants_keyboard_input() {
+            state.follow = !state.follow;
         }
 
         if state.phase == Phase::Finished {

@@ -7,7 +7,7 @@
 > **Implementation snapshot (2026-10-26).** S0–S10 are implemented, with the
 > S10 runtime matrix and 60-minute overlay soak still open. The workspace
 > was reorganized into `yet-core`, `yet-stim`, `yet-egui` and `yet-zero` after
-> S9; 256 workspace tests pass, with three ignored hardware tests (camera,
+> S9; 273 workspace tests pass, with three ignored hardware tests (camera,
 > tracker, audio) that pass on the lab machine. The reorganization changed crate
 > boundaries and imports only: behavior, timing, CSV schema and the model
 > equation are unchanged. S7's pilot (UX-4), parts of the M3/M5 gates, S10
@@ -166,6 +166,9 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D23** | **Three published libraries plus one unpublished binary.** `yet-core` (abstract gaze essentials), `yet-stim` (engine, media, stimulus and presentation protocols), `yet-egui` (egui components), `yet-zero` (binary and test-only library, `publish = false`). Dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`; no lower crate may depend on a higher one. | Reorganization decision 2026-10-26 |
 | **D24** | **`yet-core` is `#![no_std]` with `alloc`.** Time, frames, features, predictor and parameter block are always available; the reference Quadbright trainer and calibration buffer are behind the non-default `yet-zero` feature (`nalgebra` + `libm`). A `no_malloc` feature set may be added later. | E1; reorganization decision |
 | **D25** | **The UI framework lives only in `yet-egui`.** `yet-stim` owns the `OverlayBackend` trait and the layer-shell backend; `yet-egui` owns `EguiOverlay`. The binary selects and wires a backend. This avoids a dependency cycle and lets a different presenter replace egui later. | R4; reorganization decision |
+| **D26** | **Python workspaces are first-class.** A directory with `Config.csv` and `Stimuli/` loads without conversion; `SLIDE_TIME`, `SHUFFLE`/`SEED`, `STIM_FILE` and the `File` column map to the native model, results go to `Data/` with the `Yeta1` prefix, and an optional `config.toml` overrides machine settings. | 1.0 parity decision 2026-10-26 |
+| **D27** | **Camera selection is a session setting.** Enumeration is per platform (`linuxvideo` V4L2, `nokhwa` Windows/macOS). Changing the device reopens capture and invalidates calibration; selection is locked while a session or calibration is active. | 1.0 parity decision |
+| **D28** | **Follow is purely visual.** The gaze circle is appended to a temporary scene for painting and never changes the stored stimulus scene or CSV. Presenter-only mode has no console and exposes `F`/`Space`/`F7`/`F9`/`F8`/`Esc`. | 1.0 parity decision |
 
 ---
 
@@ -1116,6 +1119,14 @@ egui and layer-shell backends maintain the counters, and
 and focus soak has not been run here. OVL-8 is scaffolded in
 `docs/platform-matrix.md`; Windows/macOS runtime and HiDPI/multi-monitor rows
 remain hardware gates. M6 therefore stays open.
+
+**Parity increment (2026-10-26):** the 1.0 parity slice adds a Python-layout
+loader (`legacy.rs` in `yet-stim`), optional `config.toml` overrides, camera
+enumeration (`CameraDevice`/`list_devices`) with a console dropdown and
+`yet-zero devices`, a presenter-only window (`yet-zero present`), and a purely
+visual follow circle in both console and presenter-only mode. `follow` is a
+console-state flag; the driver appends the marker to a temporary scene. 273
+tests pass. Windows/macOS runtime validation remains open.
 
 ### Sprint 11 — Hardening and release
 

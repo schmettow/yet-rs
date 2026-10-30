@@ -171,6 +171,28 @@ pub struct OverlayStatus {
     pub error: Option<String>,
 }
 
+/// One camera reported by the platform.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CameraChoice {
+    /// Zero-based device index used by the capture backend.
+    pub index: usize,
+    /// Human-readable device name.
+    pub name: String,
+    /// Device path or backend identifier.
+    pub detail: String,
+}
+
+impl CameraChoice {
+    /// Label for the console dropdown.
+    pub fn label(&self) -> String {
+        if self.detail.is_empty() {
+            format!("{} · {}", self.index, self.name)
+        } else {
+            format!("{} · {} · {}", self.index, self.name, self.detail)
+        }
+    }
+}
+
 /// Everything the console displays.
 #[derive(Clone, Debug)]
 pub struct ConsoleState {
@@ -184,6 +206,16 @@ pub struct ConsoleState {
     pub presenter_monitor: usize,
     /// Console monitor from the configuration; recorded, not enforced.
     pub console_monitor: usize,
+    /// Selected camera index.
+    pub camera_usb_index: usize,
+    /// Cameras reported by the platform.
+    pub camera_devices: Vec<CameraChoice>,
+    /// Last camera enumeration or open error.
+    pub camera_error: Option<String>,
+    /// Set by the UI to request a camera rescan.
+    pub camera_rescan: bool,
+    /// Whether a live gaze circle is drawn over the stimulus.
+    pub follow: bool,
     /// Whether the presenter is borderless fullscreen.
     pub fullscreen: bool,
     /// Number of planned trials.
@@ -251,6 +283,11 @@ impl ConsoleState {
             phase: Phase::Idle,
             presenter_monitor,
             console_monitor,
+            camera_usb_index: 0,
+            camera_devices: Vec::new(),
+            camera_error: None,
+            camera_rescan: false,
+            follow: false,
             fullscreen,
             trials_total,
             trials_completed: 0,
@@ -455,10 +492,30 @@ mod tests {
     use yet_core::CalibrationReport;
     use yet_stim::{CalibrationPhase, CalibrationSnapshot, Phase};
 
-    use super::{ConsoleState, LogLevel, MAX_LOG_LINES};
+    use super::{CameraChoice, ConsoleState, LogLevel, MAX_LOG_LINES};
 
     fn state() -> ConsoleState {
         ConsoleState::new("demo", "42", 1, 0, true, 4)
+    }
+
+    #[test]
+    fn camera_choices_show_index_name_and_detail() {
+        let choice = CameraChoice {
+            index: 0,
+            name: "Logitech StreamCam".to_owned(),
+            detail: "/dev/video0".to_owned(),
+        };
+
+        assert_eq!(choice.label(), "0 · Logitech StreamCam · /dev/video0");
+    }
+
+    #[test]
+    fn a_new_console_has_no_camera_list_and_follow_off() {
+        let state = state();
+
+        assert!(state.camera_devices.is_empty());
+        assert!(!state.camera_rescan);
+        assert!(!state.follow);
     }
 
     #[test]

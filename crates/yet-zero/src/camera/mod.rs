@@ -271,6 +271,115 @@ pub fn validate_eye_region(normalized: [f32; 4]) -> bool {
         && y + height <= 1.0
 }
 
+/// A camera that can be selected at runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CameraDevice {
+    /// Backend index, matching [`CaptureConfig::device`].
+    pub index: u32,
+    /// Human-readable device or card name.
+    pub name: String,
+    /// Device path or backend identifier for diagnostics.
+    pub detail: String,
+}
+
+/// List the cameras the platform reports.
+///
+/// Linux uses the V4L2 device list and filters out metadata/output nodes. macOS
+/// and Windows use the `nokhwa` device query. An empty list means no camera was
+/// reported, not that enumeration failed.
+pub fn list_devices() -> Result<Vec<CameraDevice>, CameraError> {
+    list_devices_platform()
+}
+
+#[cfg(target_os = "linux")]
+fn list_devices_platform() -> Result<Vec<CameraDevice>, CameraError> {
+    use linuxvideo::CapabilityFlags;
+
+    let devices = linuxvideo::list().map_err(|error| CameraError::Enumerate {
+        message: error.to_string(),
+    })?;
+    let mut found = Vec::new();
+    for entry in devices {
+        let Ok(device) = entry else {
+            continue;
+        };
+        let Ok(capabilities) = device.capabilities() else {
+            continue;
+        };
+        let flags = capabilities.device_capabilities();
+        if !flags.contains(CapabilityFlags::VIDEO_CAPTURE)
+            && !flags.contains(CapabilityFlags::VIDEO_CAPTURE_MPLANE)
+        {
+            continue;
+        }
+        let Ok(path) = device.path() else {
+            continue;
+        };
+        let Some(index) = video_index(&path) else {
+            continue;
+        };
+        let card = capabilities.card().trim();
+        let name = if card.is_empty() {
+            format!("camera {index}")
+        } else {
+            card.to_owned()
+        };
+        found.push(CameraDevice {
+            index,
+            name,
+            detail: path.display().to_string(),
+        });
+    }
+    found.sort_by_key(|device| device.index);
+    found.dedup_by_key(|device| device.index);
+    Ok(found)
+}
+
+#[cfg(target_os = "linux")]
+fn video_index(path: &std::path::Path) -> Option<u32> {
+    path.file_name()?
+        .to_str()?
+        .strip_prefix("video")?
+        .parse()
+        .ok()
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn list_devices_platform() -> Result<Vec<CameraDevice>, CameraError> {
+    use ::nokhwa::query;
+    use ::nokhwa::utils::{ApiBackend, CameraIndex};
+
+    let devices = query(ApiBackend::Auto).map_err(|error| CameraError::Enumerate {
+        message: error.to_string(),
+    })?;
+    let mut found = Vec::new();
+    for info in devices {
+        let index = match info.index() {
+            CameraIndex::Index(index) => *index,
+            CameraIndex::String(value) => match value.parse() {
+                Ok(index) => index,
+                Err(_) => continue,
+            },
+        };
+        found.push(CameraDevice {
+            index,
+            name: if info.human_name().is_empty() {
+                format!("camera {index}")
+            } else {
+                info.human_name()
+            },
+            detail: info.description().to_owned(),
+        });
+    }
+    found.sort_by_key(|device| device.index);
+    Ok(found)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn list_devices_platform() -> Result<Vec<CameraDevice>, CameraError> {
+    Err(CameraError::UnsupportedPlatform)
+}
+
 /// A snapshot of capture counters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CameraStats {
@@ -347,6 +456,12 @@ pub enum CameraError {
     /// This platform has no camera backend.
     #[error("camera capture is not supported on this platform")]
     UnsupportedPlatform,
+    /// The platform camera list could not be queried.
+    #[error("could not enumerate cameras: {message}")]
+    Enumerate {
+        /// Platform error message.
+        message: String,
+    },
     /// The capture thread could not be started.
     #[error("could not start the camera thread: {0}")]
     Thread(String),

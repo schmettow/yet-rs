@@ -48,6 +48,56 @@ impl Default for GazeMarkerStyle {
     }
 }
 
+impl GazeMarkerStyle {
+    /// A marker proportional to a surface, as the Python prototype draws it.
+    ///
+    /// The radius is 1/50 and the halo 1/200 of the shorter side, with small
+    /// floors so the circle stays visible on a small viewport.
+    pub fn for_surface(size_px: (u32, u32)) -> Self {
+        let short = size_px.0.min(size_px.1) as f32;
+        Self {
+            radius_px: (short / 50.0).max(4.0),
+            halo_px: (short / 200.0).max(1.0),
+            ..Self::default()
+        }
+    }
+}
+
+/// Append a filled gaze circle with a halo to an existing scene.
+///
+/// Returns `false` when the point is not finite or lies outside the surface;
+/// a stale or wild prediction must not stick to an edge. This is the purely
+/// visual marker used over a stimulus; it is not part of the recorded data.
+pub fn append_gaze_marker(
+    scene: &mut Scene,
+    center: PointPx,
+    surface_px: (u32, u32),
+    style: &GazeMarkerStyle,
+) -> bool {
+    if surface_px.0 == 0 || surface_px.1 == 0 {
+        return false;
+    }
+    if !center.x.is_finite()
+        || !center.y.is_finite()
+        || center.x < 0.0
+        || center.y < 0.0
+        || center.x > surface_px.0 as f32
+        || center.y > surface_px.1 as f32
+    {
+        return false;
+    }
+    if style.halo_px > 0.0 {
+        scene.circle(
+            center,
+            style.radius_px + style.halo_px,
+            0.0,
+            style.halo_color,
+        );
+    }
+    scene.circle(center, style.radius_px, 0.0, style.color);
+    true
+}
+
 /// Compose one overlay frame with an optional gaze marker.
 ///
 /// The scene is always cleared to transparent. A gaze point outside the
@@ -86,28 +136,42 @@ pub fn gaze_scene(
 
     let x = point.x * overlay.size_px.0 as f32 / presenter.size_px.0 as f32;
     let y = point.y * overlay.size_px.1 as f32 / presenter.size_px.1 as f32;
-    let center = PointPx::new(x, y);
-
-    if style.halo_px > 0.0 {
-        scene.circle(
-            center,
-            style.radius_px + style.halo_px,
-            0.0,
-            style.halo_color,
-        );
-    }
-    scene.circle(center, style.radius_px, 0.0, style.color);
+    append_gaze_marker(&mut scene, PointPx::new(x, y), overlay.size_px, style);
     scene
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{gaze_scene, GazeMarkerStyle};
-    use crate::{Color, DrawCommand, ScreenGeometry};
+    use super::{append_gaze_marker, gaze_scene, GazeMarkerStyle};
+    use crate::{Color, DrawCommand, PointPx, ScreenGeometry};
     use yet_core::GazePoint;
 
     fn geometry(index: usize, width: u32, height: u32) -> ScreenGeometry {
         ScreenGeometry::new(index, None, (width, height), 1.0)
+    }
+
+    #[test]
+    fn a_presenter_marker_scales_with_the_surface() {
+        let style = GazeMarkerStyle::for_surface((900, 900));
+        assert_eq!(style.radius_px, 18.0);
+        assert_eq!(style.halo_px, 4.5);
+
+        let mut scene = crate::Scene::new();
+        let added = append_gaze_marker(&mut scene, PointPx::new(450.0, 450.0), (900, 900), &style);
+
+        assert!(added);
+        assert_eq!(scene.len(), 2);
+    }
+
+    #[test]
+    fn an_out_of_bounds_presenter_marker_is_ignored() {
+        let style = GazeMarkerStyle::for_surface((900, 900));
+        let mut scene = crate::Scene::new();
+
+        let added = append_gaze_marker(&mut scene, PointPx::new(901.0, 10.0), (900, 900), &style);
+
+        assert!(!added);
+        assert!(scene.is_empty());
     }
 
     #[test]

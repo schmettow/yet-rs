@@ -17,12 +17,12 @@ use thiserror::Error;
 use yet_core::GazePoint;
 use yet_stim::layout::StimulusPlacement;
 use yet_stim::{
-    AudioError, ClockSource, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand,
-    PresenterError, Scene, SessionTime,
+    append_gaze_marker, AudioError, ClockSource, FrameStamp, GazeMarkerStyle, MediaId, PointPx,
+    PresentStats, Presenter, PresenterCommand, PresenterError, Scene, SessionTime,
 };
 use yet_stim::{
     DataError, DataSink, Effect, EngineError, FrameRecord, GazeSample, LoadError, LoadedExperiment,
-    Phase, SessionIdentity, Stimulus, StimulusId, StimulusKind,
+    Phase, SessionIdentity, Stimulus, StimulusId, StimulusKind, WorkspaceKind,
 };
 
 /// Default prefix of a result file.
@@ -145,9 +145,14 @@ pub fn prepare(
         participant,
     );
 
-    let result_file = output
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| loaded.root.join(identity.file_name(RESULT_PREFIX)));
+    let result_file = output.map(Path::to_path_buf).unwrap_or_else(|| {
+        let prefix = match loaded.kind {
+            WorkspaceKind::Native => RESULT_PREFIX,
+            WorkspaceKind::YetZeroPython => "Yeta1",
+        };
+        let name = identity.file_name(prefix);
+        loaded.result_dir.join(name)
+    });
     if let Some(parent) = result_file.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|source| RunError::CreateDirectory {
@@ -302,9 +307,27 @@ where
 
     /// Present the current scene and return its timing statistics.
     pub fn present(&mut self, at: SessionTime, dt: Duration) -> PresentStats {
+        self.present_with_marker(at, dt, None)
+    }
+
+    /// Present the current scene with an optional visual gaze marker.
+    ///
+    /// The marker is appended to a temporary scene; the stored stimulus scene
+    /// stays unchanged and the marker never reaches the data sink.
+    pub fn present_with_marker(
+        &mut self,
+        at: SessionTime,
+        dt: Duration,
+        marker: Option<GazePoint>,
+    ) -> PresentStats {
         self.refresh_placement();
         let frame = frame_stamp(at, dt);
-        self.presenter.present(&frame, &self.scene)
+        let surface = self.presenter.geometry().size_px;
+        let marked = marked_scene(&self.scene, surface, marker);
+        match marked {
+            Some(scene) => self.presenter.present(&frame, &scene),
+            None => self.presenter.present(&frame, &self.scene),
+        }
     }
 
     /// Present an arbitrary scene without changing the trial scene.
@@ -312,8 +335,32 @@ where
     /// Calibration uses this to draw its grid while the experiment scene is
     /// paused or not yet started.
     pub fn present_scene(&mut self, at: SessionTime, dt: Duration, scene: &Scene) -> PresentStats {
+        self.present_scene_with_marker(at, dt, scene, None)
+    }
+
+    /// Present an arbitrary scene with an optional visual gaze marker.
+    pub fn present_scene_with_marker(
+        &mut self,
+        at: SessionTime,
+        dt: Duration,
+        scene: &Scene,
+        marker: Option<GazePoint>,
+    ) -> PresentStats {
         let frame = frame_stamp(at, dt);
-        self.presenter.present(&frame, scene)
+        self.present_scene_inner(&frame, scene, marker)
+    }
+
+    fn present_scene_inner(
+        &mut self,
+        frame: &FrameStamp,
+        scene: &Scene,
+        marker: Option<GazePoint>,
+    ) -> PresentStats {
+        let surface = self.presenter.geometry().size_px;
+        match marked_scene(scene, surface, marker) {
+            Some(marked) => self.presenter.present(frame, &marked),
+            None => self.presenter.present(frame, scene),
+        }
     }
 
     /// Recompose the current stimulus after the presenter surface changed.
@@ -414,6 +461,18 @@ pub(crate) fn now_seconds() -> Result<f64, RunError> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .map_err(|_| RunError::Clock)
+}
+
+fn marked_scene(scene: &Scene, surface: (u32, u32), marker: Option<GazePoint>) -> Option<Scene> {
+    let point = marker?;
+    let mut marked = scene.clone();
+    append_gaze_marker(
+        &mut marked,
+        PointPx::new(point.x, point.y),
+        surface,
+        &GazeMarkerStyle::for_surface(surface),
+    );
+    Some(marked)
 }
 
 fn frame_stamp(at: SessionTime, dt: Duration) -> FrameStamp {
