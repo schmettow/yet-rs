@@ -230,8 +230,13 @@ This opens only the stimulus window (or the 900×900 window of a Python
 workspace); there is no console. It is the quickest way to test the tracker on
 a single monitor. Keys: **F** toggles the follow circle, **Space** starts or
 pauses, **F7** runs a full calibration, **F9** a quick recalibration, **F8**
-aborts and **Esc** quits. The circle is purely visual: it is composed into a
-temporary scene for painting and never changes the trial scene or a CSV row.
+aborts and **Esc** quits. Follow is a live tracker view: while idle or paused it
+paints the circle over the current (or a neutral white) scene and keeps the
+camera polling, so it is visible immediately after calibration without starting
+a trial. The circle is purely visual: it is composed into a temporary scene for
+painting and never changes the trial scene or a CSV row. A small status strip
+shows calibration and camera errors outside a running trial. `--follow` starts
+with the circle enabled, which is useful for an automated or scripted check.
 
 ### Calibrating in the console
 

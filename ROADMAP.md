@@ -119,7 +119,9 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   and a console camera selector (Linux V4L2, Windows/macOS `nokhwa`) that
   reopens capture and invalidates calibration. Added `yet-zero present`, a
   presenter-only window with `F` follow, and a purely visual gaze circle in the
-  console/presenter. 273 tests pass.
+  console/presenter. 274 tests pass. Follow polls and paints while idle or
+  paused, and the windowed presenter uses a stable logical size (the growth
+  loop on `yet-zero run` is fixed).
 - **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1

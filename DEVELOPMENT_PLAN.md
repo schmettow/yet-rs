@@ -7,7 +7,7 @@
 > **Implementation snapshot (2026-10-26).** S0–S10 are implemented, with the
 > S10 runtime matrix and 60-minute overlay soak still open. The workspace
 > was reorganized into `yet-core`, `yet-stim`, `yet-egui` and `yet-zero` after
-> S9; 273 workspace tests pass, with three ignored hardware tests (camera,
+> S9; 274 workspace tests pass, with three ignored hardware tests (camera,
 > tracker, audio) that pass on the lab machine. The reorganization changed crate
 > boundaries and imports only: behavior, timing, CSV schema and the model
 > equation are unchanged. S7's pilot (UX-4), parts of the M3/M5 gates, S10
@@ -1125,8 +1125,11 @@ loader (`legacy.rs` in `yet-stim`), optional `config.toml` overrides, camera
 enumeration (`CameraDevice`/`list_devices`) with a console dropdown and
 `yet-zero devices`, a presenter-only window (`yet-zero present`), and a purely
 visual follow circle in both console and presenter-only mode. `follow` is a
-console-state flag; the driver appends the marker to a temporary scene. 273
-tests pass. Windows/macOS runtime validation remains open.
+console-state flag; the driver appends the marker to a temporary scene. 274
+tests pass. Follow also polls and paints while idle or paused, so the circle is
+visible immediately after calibration; the windowed presenter uses a stable
+logical size to avoid the `with_inner_size` growth loop. Windows/macOS runtime
+validation remains open.
 
 ### Sprint 11 — Hardening and release
 

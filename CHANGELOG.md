@@ -30,6 +30,15 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   30 Hz. A 30 s X11 smoke raised the measured paint rate from 4.2 to 27.4
   painted scenes/s with bounded coalescing (`requested=868 painted=823
   superseded=44 outstanding=1 errors=0`).
+- Fixed a windowed-presenter feedback loop: `with_inner_size` received the
+  painted *physical* geometry every frame and grew the window at non-unit scale
+  factors. Windowed viewports now use the stable configured logical size.
+  `yet-zero run` on a 900×900 Python workspace keeps a constant window.
+- Follow now works outside a trial: with a fitted model and follow enabled, the
+  controller keeps polling the camera and paints the current (or a neutral
+  white) scene with the circle while idle or paused. This is the immediate
+  tracker check presenter-only mode needs. A small presenter-only status strip
+  shows calibration/camera state and errors, and hides during a running trial.
 - `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
   `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
   adapters moved to `yet-zero::camera`.

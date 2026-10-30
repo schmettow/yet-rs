@@ -39,6 +39,8 @@ pub struct PresenterOptions<'a> {
     pub output: Option<&'a Path>,
     /// Camera index override.
     pub device: Option<usize>,
+    /// Start with the follow circle enabled.
+    pub follow: bool,
 }
 
 impl<'a> PresenterOptions<'a> {
@@ -49,6 +51,7 @@ impl<'a> PresenterOptions<'a> {
             participant: None,
             output: None,
             device: None,
+            follow: false,
         }
     }
 
@@ -67,6 +70,12 @@ impl<'a> PresenterOptions<'a> {
     /// Override the camera index.
     pub fn device(mut self, device: usize) -> Self {
         self.device = Some(device);
+        self
+    }
+
+    /// Start with the follow circle enabled.
+    pub fn follow(mut self, follow: bool) -> Self {
+        self.follow = follow;
         self
     }
 }
@@ -112,6 +121,7 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
     {
         let mut console = lock_console(&shared);
         console.camera_usb_index = initial_device;
+        console.follow = options.follow;
         console.log(
             LogLevel::Info,
             format!(

@@ -177,6 +177,19 @@ impl PresenterState {
         (self.config.monitor, self.config.fullscreen)
     }
 
+    /// Stable logical size for a windowed viewport.
+    ///
+    /// Window sizes are logical points; [`Self::geometry`] is physical pixels.
+    /// Feeding the painted geometry back into `with_inner_size` would grow the
+    /// window on every frame at a non-unit scale factor.
+    pub fn window_size_pt(&self) -> (f32, f32) {
+        let scale = self.config.nominal_scale_factor.max(0.1);
+        (
+            self.config.nominal_size_px.0 as f32 / scale,
+            self.config.nominal_size_px.1 as f32 / scale,
+        )
+    }
+
     /// Natural size of loaded media.
     pub fn media_size(&self, media: MediaId) -> Option<(u32, u32)> {
         self.media.size(media)
@@ -561,7 +574,14 @@ mod tests {
         SessionTime,
     };
 
-    use super::{EguiPresenter, PresenterConfig};
+    use super::{EguiPresenter, PresenterConfig, PresenterState};
+
+    #[test]
+    fn a_windowed_size_is_logical_and_stable() {
+        let state = PresenterState::new(PresenterConfig::new(0, false, (900, 900), 1.5));
+
+        assert_eq!(state.window_size_pt(), (600.0, 600.0));
+    }
 
     fn frame_stamp(at: Duration) -> FrameStamp {
         let now = Instant::now();

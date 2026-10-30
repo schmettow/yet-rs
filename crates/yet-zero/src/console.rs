@@ -32,7 +32,7 @@ use yet_stim::{
     ConsoleEvent, Effect, EngineEvent, EngineState, FrameRecord, GazeMarkerStyle, GazeSample,
     Phase, QuickBackground, SessionPlan,
 };
-use yet_stim::{OverlayBackend, Scene, ScreenGeometry, SessionTime};
+use yet_stim::{Color, OverlayBackend, Scene, ScreenGeometry, SessionTime};
 
 use crate::desktop_overlay::{self, OverlayHost};
 use crate::driver::{gaze_sample, prepare, RunError, RunReport, SessionRunner};
@@ -502,6 +502,8 @@ fn run_loop<G>(
     let mut overlay_visible = false;
     let mut overlay_gaze: Option<GazePoint> = None;
     let mut overlay_warned = false;
+    let mut follow_was_active = false;
+    let mut last_follow = false;
 
     while !shut_down {
         let selected_camera = lock_console(shared).camera_usb_index;
@@ -570,32 +572,35 @@ fn run_loop<G>(
             drop(console);
             tracker = None;
         }
-        if preview_enabled && tracker.is_none() {
-            tracker = open_tracker(camera_config, shared);
+        if follow != last_follow {
+            last_follow = follow;
+            lock_console(shared).log(
+                LogLevel::Info,
+                format!("follow {}", if follow { "on" } else { "off" }),
+            );
         }
 
         let calibrating = calibration.as_ref().is_some_and(CalibrationRun::is_active);
         let running = state.phase == Phase::Running;
         let fitted = calibration.as_ref().is_some_and(CalibrationRun::is_fitted);
-        let want_features = calibrating || preview_enabled || (running && fitted);
+        if (preview_enabled || (follow && fitted)) && tracker.is_none() {
+            tracker = open_tracker(camera_config, shared);
+        }
+
+        let want_features = calibrating || preview_enabled || (fitted && (running || follow));
         let mut features: Option<QuadBrightness> = None;
 
         if want_features {
             if let Some(tracker) = tracker.as_mut() {
                 if let Some(polled) = tracker.poll() {
                     features = Some(polled.features);
-                    if running && fitted {
+                    if fitted && (running || calibrating || follow) {
                         if let Some(run) = &calibration {
                             if let Ok(point) = run.predict(polled.features) {
                                 latest_gaze.set(Some(point));
-                                lock_console(shared).overlay.gaze = Some(point);
-                            }
-                        }
-                    }
-                    if calibrating && fitted {
-                        if let Some(run) = &calibration {
-                            if let Ok(point) = run.predict(polled.features) {
-                                latest_gaze.set(Some(point));
+                                if running {
+                                    lock_console(shared).overlay.gaze = Some(point);
+                                }
                             }
                         }
                     }
@@ -633,7 +638,7 @@ fn run_loop<G>(
         }
 
         // Wait for a command or the next tick.
-        let active = running || calibrating;
+        let active = running || calibrating || (follow && fitted);
         let wait = if active {
             next_tick.saturating_duration_since(now)
         } else {
@@ -853,6 +858,38 @@ fn run_loop<G>(
             }
             continue;
         }
+
+        // Outside a running trial, a fitted follow view is a live tracker
+        // check: keep the camera polling and repaint a neutral (or current)
+        // scene with the circle. This is what makes `F` useful before Space.
+        let idle_follow = follow && fitted && state.phase != Phase::Running;
+        if state.phase != Phase::Running && (idle_follow || follow_was_active) {
+            follow_was_active = idle_follow;
+            if now < next_tick {
+                continue;
+            }
+            let at = session_time(start, now);
+            let dt = now
+                .duration_since(last_tick)
+                .min(TICK)
+                .max(Duration::from_micros(1));
+            last_tick = now;
+            let scene = if runner.scene().commands().is_empty() {
+                let mut scene = Scene::new();
+                scene.clear(Color::WHITE);
+                scene
+            } else {
+                runner.scene().clone()
+            };
+            let marker = if idle_follow { latest_gaze.get() } else { None };
+            runner.present_scene_with_marker(at, dt, &scene, marker);
+            next_tick += TICK;
+            if next_tick <= now {
+                next_tick = now + TICK;
+            }
+            continue;
+        }
+        follow_was_active = false;
 
         if state.phase != Phase::Running || now < next_tick {
             continue;
