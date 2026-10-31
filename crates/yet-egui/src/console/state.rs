@@ -262,6 +262,9 @@ pub struct ConsoleState {
     pub log_elapsed: Duration,
     /// Fatal error, shown prominently.
     pub error: Option<String>,
+    /// Set by Pause during a quick recalibration so the automatic gate does not
+    /// resume the session when the recalibration finishes.
+    pub pause_after_calibration: bool,
     /// Whether the experimenter has shown and closed the adjust view.
     ///
     /// Together with a fitted calibration this is the prerequisite for starting
@@ -321,6 +324,7 @@ impl ConsoleState {
             elapsed: Duration::ZERO,
             log_elapsed: Duration::ZERO,
             error: None,
+            pause_after_calibration: false,
             adjusted: false,
             calibration: CalibrationStatus::default(),
             preview: PreviewState::default(),
@@ -470,9 +474,20 @@ impl ConsoleState {
     /// Whether the session can pause.
     ///
     /// Pause is available whenever a session is running; it is disabled once
-    /// the session is paused.
+    /// the session is paused. During a quick recalibration the engine is
+    /// already paused, so the UI offers Pause as a hold request instead.
     pub fn can_pause(&self) -> bool {
         self.phase == Phase::Running && !self.calibration.active
+    }
+
+    /// Whether a quick recalibration currently owns the presenter.
+    pub fn quick_calibration_active(&self) -> bool {
+        matches!(
+            self.calibration.phase,
+            yet_stim::CalibrationPhase::QuickSettle
+                | yet_stim::CalibrationPhase::QuickCollect
+                | yet_stim::CalibrationPhase::QuickReport
+        )
     }
 
     /// Whether the session can resume.
@@ -490,40 +505,34 @@ impl ConsoleState {
 
     /// Whether a full calibration can start.
     ///
-    /// A running session may be interrupted: the UI pauses it first and then
-    /// starts the calibration, so the same session remains paused afterwards.
+    /// Interrupting a session requires a pause first; the initial calibration
+    /// is done while idle, before Start becomes available.
     pub fn can_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
             && !self.preview.adjust
-            && matches!(
-                self.phase,
-                Phase::Idle | Phase::Running | Phase::Paused | Phase::Finished
-            )
+            && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
     }
 
     /// Whether a quick recalibration can start.
     ///
-    /// Like a full calibration, it may interrupt a running session; the UI
-    /// pauses the session first.
+    /// This is an interrupt and therefore requires a paused session; the
+    /// automatic per-trial gate runs after the controller has paused the engine.
     pub fn can_quick_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
             && !self.preview.adjust
             && self.calibration.fitted
-            && matches!(
-                self.phase,
-                Phase::Idle | Phase::Running | Phase::Paused | Phase::Finished
-            )
+            && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
     }
 
     /// Whether the adjust view can be shown or hidden.
     ///
-    /// Adjusting is available at any time except while a calibration owns the
-    /// presenter. Entering it during a run pauses the session first; leaving it
-    /// marks the camera-alignment step as done.
+    /// Adjusting is available before a session, while paused, and after a
+    /// session; a running session must be paused first. It is never available
+    /// while a calibration owns the presenter.
     pub fn can_adjust(&self) -> bool {
-        !self.calibration.active
+        !self.calibration.active && self.phase != Phase::Running
     }
 
     /// Finish the adjust view and remember that the camera was aligned.
@@ -788,11 +797,18 @@ mod tests {
         assert!(state.can_quick_calibrate(true));
 
         state.phase = Phase::Running;
-        assert!(state.can_calibrate(true), "calibration interrupts a run");
         assert!(
-            state.can_quick_calibrate(true),
-            "quick recalibration interrupts a run"
+            !state.can_calibrate(true),
+            "pause the session before calibrating"
         );
+        assert!(
+            !state.can_quick_calibrate(true),
+            "pause the session before a quick recalibration"
+        );
+
+        state.phase = Phase::Paused;
+        assert!(state.can_calibrate(true));
+        assert!(state.can_quick_calibrate(true));
 
         state.calibration.active = true;
         assert!(!state.can_start());
@@ -803,13 +819,26 @@ mod tests {
     }
 
     #[test]
+    fn a_quick_recalibration_is_visible_to_the_controls() {
+        let mut state = state();
+        state.calibration.phase = CalibrationPhase::QuickCollect;
+        assert!(state.quick_calibration_active());
+
+        state.calibration.phase = CalibrationPhase::Collect;
+        assert!(!state.quick_calibration_active());
+
+        state.calibration.phase = CalibrationPhase::Idle;
+        assert!(!state.quick_calibration_active());
+    }
+
+    #[test]
     fn adjust_is_available_unless_a_calibration_owns_the_presenter() {
         let mut state = state();
         assert!(state.can_adjust());
         assert!(!state.preview.adjust);
 
         state.phase = Phase::Running;
-        assert!(state.can_adjust(), "adjust interrupts a run");
+        assert!(!state.can_adjust(), "pause the session before adjusting");
 
         state.phase = Phase::Idle;
         state.calibration.active = true;

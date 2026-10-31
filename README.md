@@ -176,14 +176,18 @@ Controls follow the same order as `yet-zero present`: **1 · Camera adjustment**
 (F3; shows the full, mirrored camera image enlarged with the eye ROI outlined),
 **2 · Calibration** (F7 full 3×3 grid; **Quick** F9 for one center target;
 **Cancel** Esc), then **3 · Experiment**. **Start** (F5) stays disabled until
-the adjustment has been finished and a calibration is fitted. **Pause** (F6) is
-enabled while a session runs; **Continue** (F6) only while paused. **Exit** (F8)
-is enabled only while paused; it asks “Sure you want to cancel the session? x/n
-trials saved.” and only then aborts and flushes. **Reset** (F4) is enabled while
-paused — it aborts the paused session first — and for finished/aborted sessions,
-returning to Idle so it can be calibrated and started again. Adjust, Calibrate
-and Quick remain available while a session runs: they pause it first, so the
-experimenter can interrupt at any moment and continue afterwards. The **Camera
+the adjustment has been finished and a calibration is fitted. **Pause/Continue**
+(F6) is one toggle button: it shows **Pause** while the session runs and
+**Continue** while paused. During a quick recalibration it stays **Pause**;
+pressing it keeps the session paused when the recalibration finishes instead of
+resuming. **Exit** (F8) is enabled only while paused; it asks “Sure you want to
+cancel the session? x/n trials saved.” and only then aborts and flushes.
+**Reset** (F4) is enabled while paused — it aborts the paused session first —
+and for finished/aborted sessions, returning to Idle so it can be calibrated
+and started again. Adjust, Calibrate and Quick are enabled when the session is
+not running: Idle for the initial setup and Paused during a session. To
+interrupt a running experiment, press Pause first; the session stays paused
+after the adjustment or calibration. The **Camera
 preview** toggle (F10), **Follow** (F; draws a gaze circle over the stimulus),
 and the **PiP camera** toggle (camera stream drawn over the stimulus;
 presenter-only key P) are unchanged. The gaze-prediction viewer next to the

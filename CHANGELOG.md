@@ -12,12 +12,14 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - **The experimenter console follows the presenter's setup order.**
   `1 · Camera adjustment` and `2 · Calibration` come before `3 · Experiment`;
   Start is disabled until the adjust view has been finished and a calibration
-  is fitted. Adjust, Calibrate and Quick remain available while a session runs
-  and pause it first, so the experimenter can interrupt at any point.
-  Pause is enabled while running; Continue only while paused. Exit is available
-  only while paused and opens the “Sure you want to cancel the session? x/n
-  trials saved.” safeguard. Reset is available while paused (it aborts first)
-  and in the terminal Finished/Aborted states.
+  is fitted. Adjust, Calibrate and Quick are enabled while the session is not
+  running (Idle for setup, Paused during a session); to interrupt, pause first.
+  Pause and Continue are one toggle button: Pause while running, Continue while
+  paused. During a quick recalibration the button stays Pause and records a
+  hold, so the automatic gate leaves the session paused when it finishes. Exit
+  is available only while paused and opens the “Sure you want to cancel the
+  session? x/n trials saved.” safeguard. Reset is available while paused (it
+  aborts first) and in the terminal Finished/Aborted states.
 - **The Quadbright view moved into the console.** The presenter no longer paints
   quadrant means over the stimulus; the console's gaze-prediction viewer uses
   the four means as its background and draws the predicted gaze dot on top. The

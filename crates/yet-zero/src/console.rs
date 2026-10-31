@@ -852,7 +852,26 @@ fn run_loop<G>(
                     }
                     ExperimentCommand::Pause | ExperimentCommand::Resume => {
                         if calibrating {
-                            log_warning(shared, "finish or cancel the calibration first");
+                            let quick = calibration.as_ref().is_some_and(|run| {
+                                matches!(
+                                    run.phase(),
+                                    CalibrationPhase::QuickSettle
+                                        | CalibrationPhase::QuickCollect
+                                        | CalibrationPhase::QuickReport
+                                )
+                            });
+                            if command == ExperimentCommand::Pause && quick {
+                                let mut console = lock_console(shared);
+                                if !console.pause_after_calibration {
+                                    console.pause_after_calibration = true;
+                                    console.log(
+                                        LogLevel::Info,
+                                        "pause requested; the session will stay paused after the quick recalibration",
+                                    );
+                                }
+                            } else {
+                                log_warning(shared, "finish or cancel the calibration first");
+                            }
                         } else {
                             let event = if command == ExperimentCommand::Pause {
                                 EngineEvent::Pause
@@ -972,6 +991,7 @@ fn run_loop<G>(
                             log_warning(shared, "pause the session before a quick recalibration");
                         } else {
                             clear_gaze(shared, latest_gaze);
+                            lock_console(shared).pause_after_calibration = false;
                             start_quick_calibration(
                                 start,
                                 state,
@@ -1450,6 +1470,7 @@ where
         record_effect(shared, &effect);
         runner.apply(effect)?;
     }
+    lock_console(shared).pause_after_calibration = false;
     start_quick_calibration(
         start,
         state,
@@ -1480,7 +1501,15 @@ fn resume_after_auto_quick<G>(
 where
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
+    let hold = std::mem::take(&mut lock_console(shared).pause_after_calibration);
     if state.phase != Phase::Paused {
+        return Ok(());
+    }
+    if hold {
+        lock_console(shared).log(
+            LogLevel::Info,
+            "quick recalibration done; the session stays paused",
+        );
         return Ok(());
     }
     for effect in step(state, EngineEvent::Resume, at) {

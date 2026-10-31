@@ -240,7 +240,7 @@ impl ConsoleUi {
             .on_hover_text("Enlarged, mirrored camera image with the eye ROI (F3)")
             .clicked()
         {
-            self.toggle_adjust(state, commands);
+            self.toggle_adjust(state);
         }
         if state.preview.adjust {
             ui.label("Align the eye with the orange ROI, then choose “Finish adjusting”.");
@@ -283,21 +283,31 @@ impl ConsoleUi {
                 .on_hover_text(start_hint)
                 .clicked()
             {
+                state.pause_after_calibration = false;
                 commands.push(ExperimentCommand::Start);
             }
+            let quick = state.quick_calibration_active();
+            let pause_label = if quick || state.can_pause() {
+                "Pause"
+            } else {
+                "Continue"
+            };
+            let pause_enabled = quick || state.can_pause() || state.can_resume();
+            let pause_hint = if quick {
+                "Keep the session paused when this quick recalibration finishes"
+            } else if state.can_pause() {
+                "F6"
+            } else if state.can_resume() {
+                "F6 · continue after a pause"
+            } else {
+                ""
+            };
             if ui
-                .add_enabled(state.can_pause(), egui::Button::new("Pause"))
-                .on_hover_text("F6")
+                .add_enabled(pause_enabled, egui::Button::new(pause_label))
+                .on_hover_text(pause_hint)
                 .clicked()
             {
-                commands.push(ExperimentCommand::Pause);
-            }
-            if ui
-                .add_enabled(state.can_resume(), egui::Button::new("Continue"))
-                .on_hover_text("F6 · continue after a pause")
-                .clicked()
-            {
-                commands.push(ExperimentCommand::Resume);
+                Self::toggle_pause(state, commands);
             }
             let exit = ui
                 .add_enabled(
@@ -322,6 +332,13 @@ impl ConsoleUi {
             }
         });
 
+        if state.phase == Phase::Running {
+            ui.colored_label(
+                egui::Color32::GRAY,
+                "Pause to calibrate, quick-recalibrate, adjust, exit or reset.",
+            );
+        }
+
         if state.phase == Phase::Idle && !start_enabled {
             let hint = if !presenter.ready {
                 "Waiting for the stimulus window."
@@ -338,32 +355,42 @@ impl ConsoleUi {
         }
     }
 
-    /// Toggle the adjust view, pausing a running session first.
-    fn toggle_adjust(&mut self, state: &mut ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+    /// Toggle the adjust view. Available only when the session is not running.
+    fn toggle_adjust(&mut self, state: &mut ConsoleState) {
         if state.preview.adjust {
             state.finish_adjust();
         } else if state.can_adjust() {
-            if state.phase == Phase::Running {
-                commands.push(ExperimentCommand::Pause);
-            }
             state.preview.adjust = true;
         }
     }
 
-    /// Pause a running session before an interrupting calibration.
-    fn queue_interrupt(
-        state: &ConsoleState,
-        commands: &mut Vec<ExperimentCommand>,
-        command: ExperimentCommand,
-    ) {
-        if state.phase == Phase::Running {
-            commands.push(ExperimentCommand::Pause);
+    /// One Pause/Continue button.
+    ///
+    /// During a quick recalibration the engine is already paused, so Pause acts
+    /// as a request to keep the session paused when the recalibration finishes.
+    fn toggle_pause(state: &mut ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+        if state.quick_calibration_active() {
+            if !state.pause_after_calibration {
+                state.pause_after_calibration = true;
+                state.log(
+                    LogLevel::Info,
+                    "pause requested; the session will stay paused after the quick recalibration",
+                );
+            }
+            return;
         }
-        commands.push(command);
+        if state.can_pause() {
+            state.pause_after_calibration = false;
+            commands.push(ExperimentCommand::Pause);
+        } else if state.can_resume() {
+            state.pause_after_calibration = false;
+            commands.push(ExperimentCommand::Resume);
+        }
     }
 
     /// Return to idle; a paused session is aborted first.
-    fn reset_session(state: &ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+    fn reset_session(state: &mut ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+        state.pause_after_calibration = false;
         if state.phase == Phase::Paused {
             commands.push(ExperimentCommand::Abort);
         }
@@ -440,14 +467,14 @@ impl ConsoleUi {
                 .on_hover_text("F7 · full 3×3 grid · pauses a running session")
                 .clicked()
             {
-                Self::queue_interrupt(state, commands, ExperimentCommand::Calibrate);
+                commands.push(ExperimentCommand::Calibrate);
             }
             if ui
                 .add_enabled(can_quick, egui::Button::new("Quick"))
                 .on_hover_text("F9 · one center target · pauses a running session")
                 .clicked()
             {
-                Self::queue_interrupt(state, commands, ExperimentCommand::QuickCalibrate);
+                commands.push(ExperimentCommand::QuickCalibrate);
             }
             if ui
                 .add_enabled(can_cancel, egui::Button::new("Cancel"))
@@ -993,14 +1020,11 @@ impl ConsoleUi {
             });
 
         if start && state.can_start() && presenter_ready {
+            state.pause_after_calibration = false;
             commands.push(ExperimentCommand::Start);
         }
         if pause {
-            if state.can_pause() {
-                commands.push(ExperimentCommand::Pause);
-            } else if state.can_resume() {
-                commands.push(ExperimentCommand::Resume);
-            }
+            Self::toggle_pause(state, commands);
         }
         if exit && state.can_abort() {
             self.exit_confirm = true;
@@ -1009,10 +1033,10 @@ impl ConsoleUi {
             Self::reset_session(state, commands);
         }
         if calibrate && state.can_calibrate(presenter_ready) {
-            Self::queue_interrupt(state, commands, ExperimentCommand::Calibrate);
+            commands.push(ExperimentCommand::Calibrate);
         }
         if quick && state.can_quick_calibrate(presenter_ready) {
-            Self::queue_interrupt(state, commands, ExperimentCommand::QuickCalibrate);
+            commands.push(ExperimentCommand::QuickCalibrate);
         }
         if cancel {
             if self.exit_confirm {
@@ -1025,7 +1049,7 @@ impl ConsoleUi {
             state.preview.enabled = !state.preview.enabled;
         }
         if adjust {
-            self.toggle_adjust(state, commands);
+            self.toggle_adjust(state);
         }
         if follow && !ui.ctx().egui_wants_keyboard_input() {
             state.follow = !state.follow;
@@ -1166,7 +1190,7 @@ mod tests {
         state.phase = Phase::Paused;
         let mut commands = Vec::new();
 
-        ConsoleUi::reset_session(&state, &mut commands);
+        ConsoleUi::reset_session(&mut state, &mut commands);
         assert_eq!(
             commands,
             vec![ExperimentCommand::Abort, ExperimentCommand::Reset]
@@ -1174,7 +1198,7 @@ mod tests {
 
         commands.clear();
         state.phase = Phase::Finished;
-        ConsoleUi::reset_session(&state, &mut commands);
+        ConsoleUi::reset_session(&mut state, &mut commands);
         assert_eq!(commands, vec![ExperimentCommand::Reset]);
     }
 
@@ -1254,22 +1278,16 @@ mod tests {
     }
 
     #[test]
-    fn an_interrupting_calibration_queues_pause_first() {
+    fn pause_during_quick_recalibration_holds_the_session() {
         let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
-        state.phase = Phase::Running;
-        state.calibration.fitted = true;
+        state.phase = Phase::Paused;
+        state.calibration.phase = yet_stim::CalibrationPhase::QuickCollect;
         let mut commands = Vec::new();
 
-        ConsoleUi::queue_interrupt(&state, &mut commands, ExperimentCommand::QuickCalibrate);
-        assert_eq!(
-            commands,
-            vec![ExperimentCommand::Pause, ExperimentCommand::QuickCalibrate]
-        );
+        ConsoleUi::toggle_pause(&mut state, &mut commands);
 
-        commands.clear();
-        state.phase = Phase::Paused;
-        ConsoleUi::queue_interrupt(&state, &mut commands, ExperimentCommand::Calibrate);
-        assert_eq!(commands, vec![ExperimentCommand::Calibrate]);
+        assert!(state.pause_after_calibration);
+        assert!(commands.is_empty(), "the engine is already paused");
     }
 
     #[test]
