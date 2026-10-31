@@ -154,8 +154,10 @@ camera.
 
 The project was developed with the GEMBIRD/AppoTech UVC "Yet" camera (YUYV,
 640×480). Other UVC webcams can work; check the negotiated format with
-`yet-zero camera`. If the camera advertises YUYV only at 640×480, set
-`format = "yuyv"` in `config.toml`.
+`yet-zero camera`. `format = "auto"` tries gray, then YUYV, then MJPEG and
+uses the closest available resolution and frame rate. Forcing a format the
+device does not expose (for example `format = "mjpeg"` on a YUYV-only camera)
+fails with the list of formats the device reported.
 
 Camera permissions:
 
@@ -348,6 +350,23 @@ Tools on macOS and `gcc` on Linux.
 Run `yet-zero devices`. On Linux, add your user to the `video` group and log in
 again. On macOS, grant camera access. On Windows, enable camera access for
 desktop apps.
+
+**The camera reports "no supported format"**
+The device reported only formats yet-zero cannot convert (for example NV12 on a
+camera that offers no YUYV, MJPEG or gray stream). The error lists every format
+the device reported; use that list to pick a camera that exposes YUYV, MJPEG or
+gray.
+
+**yet-zero takes several seconds to start on Windows**
+On managed Windows installations, Defender Exploit Guard can apply its
+*block executable files unless they meet a prevalence, age or trusted list
+criterion* rule to a freshly built, unsigned `.exe`. Defender then waits for a
+cloud reputation lookup **before the process reaches `main`**, so even
+`yet-zero plan` is delayed (typically 3–15 seconds) while the window and camera
+code never run. If `yet-zero plan` takes seconds but then reports its result
+quickly, the delay is in the loader rather than in yet-zero. Ask IT for an
+exclusion for the build directory, or sign release builds. This is a machine
+security policy, not a yet-zero startup cost.
 
 **The stimulus opens on the wrong monitor**
 Check `display.presenter_monitor` (zero-based) and use the console's presenter

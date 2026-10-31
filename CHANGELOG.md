@@ -7,9 +7,28 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows camera format negotiation.** `nokhwa`'s `Closest` request matches
+  only the nominal format and computes frame rates against the requested, not
+  the closest, resolution. Media Foundation therefore failed with
+  "failed to fulfil requested format" on cameras that do not expose the
+  requested format at the requested resolution, for example laptop cameras
+  that offer YUYV and NV12 but no MJPEG. The Windows adapter now enumerates
+  the device formats and falls back gray → YUYV → MJPEG, like the Linux adapter.
+  A forced format that the device does not expose returns a `NoFormat` error
+  listing what the device reported instead of a negotiation error.
+- The Windows `CameraInfo` frame rate is now taken from the selected format;
+  Media Foundation's packed frame-rate value previously surfaced as `1 fps`.
+
 ### Changed
 
-- No changes yet.
+- `format = "auto"` is now usable on Windows cameras that expose YUYV or
+  gray but not MJPEG. The README camera note no longer requires forcing
+  `yuyv` for UVC cameras.
+- Windows troubleshooting documents the Defender Exploit Guard
+  prevalence/age/trusted-list rule, which can delay the launch of a freshly
+  built unsigned release binary by several seconds **before `main`**.
 
 ## [0.1.0] - 2026-10-31
 
