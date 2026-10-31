@@ -56,11 +56,15 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - **Adjust view is mirrored:** the presenter and console show the full camera
   frame horizontally flipped (selfie-style), and the eye-ROI outline is mirrored
   with it. Presentation-only; the stored frame and features are unchanged.
-- **Presenter mode stops through Backspace, not Esc.** From the stimulus step,
-  Backspace pauses the session and starts the calibration grid immediately;
-  further Backspace presses walk Calibrate → Adjust → “Sure you want to cancel
-  the session? x/n trials saved.” → exit, flushing the result. Esc is ignored in
-  presenter mode, so it cannot stop a running session by accident.
+- **Presenter mode stops through Backspace, Esc never cancels.** From the
+  stimulus step, Backspace pauses the session and starts the calibration grid
+  immediately; further Backspace presses walk Calibrate → Adjust → exit
+  safeguard → exit, flushing the result. The safeguard shows “Sure you want to
+  cancel the session? x/n trials saved.” Esc only leaves fullscreen and never
+  stops or aborts the session.
+- **Presenter mode starts fullscreen.** `yet-zero present` ignores a workspace's
+  windowed default and opens borderless fullscreen on the presenter monitor;
+  **F11** toggles fullscreen, **Esc** leaves it.
 - `yet-zero run`/`present`: added `--adjust`; presenter-only mode now runs the
   linear flow with Space/Backspace/F11 instead of the old F7/F9/F8 shortcuts.
 - `yet-stim`: `LoadedExperiment` now carries optional `intro` and `debrief`
@@ -78,7 +82,8 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   while idle or paused, disabled while a trial or calibration is active.
 - **Linear presenter flow:** `yet-zero present` walks through
   Welcome → Adjust → Calibration → Stimuli → Debrief with **Space** (forward),
-  **Backspace** (back) and **F11** (fullscreen; **Cmd+Ctrl+F** on macOS).
+  **Backspace** (back), **F11** (toggle fullscreen; **Cmd+Ctrl+F** on macOS) and
+  **Esc** (leave fullscreen).
   Backspace in the stimulus step pauses the session and starts the calibration
   grid itself (no instruction page), so the same session continues afterwards.
   Full calibration is now also allowed while paused.
@@ -87,7 +92,7 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   `yet-egui::markdown` subset renderer; built-in pages are used when absent.
   `examples/demo` ships both files.
 - `yet-zero present` no longer advertises the F7/F9/F8 shortcuts; `F`/`P`/`Q`
-  remain as diagnostic extras, and `Esc` is ignored.
+  remain as diagnostic extras, and `Esc` leaves fullscreen.
 - Console **Reset** button (F4): returns a finished or aborted session to
   `Idle`, clears the session error and re-enables Start and Calibrate, so the
   experimenter no longer has to restart the application after an abort.

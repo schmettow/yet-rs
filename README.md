@@ -64,15 +64,17 @@ dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`.
   `Stimuli/Stimuli.csv` loads unchanged; `SLIDE_TIME`, `SHUFFLE`/`SEED`,
   `STIM_FILE` and `File` map to the native model, with results in
   `Data/Yeta1_...csv`. An optional `config.toml` selects monitors and machine
-  settings. Python workspaces open as a 900×900 window by default, matching the
-  prototype. Optional `Intro.md` and `Debrief.md` in the workspace root become
-  the welcome and debrief pages of `yet-zero present`.
+  settings. Console runs of Python workspaces open as a 900×900 window by
+  default, matching the prototype; `yet-zero present` always starts fullscreen.
+  Optional `Intro.md` and `Debrief.md` in the workspace root become the welcome
+  and debrief pages of `yet-zero present`.
 - Console **Camera** selector with `Scan` and `yet-zero devices`: Linux V4L2,
   Windows/macOS `nokhwa`. Selecting another device reopens capture and drops
   the camera-specific calibration.
 - `yet-zero present <workspace>`: a presenter-only, linear experiment flow
   with no console: Welcome → Adjust → Calibration → Stimuli → Debrief.
-  **Space** forward, **Backspace** back, **F11** fullscreen; `Intro.md` and
+  Starts fullscreen; **Space** forward, **Backspace** back, **F11** toggle
+  fullscreen, **Esc** leave fullscreen without cancelling. `Intro.md` and
   `Debrief.md` customise the outer steps. **F**/**P**/**Q** remain diagnostic
   toggles. The console has the same **F** follow toggle and offers both PiP
   toggles as checkboxes.
@@ -243,8 +245,9 @@ clamped and logged.
 cargo run --release -p yet-zero -- present examples/demo --participant demo01
 ```
 
-This opens only the stimulus window (or the 900×900 window of a Python
-workspace); there is no console. It runs a linear flow:
+This opens only the stimulus window; there is no console. Presenter mode always
+starts fullscreen on `display.presenter_monitor`, so a participant never sees
+the desktop or a terminal. It runs a linear flow:
 
 1. **Welcome** — `Intro.md` from the workspace root, or a built-in default.
 2. **Adjust** — the enlarged camera view with the eye ROI outlined.
@@ -255,16 +258,16 @@ workspace); there is no console. It runs a linear flow:
 5. **Debrief** — `Debrief.md`, or the built-in thank-you page. Space closes the
    window.
 
-The primary controls are **Space** (forward), **Backspace** (back) and **F11**
-(fullscreen; **Cmd+Ctrl+F** on macOS). Backspace in the stimulus step pauses
+The primary controls are **Space** (forward), **Backspace** (back), **F11**
+(toggle fullscreen; **Cmd+Ctrl+F** on macOS) and **Esc** (leave fullscreen).
+Esc never cancels or closes the session. Backspace in the stimulus step pauses
 the session and starts a fresh calibration grid immediately. Repeating
-Backspace walks **Calibrate → Adjust → cancel confirmation → exit**: the
-confirmation says “Sure you want to cancel the session? x/n trials saved.” and
-only another Backspace closes the program (flushing the result). Space on the
-confirmation returns to Adjust and continues forward. **Esc is ignored in
-presenter mode**, so it cannot stop a running session by accident. `--adjust`
-starts directly at step 2. `Intro.md` and `Debrief.md` are read automatically
-when present; the built-in pages keep the flow complete without them.
+Backspace walks **Calibrate → Adjust → exit safeguard → exit**: the safeguard
+says “Sure you want to cancel the session? x/n trials saved.” and only another
+Backspace closes the program (flushing the result). Space on the safeguard
+returns to Adjust and continues forward. `--adjust` starts directly at step 2.
+`Intro.md` and `Debrief.md` are read automatically when present; the built-in
+pages keep the flow complete without them.
 
 Diagnostic extras remain available but are not part of the linear flow:
 **F** toggles the follow circle and **P**/**Q** the camera/Quadbright

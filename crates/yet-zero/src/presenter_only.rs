@@ -3,18 +3,20 @@
 //! Presenter-only mode: a linear experiment flow without a console.
 //!
 //! The window is the root viewport and walks through
-//! `Welcome → Adjust → Calibration → Stimuli → Debrief`. The primary controls
-//! are **Space** (forward), **Backspace** (back) and **F11** (fullscreen;
-//! `Cmd+Ctrl+F` on macOS). Welcome and debrief text comes from `Intro.md` and
-//! `Debrief.md` in the workspace root, with built-in defaults when absent.
+//! `Welcome → Adjust → Calibration → Stimuli → Debrief`. Presenter mode always
+//! starts fullscreen on the presenter monitor. The primary controls are
+//! **Space** (forward), **Backspace** (back), **F11** (toggle fullscreen;
+//! `Cmd+Ctrl+F` on macOS) and **Esc** (leave fullscreen). Welcome and debrief
+//! text comes from `Intro.md` and `Debrief.md` in the workspace root, with
+//! built-in defaults when absent.
 //!
 //! Backspace in the stimulus step pauses the session, so the experimenter can
 //! return to calibration (and from there to the adjust view) and continue the
 //! same session afterwards.
 //!
 //! `F` (follow) and `P`/`Q` (camera/Quadbright PiP) remain available as
-//! diagnostic keys but are not part of the linear flow. `Escape` is ignored in
-//! presenter mode; stopping the program is deliberately a Backspace walk:
+//! diagnostic keys but are not part of the linear flow. Escape never cancels a
+//! session; stopping the program is deliberately a Backspace walk:
 //! Stimuli → Calibration → Adjust → “cancel?” → exit.
 
 use std::path::Path;
@@ -171,7 +173,11 @@ impl<'a> PresenterOptions<'a> {
 pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
     let prepared = prepare(options.experiment_dir, options.participant, options.output)?;
     let experiment_id = prepared.loaded.experiment.id.clone();
-    let display = prepared.loaded.config.display.clone();
+    let mut display = prepared.loaded.config.display.clone();
+    // Presenter-only runs start fullscreen on the presenter monitor. Esc leaves
+    // fullscreen without touching the session, so a startled participant can
+    // always get back to the desktop; F11 re-enters it.
+    display.fullscreen = true;
     let mut camera_config = prepared.loaded.config.camera.clone();
     let initial_device = options.device.unwrap_or(camera_config.usb_index);
     camera_config.usb_index = initial_device;
@@ -233,7 +239,7 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: Space forward · Backspace back · F11 fullscreen",
+            "keys: Space forward · Backspace back · F11 fullscreen · Esc leave fullscreen",
         );
     }
     if start_step == Step::Adjust {
@@ -323,6 +329,11 @@ const fn back_action(step: Step) -> BackAction {
     }
 }
 
+/// Escape never cancels a session; it only leaves fullscreen.
+const fn leaves_fullscreen(fullscreen: Option<bool>) -> bool {
+    matches!(fullscreen, Some(true))
+}
+
 /// Human-readable progress for the cancel confirmation.
 fn saved_label(completed: usize, total: usize) -> String {
     format!("{completed}/{total} trials saved")
@@ -364,8 +375,8 @@ impl eframe::App for PresenterOnlyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let (space, backspace, toggle_fullscreen, follow, pip_stream, pip_quad) =
-            ctx.input(|input| {
+        let (space, backspace, toggle_fullscreen, escape, follow, pip_stream, pip_quad) = ctx
+            .input(|input| {
                 let pressed = |key| {
                     input.events.iter().any(|event| {
                         matches!(
@@ -385,6 +396,7 @@ impl eframe::App for PresenterOnlyApp {
                     pressed(egui::Key::Space),
                     pressed(egui::Key::Backspace),
                     pressed(egui::Key::F11) || mac_fullscreen,
+                    pressed(egui::Key::Escape),
                     pressed(egui::Key::F),
                     pressed(egui::Key::P),
                     pressed(egui::Key::Q),
@@ -396,6 +408,12 @@ impl eframe::App for PresenterOnlyApp {
                 .input(|input| input.viewport().fullscreen)
                 .unwrap_or(false);
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
+        if escape {
+            let fullscreen = ctx.input(|input| input.viewport().fullscreen);
+            if leaves_fullscreen(fullscreen) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            }
         }
         if follow {
             let mut console = lock_console(&self.shared);
@@ -797,8 +815,8 @@ mod tests {
     use eframe::egui;
 
     use super::{
-        back_action, presenter_viewport, saved_label, start_step, BackAction, PresenterOptions,
-        Step, DEFAULT_DEBRIEF, DEFAULT_INTRO,
+        back_action, leaves_fullscreen, presenter_viewport, saved_label, start_step, BackAction,
+        PresenterOptions, Step, DEFAULT_DEBRIEF, DEFAULT_INTRO,
     };
 
     #[test]
@@ -858,6 +876,13 @@ mod tests {
     fn backspace_does_not_leave_the_outer_pages() {
         assert_eq!(back_action(Step::Welcome), BackAction::Stay);
         assert_eq!(back_action(Step::Debrief), BackAction::Stay);
+    }
+
+    #[test]
+    fn escape_only_leaves_an_active_fullscreen() {
+        assert!(leaves_fullscreen(Some(true)));
+        assert!(!leaves_fullscreen(Some(false)));
+        assert!(!leaves_fullscreen(None));
     }
 
     #[test]
