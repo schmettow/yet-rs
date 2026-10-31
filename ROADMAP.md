@@ -129,14 +129,17 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   trial deadline shifted. The pure engine and headless runner stay
   deterministic. Added presenter PiP for the camera stream and the Quadbright
   means (console checkboxes, presenter `P`/`Q`, `--pip-camera`/`--pip-quad`),
-  a console **Reset** (`F4`) and an **Adjust** view (`F3`/`A`/`--adjust`) that
-  shows the full camera frame with the eye ROI outlined. The console now
-  centers on its launch monitor and the presenter moves to another output when
-  both would share one. 290 tests pass; the full calibration → quick →
-  stimulus cycle, both PiP views, adjust and the dual-monitor placement were
-  exercised on the X11 workstation with the StreamCam. Console button/key input
-  could not be driven by XTest (window-manager focus), so those paths are
-  covered by engine and UI-state tests.
+  a console **Reset** (`F4`), an **Adjust** view (console `F3`, presenter step
+  2, `--adjust`), and a linear presenter flow
+  Welcome → Adjust → Calibration → Stimuli → Debrief with Space/Backspace/F11.
+  `Intro.md`/`Debrief.md` supply the welcome and debrief pages (built-in
+  defaults otherwise). The console centers on its launch monitor and the
+  presenter moves to another output when both would share one. 298 tests pass;
+  the full flow, back-navigation into paused calibration, F11, adjust, PiP and
+  dual-monitor placement were exercised on the X11 workstation with the
+  StreamCam. Console button/key input could not be driven by XTest
+  (window-manager focus), so those paths are covered by engine and UI-state
+  tests.
 - **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1

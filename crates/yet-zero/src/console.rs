@@ -185,7 +185,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F8 abort · F follow",
+            "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F3 adjust · F4 reset · F8 abort · F follow",
         );
         console.log(LogLevel::Info, "waiting for the stimulus window…");
         console.overlay.available = overlay_available;
@@ -938,10 +938,13 @@ fn run_loop<G>(
                     ExperimentCommand::Calibrate => {
                         if calibrating {
                             log_warning(shared, "a calibration is already running");
-                        } else if !matches!(state.phase, Phase::Idle | Phase::Finished) {
+                        } else if !matches!(
+                            state.phase,
+                            Phase::Idle | Phase::Paused | Phase::Finished
+                        ) {
                             log_warning(
                                 shared,
-                                "a full calibration is available when the session is idle",
+                                "a full calibration is available when the session is idle or paused",
                             );
                         } else {
                             clear_gaze(shared, latest_gaze);

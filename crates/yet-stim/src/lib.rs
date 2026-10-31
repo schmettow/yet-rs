@@ -64,6 +64,7 @@ pub use yet_core::SessionTime;
 pub use crate::overlay::LayerShellOverlay;
 
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -108,6 +109,10 @@ pub struct LoadedExperiment {
     pub plan: SessionPlan,
     /// Default directory for result CSVs (`root` or Python's `Data/`).
     pub result_dir: PathBuf,
+    /// Optional experimenter-authored welcome page (`Intro.md`).
+    pub intro: Option<String>,
+    /// Optional experimenter-authored debriefing page (`Debrief.md`).
+    pub debrief: Option<String>,
 }
 
 /// Errors from loading a complete experiment directory.
@@ -131,6 +136,15 @@ pub enum LoadError {
         /// Directory that was inspected.
         root: PathBuf,
     },
+    /// An optional welcome or debriefing page could not be read.
+    #[error("cannot read `{path}`")]
+    Page {
+        /// File that could not be read.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Load a native or Python `yet_zero` workspace from a directory.
@@ -146,13 +160,15 @@ pub fn load_experiment(root: impl AsRef<Path>) -> Result<LoadedExperiment, LoadE
     // settings, so detect it by its own markers before the native layout.
     if root.join("Config.csv").is_file() && root.join("Stimuli").is_dir() {
         let legacy = legacy::load(&root)?;
-        return Ok(LoadedExperiment {
+        return attach_pages(LoadedExperiment {
             root,
             kind: WorkspaceKind::YetZeroPython,
             config: legacy.config,
             experiment: legacy.experiment,
             plan: legacy.plan,
             result_dir: legacy.result_dir,
+            intro: None,
+            debrief: None,
         });
     }
 
@@ -160,10 +176,28 @@ pub fn load_experiment(root: impl AsRef<Path>) -> Result<LoadedExperiment, LoadE
         || root.join("config.toml").is_file()
         || root.join("Experiment.csv").is_file()
     {
-        return load_native(root);
+        return load_native(root).and_then(attach_pages);
     }
 
     Err(LoadError::UnrecognizedWorkspace { root })
+}
+
+/// Attach optional `Intro.md` and `Debrief.md` pages from the workspace root.
+fn attach_pages(mut loaded: LoadedExperiment) -> Result<LoadedExperiment, LoadError> {
+    loaded.intro = read_page(&loaded.root.join("Intro.md"))?;
+    loaded.debrief = read_page(&loaded.root.join("Debrief.md"))?;
+    Ok(loaded)
+}
+
+fn read_page(path: &Path) -> Result<Option<String>, LoadError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(LoadError::Page {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 fn load_native(root: PathBuf) -> Result<LoadedExperiment, LoadError> {
@@ -177,5 +211,7 @@ fn load_native(root: PathBuf) -> Result<LoadedExperiment, LoadError> {
         config,
         experiment,
         plan,
+        intro: None,
+        debrief: None,
     })
 }

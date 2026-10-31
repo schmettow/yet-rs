@@ -470,13 +470,13 @@ impl ConsoleUi {
         ui.painter().image(
             texture.id(),
             rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0)),
             egui::Color32::WHITE,
         );
         painter::paint_eye_roi(
             ui.painter(),
             rect,
-            frame.roi,
+            painter::mirrored_roi(frame.roi),
             egui::Color32::from_rgb(255, 160, 0),
             2.5,
             "eye ROI",

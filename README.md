@@ -65,15 +65,17 @@ dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`.
   `STIM_FILE` and `File` map to the native model, with results in
   `Data/Yeta1_...csv`. An optional `config.toml` selects monitors and machine
   settings. Python workspaces open as a 900×900 window by default, matching the
-  prototype.
+  prototype. Optional `Intro.md` and `Debrief.md` in the workspace root become
+  the welcome and debrief pages of `yet-zero present`.
 - Console **Camera** selector with `Scan` and `yet-zero devices`: Linux V4L2,
   Windows/macOS `nokhwa`. Selecting another device reopens capture and drops
   the camera-specific calibration.
-- `yet-zero present <workspace>`: a presenter-only window with no console.
-  **F** toggles a purely visual gaze circle; **P**/**Q** toggle the camera and
-  Quadbright picture-in-picture; **Space** starts/pauses; **F7/F9** calibrate;
-  **F8/Esc** abort or quit. The console has the same **F** follow toggle and
-  offers both PiP toggles as checkboxes.
+- `yet-zero present <workspace>`: a presenter-only, linear experiment flow
+  with no console: Welcome → Adjust → Calibration → Stimuli → Debrief.
+  **Space** forward, **Backspace** back, **F11** fullscreen; `Intro.md` and
+  `Debrief.md` customise the outer steps. **F**/**P**/**Q** remain diagnostic
+  toggles. The console has the same **F** follow toggle and offers both PiP
+  toggles as checkboxes.
 - `tools/run-naked.sh` — renders the two-output Sway profile and starts a naked
   compositor session, with `--render-only`, output-name, participant and binary
   overrides. The profile disables XWayland and keeps the console on one output
@@ -242,23 +244,48 @@ cargo run --release -p yet-zero -- present examples/demo --participant demo01
 ```
 
 This opens only the stimulus window (or the 900×900 window of a Python
-workspace); there is no console. It is the quickest way to test the tracker on
-a single monitor. Keys: **F** toggles the follow circle, **A** the enlarged
-adjust view, **P** the camera picture-in-picture, **Q** the Quadbright
-picture-in-picture, **Space** starts or pauses, **F7** runs a full calibration,
-**F9** a quick recalibration, **F8** aborts and **Esc** quits. Follow is a live
-tracker view: while idle or paused it paints the circle over the current (or a
-neutral white) scene and keeps the camera polling, so it is visible immediately
-after calibration without starting a trial. The circle is purely visual: it is
-composed into a temporary scene for painting and never changes the trial scene
-or a CSV row. The picture-in-picture views are visual, too: the camera stream
-sits in the bottom-right corner and the four quadrant means in the bottom-left,
-drawn after the scene and never written to the result file. A small status strip
-shows calibration, PiP and camera state outside a running trial. The adjust view
-shows the full camera frame with the eye ROI outlined, and hides the status
-strip so it does not cover the image. `--follow`, `--pip-camera`, `--pip-quad`
-and `--adjust` start with the corresponding views enabled, which is useful for
-an automated or scripted check.
+workspace); there is no console. It runs a linear flow:
+
+1. **Welcome** — `Intro.md` from the workspace root, or a built-in default.
+2. **Adjust** — the enlarged camera view with the eye ROI outlined.
+3. **Calibration** — Space runs the full 3×3 calibration; the step waits for
+   the report and then continues.
+4. **Stimuli** — starts the session and runs every trial, including the
+   automatic quick recalibration before each stimulus.
+5. **Debrief** — `Debrief.md`, or the built-in thank-you page. Space closes the
+   window.
+
+The primary controls are **Space** (forward), **Backspace** (back) and **F11**
+(fullscreen; **Cmd+Ctrl+F** on macOS). Backspace in the stimulus step pauses
+the session and returns to calibration, so the experimenter can recalibrate or
+go one step further back to adjust the camera, then continue the same session
+with Space. `--adjust` starts directly at step 2. `Intro.md` and `Debrief.md`
+are read automatically when present; the built-in pages keep the flow complete
+without them.
+
+Diagnostic extras remain available but are not part of the linear flow:
+**F** toggles the follow circle, **P**/**Q** the camera/Quadbright
+picture-in-picture, and **Esc** stops the program. **Esc is safe:** the first
+press pauses the session and shows a confirmation with the number of trials
+already saved; a second Esc shuts down and flushes the result, while Space or
+Backspace continues the flow. The adjust view is horizontally mirrored, like a
+selfie preview, so moving the camera feels natural; the ROI outline is mirrored
+with it. The circle and PiP views are purely visual: they are composed for
+painting only and never change the trial scene or a CSV row. A small status
+strip shows calibration, PiP and camera state outside a running trial. The
+adjust view hides the status strip so it does not cover the image. `--follow`,
+`--pip-camera` and `--pip-quad` start with those views enabled, which is useful
+for an automated or scripted check.
+
+### Custom welcome and debrief pages
+
+Create `Intro.md` and/or `Debrief.md` in the workspace root (next to
+`Config.csv`/`Stimuli.csv`). `yet-zero present` renders them automatically at
+the first and last step. Without the files, built-in pages are used, so the
+linear flow is always complete. The renderer supports headings (`#` to `###`),
+paragraphs, unordered/ordered lists, block quotes, horizontal rules, and inline
+`**bold**`, `*italic*` and `` `code` ``. Example pages ship with
+[`examples/demo`](examples/demo/Intro.md).
 
 ### Calibrating in the console
 
@@ -295,7 +322,7 @@ clock resumes with the trial deadline shifted by the recalibration, so the
 stimulus is visible for its full `SLIDE_TIME`. Without a fit, the gate is
 skipped and the CSV keeps its header and no gaze rows. Gaze samples are mapped
 to stimulus pixels and normalized coordinates and written per tick. Full
-calibration is available while idle or after a session; a manual quick
+calibration is available while idle, paused or after a session; a manual quick
 recalibration (**F9**) also works while paused and leaves the session paused
 when it finishes.
 

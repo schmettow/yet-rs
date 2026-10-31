@@ -10,6 +10,7 @@
 pub mod console;
 
 mod blur;
+pub mod markdown;
 mod media;
 mod overlay;
 mod painter;

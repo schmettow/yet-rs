@@ -53,19 +53,40 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   `EguiPresenter::set_position_pt` place a windowed viewport;
   `view::viewport_builder` applies the position while the monitor-targeted
   fullscreen path is unchanged.
-- `yet-zero run`/`present`: added `--adjust`; presenter-only mode gained the
-  `A` key.
+- **Adjust view is mirrored:** the presenter and console show the full camera
+  frame horizontally flipped (selfie-style), and the eye-ROI outline is mirrored
+  with it. Presentation-only; the stored frame and features are unchanged.
+- **Esc asks for confirmation:** the first Escape in presenter mode pauses the
+  session and shows “Esc again to cancel session. N trials saved.”; a second
+  Escape shuts down and flushes the result. Space or Backspace dismisses the
+  prompt and continues the flow.
+- `yet-zero run`/`present`: added `--adjust`; presenter-only mode now runs the
+  linear flow with Space/Backspace/F11 instead of the old F7/F9/F8 shortcuts.
+- `yet-stim`: `LoadedExperiment` now carries optional `intro` and `debrief`
+  text loaded from `Intro.md`/`Debrief.md`; read errors are reported as
+  `LoadError::Page`.
 - `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
   `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
   adapters moved to `yet-zero::camera`.
 
 ### Added
 
-- **Adjust** camera-alignment view (console **F3**/button, presenter-only
-  **A**, launch flags `--adjust` for `run` and `present`): the presenter and
-  console show the full camera frame enlarged, dim everything outside the eye
-  ROI and outline the ROI in orange. Available while idle or paused, disabled
-  while a trial or calibration is active.
+- **Adjust** camera-alignment view (console **F3**/button, presenter step 2,
+  `--adjust`): the presenter and console show the full camera frame enlarged,
+  dim everything outside the eye ROI and outline the ROI in orange. Available
+  while idle or paused, disabled while a trial or calibration is active.
+- **Linear presenter flow:** `yet-zero present` walks through
+  Welcome → Adjust → Calibration → Stimuli → Debrief with **Space** (forward),
+  **Backspace** (back) and **F11** (fullscreen; **Cmd+Ctrl+F** on macOS).
+  Backspace in the stimulus step pauses the session and returns to calibration
+  (one step further: adjust), so the same session continues afterwards. Full
+  calibration is now also allowed while paused.
+- **Custom welcome and debrief pages:** optional `Intro.md`/`Debrief.md` in the
+  workspace root are rendered at the first and last step by the new
+  `yet-egui::markdown` subset renderer; built-in pages are used when absent.
+  `examples/demo` ships both files.
+- `yet-zero present` no longer advertises the F7/F9/F8 shortcuts; `F`/`P`/`Q`
+  and `Esc` remain as diagnostic extras.
 - Console **Reset** button (F4): returns a finished or aborted session to
   `Idle`, clears the session error and re-enables Start and Calibrate, so the
   experimenter no longer has to restart the application after an abort.
@@ -89,8 +110,8 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   dropdown with **Scan**; changing the device reopens capture and invalidates
   the calibration.
 - `yet-zero present <workspace>`: a presenter-only window with no console. Keys:
-  `F` follow circle, `Space` start/pause, `F7`/`F9` calibration, `F8` abort,
-  `Esc` quit.
+  `Space` forward, `Backspace` back, `F11` fullscreen; optional diagnostics
+  `F`/`P`/`Q` and `Esc`.
 - Follow circle in the console and presenter-only mode: a gaze marker scaled to
   the surface (1/50 radius, 1/200 halo) is appended to a temporary scene for
   painting only and never reaches the trial scene or CSV.

@@ -569,7 +569,7 @@ impl CalibrationRun {
             CalibrationPhase::Settle | CalibrationPhase::Collect => {
                 let text = match self.target {
                     Some(index) => format!(
-                        "Look at the orange target ({}/{}) · press Esc in the console to cancel",
+                        "Look at the orange target ({}/{}) · cancel: Esc (console) or Backspace (presenter)",
                         index + 1,
                         self.grid.len()
                     ),

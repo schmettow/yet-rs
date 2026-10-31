@@ -293,6 +293,14 @@ pub(crate) fn paint_scene(
     }
 }
 
+/// Mirror an eye region horizontally in normalized coordinates.
+///
+/// The adjust view shows a mirrored camera image (like a selfie preview), so
+/// the ROI outline must be mirrored with it.
+pub(crate) fn mirrored_roi(roi: [f32; 4]) -> [f32; 4] {
+    [1.0 - roi[0] - roi[2], roi[1], roi[2], roi[3]]
+}
+
 /// Dim the area outside an eye region and outline it.
 ///
 /// `roi` is `[x, y, width, height]` normalized to `0..=1` of `image`.
@@ -352,6 +360,18 @@ pub(crate) fn paint_eye_roi(
 #[cfg(test)]
 mod tests {
     use eframe::egui;
+
+    #[test]
+    fn a_mirrored_roi_keeps_its_size_and_moves_to_the_other_side() {
+        assert_eq!(
+            super::mirrored_roi([0.25, 0.25, 0.5, 0.5]),
+            [0.25, 0.25, 0.5, 0.5]
+        );
+        assert_eq!(
+            super::mirrored_roi([0.125, 0.25, 0.25, 0.5]),
+            [0.625, 0.25, 0.25, 0.5]
+        );
+    }
     use yet_stim::{Anchor, DrawCommand, Filter, FontId, PointPx, RectPx, Scene};
 
     use super::{anchor_offset, font_id, pos, rect, snapped_pos};

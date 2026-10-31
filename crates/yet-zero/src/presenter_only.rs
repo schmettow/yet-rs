@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Presenter-only mode: a stimulus window without the experimenter console.
+//! Presenter-only mode: a linear experiment flow without a console.
 //!
-//! This is the mode for checking the eye tracker with immediate visual
-//! feedback. The stimulus window is the root viewport, so there is no separate
-//! console window. Keys:
+//! The window is the root viewport and walks through
+//! `Welcome → Adjust → Calibration → Stimuli → Debrief`. The primary controls
+//! are **Space** (forward), **Backspace** (back) and **F11** (fullscreen;
+//! `Cmd+Ctrl+F` on macOS). Welcome and debrief text comes from `Intro.md` and
+//! `Debrief.md` in the workspace root, with built-in defaults when absent.
 //!
-//! * `F` toggle the follow circle
-//! * `A` toggle the enlarged camera adjust view
-//! * `P` toggle the camera picture-in-picture
-//! * `Q` toggle the Quadbright picture-in-picture
-//! * `Space` start, pause or resume
-//! * `F7` full calibration, `F9` quick recalibration
-//! * `F8` abort, `Esc` quit
+//! Backspace in the stimulus step pauses the session, so the experimenter can
+//! return to calibration (and from there to the adjust view) and continue the
+//! same session afterwards.
 //!
-//! The circle is composed into a temporary scene for painting only; it never
-//! changes the trial scene or the result CSV.
+//! `F` (follow), `P`/`Q` (camera/Quadbright PiP) and `Escape` (stop with
+//! confirmation) remain available as diagnostic keys but are not part of the
+//! linear flow. A first Escape pauses the session and shows how many trials
+//! were saved; a second Escape shuts down and flushes the result file.
 
 use std::path::Path;
 use std::sync::mpsc::Sender;
@@ -24,12 +24,66 @@ use std::time::Duration;
 
 use eframe::egui;
 use yet_egui::console::{ConsoleState, ExperimentCommand, LogLevel};
+use yet_egui::markdown::show_markdown;
 use yet_egui::{EguiPresenter, PresenterConfig};
 use yet_stim::media::open_player;
 use yet_stim::Phase;
 
 use crate::console::{lock_console, plan_has_audio, spawn_controller};
 use crate::driver::{prepare, RunError};
+
+/// Hint shown under the enlarged camera view in the linear flow.
+const ADJUST_HINT: &str = "Step 2 · Adjust · Space continue · Backspace back · F11 fullscreen";
+
+/// Built-in welcome page when the workspace has no `Intro.md`.
+const DEFAULT_INTRO: &str = "\
+# Welcome
+
+Thank you for taking part. The experimenter will help you get settled.
+
+Press **Space** to begin.";
+
+/// Built-in debrief page when the workspace has no `Debrief.md`.
+const DEFAULT_DEBRIEF: &str = "\
+# Thank you!
+
+You have completed the session. The experimenter will help you shortly.
+
+Press **Space** to close.";
+
+/// One step of the linear presenter flow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    Welcome,
+    Adjust,
+    Calibrate,
+    Stimuli,
+    Debrief,
+}
+
+impl Step {
+    /// One-based position for the step banner.
+    const fn index(self) -> usize {
+        match self {
+            Self::Welcome => 1,
+            Self::Adjust => 2,
+            Self::Calibrate => 3,
+            Self::Stimuli => 4,
+            Self::Debrief => 5,
+        }
+    }
+
+    /// Label for the step banner.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Welcome => "welcome",
+            Self::Adjust => "adjust",
+            Self::Calibrate => "calibration",
+            Self::Stimuli => "stimuli",
+            Self::Debrief => "debrief",
+        }
+    }
+}
 
 /// Options for a presenter-only run.
 #[derive(Clone, Copy, Debug)]
@@ -48,7 +102,7 @@ pub struct PresenterOptions<'a> {
     pub pip_stream: bool,
     /// Start with the Quadbright picture-in-picture enabled.
     pub pip_quad: bool,
-    /// Start in the enlarged camera adjust view.
+    /// Start directly in the adjust step.
     pub adjust: bool,
 }
 
@@ -103,14 +157,14 @@ impl<'a> PresenterOptions<'a> {
         self
     }
 
-    /// Start in the enlarged camera adjust view.
+    /// Start directly in the adjust step.
     pub fn adjust(mut self, enabled: bool) -> Self {
         self.adjust = enabled;
         self
     }
 }
 
-/// Open the stimulus window without a console and run until it closes.
+/// Open the stimulus window and run the linear experiment flow.
 pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
     let prepared = prepare(options.experiment_dir, options.participant, options.output)?;
     let experiment_id = prepared.loaded.experiment.id.clone();
@@ -121,6 +175,16 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
     let audio_config = prepared.loaded.config.audio.clone();
     let trials = prepared.loaded.plan.trial_count();
     let participant = prepared.sink.identity().participant.clone();
+    let intro = prepared
+        .loaded
+        .intro
+        .clone()
+        .unwrap_or_else(|| DEFAULT_INTRO.to_owned());
+    let debrief = prepared
+        .loaded
+        .debrief
+        .clone()
+        .unwrap_or_else(|| DEFAULT_DEBRIEF.to_owned());
 
     let mut audio = open_player(
         audio_config.enabled && plan_has_audio(&prepared.loaded.plan),
@@ -148,13 +212,14 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         display.fullscreen,
         trials,
     )));
+    let start_step = start_step(options.adjust);
     {
         let mut console = lock_console(&shared);
         console.camera_usb_index = initial_device;
         console.follow = options.follow;
         console.preview.pip_stream = options.pip_stream;
         console.preview.pip_quad = options.pip_quad;
-        console.preview.adjust = options.adjust;
+        console.preview.adjust = start_step == Step::Adjust;
         console.log(
             LogLevel::Info,
             format!(
@@ -165,8 +230,11 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F follow · A adjust · P camera PiP · Q Quadbright PiP · Space start/pause · F7 calibrate · F9 quick · F8 abort · Esc quit",
+            "keys: Space forward · Backspace back · F11 fullscreen",
         );
+    }
+    if start_step == Step::Adjust {
+        presenter.set_adjust_hint(Some(ADJUST_HINT.to_owned()));
     }
 
     let (commands, controller) = spawn_controller(
@@ -184,6 +252,13 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         shared,
         presenter,
         commands,
+        step: start_step,
+        intro,
+        debrief,
+        calibrate_started: false,
+        calibration_seen_active: false,
+        close_requested: false,
+        escape_confirm: false,
     };
     let native = eframe::NativeOptions {
         viewport: presenter_viewport(
@@ -210,6 +285,24 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
     result
 }
 
+/// The first step of the linear flow.
+const fn start_step(adjust: bool) -> Step {
+    if adjust {
+        Step::Adjust
+    } else {
+        Step::Welcome
+    }
+}
+
+/// Human-readable trial count for the Esc confirmation.
+fn trials_saved_label(trials: usize) -> String {
+    if trials == 1 {
+        "1 trial saved".to_owned()
+    } else {
+        format!("{trials} trials saved")
+    }
+}
+
 fn presenter_viewport(
     monitor: usize,
     fullscreen: bool,
@@ -231,6 +324,13 @@ struct PresenterOnlyApp {
     shared: Arc<Mutex<ConsoleState>>,
     presenter: EguiPresenter,
     commands: Sender<ExperimentCommand>,
+    step: Step,
+    intro: String,
+    debrief: String,
+    calibrate_started: bool,
+    calibration_seen_active: bool,
+    close_requested: bool,
+    escape_confirm: bool,
 }
 
 impl eframe::App for PresenterOnlyApp {
@@ -240,33 +340,53 @@ impl eframe::App for PresenterOnlyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.presenter.show_root(ui);
-        self.draw_status(ui);
-
-        let (follow, adjust, space, calibrate, quick, abort, quit, pip_stream, pip_quad) = ctx
+        let (space, backspace, toggle_fullscreen, escape, follow, pip_stream, pip_quad) = ctx
             .input(|input| {
+                let pressed = |key| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: event_key,
+                                pressed: true,
+                                repeat: false,
+                                ..
+                            } if *event_key == key
+                        )
+                    })
+                };
+                let mac_fullscreen =
+                    input.modifiers.command && input.modifiers.ctrl && pressed(egui::Key::F);
                 (
-                    input.key_pressed(egui::Key::F),
-                    input.key_pressed(egui::Key::A),
-                    input.key_pressed(egui::Key::Space),
-                    input.key_pressed(egui::Key::F7),
-                    input.key_pressed(egui::Key::F9),
-                    input.key_pressed(egui::Key::F8),
-                    input.key_pressed(egui::Key::Escape),
-                    input.key_pressed(egui::Key::P),
-                    input.key_pressed(egui::Key::Q),
+                    pressed(egui::Key::Space),
+                    pressed(egui::Key::Backspace),
+                    pressed(egui::Key::F11) || mac_fullscreen,
+                    pressed(egui::Key::Escape),
+                    pressed(egui::Key::F),
+                    pressed(egui::Key::P),
+                    pressed(egui::Key::Q),
                 )
             });
 
+        if escape {
+            if self.escape_confirm {
+                self.close();
+            } else {
+                if lock_console(&self.shared).phase == Phase::Running {
+                    let _ = self.commands.send(ExperimentCommand::Pause);
+                }
+                self.escape_confirm = true;
+            }
+        }
+        if toggle_fullscreen {
+            let fullscreen = ctx
+                .input(|input| input.viewport().fullscreen)
+                .unwrap_or(false);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
         if follow {
             let mut console = lock_console(&self.shared);
             console.follow = !console.follow;
-        }
-        if adjust {
-            let mut console = lock_console(&self.shared);
-            if console.preview.adjust || console.can_adjust() {
-                console.preview.adjust = !console.preview.adjust;
-            }
         }
         if pip_stream {
             let mut console = lock_console(&self.shared);
@@ -276,108 +396,397 @@ impl eframe::App for PresenterOnlyApp {
             let mut console = lock_console(&self.shared);
             console.preview.pip_quad = !console.preview.pip_quad;
         }
-        if space {
-            let phase = lock_console(&self.shared).phase;
-            let adjust = lock_console(&self.shared).preview.adjust;
-            let command = match phase {
-                Phase::Idle | Phase::Paused if !adjust => Some(if phase == Phase::Idle {
-                    ExperimentCommand::Start
-                } else {
-                    ExperimentCommand::Resume
-                }),
-                Phase::Running => Some(ExperimentCommand::Pause),
-                _ => None,
-            };
-            if let Some(command) = command {
-                let _ = self.commands.send(command);
+        if !escape {
+            if self.escape_confirm && (space || backspace) {
+                self.escape_confirm = false;
+            }
+            if space {
+                self.forward();
+            }
+            if backspace {
+                self.backward();
             }
         }
-        if calibrate {
-            let _ = self.commands.send(ExperimentCommand::Calibrate);
-        }
-        if quick {
-            let _ = self.commands.send(ExperimentCommand::QuickCalibrate);
-        }
-        if abort {
-            let _ = self.commands.send(ExperimentCommand::Abort);
-        }
-        if quit {
-            let _ = self.commands.send(ExperimentCommand::Shutdown);
+        if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        self.sync_step();
+        self.advance_if_finished();
 
-        // Keep the follow circle and calibration scenes smooth while the
-        // controller updates the shared presenter state.
+        self.presenter.show_root(ui);
+        self.draw_step(ui);
+        if self.escape_confirm {
+            self.draw_escape_confirm(ui);
+        }
+
+        // Keep the adjust view, calibration and paused states responsive.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 }
 
 impl PresenterOnlyApp {
-    /// A small status strip outside a running stimulus.
-    ///
-    /// Presenter-only mode has no console, so camera and calibration errors
-    /// would otherwise be invisible. The strip hides while a trial runs and
-    /// reappears when the session stops or an error is present.
-    fn draw_status(&self, ui: &egui::Ui) {
-        let console = lock_console(&self.shared);
-        if console.preview.adjust {
-            return;
+    /// Enter the next linear step.
+    fn forward(&mut self) {
+        match self.step {
+            Step::Welcome => self.enter(Step::Adjust),
+            Step::Adjust => self.enter(Step::Calibrate),
+            Step::Calibrate => self.forward_calibration(),
+            Step::Stimuli => self.forward_stimuli(),
+            Step::Debrief => self.close(),
         }
-        let error = console
-            .error
-            .as_deref()
-            .or(console.camera_error.as_deref())
-            .or(console.calibration.error.as_deref());
-        if console.phase == Phase::Running && error.is_none() {
-            return;
-        }
+    }
 
-        let calibration = if console.calibration.active {
-            format!("calibration: {}", console.calibration.phase.label())
-        } else if console.calibration.fitted {
-            "calibrated".to_owned()
-        } else {
-            "not calibrated".to_owned()
+    /// Go back one step. From the stimulus step this pauses the session.
+    fn backward(&mut self) {
+        match self.step {
+            Step::Welcome | Step::Debrief => {}
+            Step::Adjust => self.enter(Step::Welcome),
+            Step::Calibrate => {
+                if lock_console(&self.shared).calibration.active {
+                    let _ = self.commands.send(ExperimentCommand::CancelCalibration);
+                }
+                self.enter(Step::Adjust);
+            }
+            Step::Stimuli => {
+                // Cancel an in-flight quick recalibration first, then pause.
+                let _ = self.commands.send(ExperimentCommand::CancelCalibration);
+                let _ = self.commands.send(ExperimentCommand::Pause);
+                self.enter(Step::Calibrate);
+            }
+        }
+    }
+
+    /// Start or resume the session when the stimulus step is entered.
+    fn enter(&mut self, step: Step) {
+        let adjust = step == Step::Adjust;
+        {
+            let mut console = lock_console(&self.shared);
+            console.preview.adjust = adjust;
+        }
+        self.presenter
+            .set_adjust_hint(adjust.then(|| ADJUST_HINT.to_owned()));
+        self.calibrate_started = false;
+        self.calibration_seen_active = false;
+        self.step = step;
+
+        if step == Step::Stimuli {
+            let phase = lock_console(&self.shared).phase;
+            match phase {
+                Phase::Idle => {
+                    let _ = self.commands.send(ExperimentCommand::Start);
+                }
+                Phase::Paused => {
+                    let _ = self.commands.send(ExperimentCommand::Resume);
+                }
+                Phase::Finished => self.enter(Step::Debrief),
+                Phase::Running | Phase::Aborted => {}
+            }
+        }
+    }
+
+    /// Space in the calibration step: start a run, or continue after it.
+    fn forward_calibration(&mut self) {
+        let (active, fitted, error, phase) = {
+            let console = lock_console(&self.shared);
+            (
+                console.calibration.active,
+                console.calibration.fitted,
+                console.calibration.error.is_some(),
+                console.phase,
+            )
         };
-        let follow = if console.follow {
-            "follow on"
-        } else {
-            "follow off"
+        if active {
+            return;
+        }
+        if phase == Phase::Running {
+            let _ = self.commands.send(ExperimentCommand::Pause);
+            return;
+        }
+        if self.calibration_seen_active {
+            if error {
+                // Failed run: the next Space retries.
+                self.calibrate_started = false;
+                self.calibration_seen_active = false;
+            } else if fitted {
+                self.enter(Step::Stimuli);
+            } else {
+                self.calibrate_started = false;
+                self.calibration_seen_active = false;
+            }
+            return;
+        }
+        // Start, or re-send if the command has not been picked up yet.
+        let _ = self.commands.send(ExperimentCommand::Calibrate);
+        self.calibrate_started = true;
+    }
+
+    /// Space in the stimulus step: start, pause or resume.
+    fn forward_stimuli(&mut self) {
+        let (phase, calibrating) = {
+            let console = lock_console(&self.shared);
+            (console.phase, console.calibration.active)
         };
-        let pip = match (console.preview.pip_stream, console.preview.pip_quad) {
-            (true, true) => " · PiP camera+quad",
-            (true, false) => " · PiP camera",
-            (false, true) => " · PiP quad",
-            (false, false) => "",
+        if calibrating {
+            // The automatic quick recalibration owns the presenter; wait for
+            // it to finish or go back with Backspace.
+            return;
+        }
+        let command = match phase {
+            Phase::Idle => Some(ExperimentCommand::Start),
+            Phase::Running => Some(ExperimentCommand::Pause),
+            Phase::Paused => Some(ExperimentCommand::Resume),
+            Phase::Finished => {
+                self.enter(Step::Debrief);
+                None
+            }
+            Phase::Aborted => {
+                self.enter(Step::Debrief);
+                None
+            }
         };
-        let adjust = if console.preview.adjust {
-            " · adjust on (A to finish)"
-        } else {
-            ""
-        };
-        let line = format!(
-            "{} · {calibration} · {follow}{pip}{adjust}\nF7 calibrate · F9 quick · F follow · A adjust · P camera PiP · Q quad PiP · Space start/pause · F8 abort · Esc quit",
-            console.phase.label()
+        if let Some(command) = command {
+            let _ = self.commands.send(command);
+        }
+    }
+
+    /// Record that a calibration run actually started, for completion detection.
+    fn sync_step(&mut self) {
+        if self.step == Step::Calibrate && lock_console(&self.shared).calibration.active {
+            self.calibration_seen_active = true;
+        }
+    }
+
+    /// Move to the debrief automatically when the session finishes.
+    fn advance_if_finished(&mut self) {
+        if self.step == Step::Stimuli && lock_console(&self.shared).phase == Phase::Finished {
+            self.enter(Step::Debrief);
+        }
+    }
+
+    /// Close the presenter after the debrief page.
+    fn close(&mut self) {
+        self.close_requested = true;
+        let _ = self.commands.send(ExperimentCommand::Shutdown);
+    }
+
+    /// Draw the current step page or status strip.
+    fn draw_step(&self, ui: &mut egui::Ui) {
+        match self.step {
+            Step::Welcome => self.draw_page(
+                ui,
+                &self.intro,
+                "Step 1 · Welcome · Space begin · F11 fullscreen",
+            ),
+            Step::Adjust => {}
+            Step::Calibrate => self.draw_calibration(ui),
+            Step::Stimuli => self.draw_stimulus_status(ui),
+            Step::Debrief => self.draw_debrief(ui),
+        }
+    }
+
+    /// Debrief page, augmented with an error if the session was stopped.
+    fn draw_debrief(&self, ui: &mut egui::Ui) {
+        let mut text = self.debrief.clone();
+        if let Some(error) = lock_console(&self.shared).error.clone() {
+            text.push_str(&format!("\n\n**Session stopped:** {error}"));
+        }
+        self.draw_page(ui, &text, "Step 5 · Debrief · Space close · F11 fullscreen");
+    }
+
+    /// Confirmation overlay for the emergency Esc key.
+    fn draw_escape_confirm(&self, ui: &mut egui::Ui) {
+        let trials = lock_console(&self.shared).trials_completed;
+        let message = format!(
+            "Esc again to cancel session. {}.",
+            trials_saved_label(trials)
         );
-
-        let origin = ui.max_rect().min + egui::vec2(18.0, 18.0);
-        let width = (ui.max_rect().width() - 36.0).min(760.0);
-        let rect = egui::Rect::from_min_size(origin, egui::vec2(width, 74.0));
+        let rect = ui.max_rect();
+        let scale = (rect.width() / 1500.0).clamp(0.8, 2.0);
+        let box_rect = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2((rect.width() * 0.66).min(780.0 * scale), 190.0 * scale),
+        );
         let painter = ui.painter();
-        painter.rect_filled(rect, 6.0, egui::Color32::from_black_alpha(190));
+        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(150));
+        painter.rect_filled(box_rect, 10.0, egui::Color32::from_rgb(28, 28, 28));
+        painter.rect_stroke(
+            box_rect,
+            10.0,
+            egui::Stroke::new(1.5, egui::Color32::from_gray(110)),
+            egui::StrokeKind::Inside,
+        );
         painter.text(
-            origin + egui::vec2(12.0, 10.0),
+            box_rect.center_top() + egui::vec2(0.0, 24.0 * scale),
+            egui::Align2::CENTER_TOP,
+            "Stop the session?",
+            egui::FontId::proportional(24.0 * scale),
+            egui::Color32::WHITE,
+        );
+        painter.text(
+            box_rect.center() + egui::vec2(0.0, -6.0 * scale),
+            egui::Align2::CENTER_CENTER,
+            message,
+            egui::FontId::proportional(18.0 * scale),
+            egui::Color32::WHITE,
+        );
+        painter.text(
+            box_rect.center_bottom() + egui::vec2(0.0, -18.0 * scale),
+            egui::Align2::CENTER_BOTTOM,
+            "Space continues · Backspace goes back · F11 fullscreen",
+            egui::FontId::proportional(14.0 * scale),
+            egui::Color32::from_gray(190),
+        );
+    }
+
+    /// Full-page Markdown with a footer.
+    fn draw_page(&self, ui: &mut egui::Ui, text: &str, footer: &str) {
+        let rect = ui.max_rect();
+        ui.painter()
+            .rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 16, 16));
+        let scale = (rect.width() / 1500.0).clamp(0.8, 2.0);
+        let width = (rect.width() * 0.78).min(1000.0 * scale);
+        let content = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.center().x - width * 0.5,
+                rect.top() + rect.height() * 0.12,
+            ),
+            egui::vec2(width, rect.height() * 0.76),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            show_markdown(ui, text, scale);
+        });
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.bottom() - 22.0 * scale),
+            egui::Align2::CENTER_BOTTOM,
+            footer,
+            egui::FontId::proportional(16.0 * scale),
+            egui::Color32::from_gray(190),
+        );
+    }
+
+    /// Calibration instructions or the live calibration strip.
+    fn draw_calibration(&self, ui: &mut egui::Ui) {
+        let (active, fitted, error, calibration_phase, engine_phase, report) = {
+            let console = lock_console(&self.shared);
+            (
+                console.calibration.active,
+                console.calibration.fitted,
+                console.calibration.error.clone(),
+                console.calibration.phase,
+                console.phase,
+                console.calibration.report,
+            )
+        };
+        if active {
+            self.draw_strip(
+                ui,
+                &format!(
+                    "Calibration · {} · look at the orange target\nBackspace cancels · F11 fullscreen",
+                    calibration_phase.label()
+                ),
+                None,
+            );
+            return;
+        }
+
+        let mut text = String::from("# Calibration\n\n");
+        if let Some(report) = report {
+            text.push_str(&format!(
+                "Last run: **{}** samples · RMSE **{:.1} px**.\n\n",
+                report.samples, report.rmse
+            ));
+        }
+        if let Some(error) = &error {
+            text.push_str(&format!("**Calibration failed:** {error}\n\n"));
+            text.push_str("Press **Space** to retry, or **Backspace** to adjust the camera.");
+        } else if self.calibration_seen_active && fitted {
+            text.push_str(
+                "Calibration complete. Press **Space** to start the stimuli. \
+                 Backspace returns to the camera adjustment.",
+            );
+        } else if self.calibrate_started {
+            text.push_str("Starting the calibration…");
+        } else {
+            text.push_str(
+                "Press **Space** to run the full 3×3 calibration.\n\n\
+                 Keep your head still and follow the orange targets.",
+            );
+        }
+        if engine_phase == Phase::Paused {
+            text.push_str("\n\nThe session is paused; calibration continues while paused.");
+        }
+        self.draw_page(
+            ui,
+            &text,
+            "Step 3 · Calibration · Space continue · Backspace back · F11 fullscreen",
+        );
+    }
+
+    /// A paused/starting stimulus shows a small strip; a running trial does not.
+    fn draw_stimulus_status(&self, ui: &mut egui::Ui) {
+        let (phase, error, calibrating, calibration_phase) = {
+            let console = lock_console(&self.shared);
+            (
+                console.phase,
+                console.error.clone(),
+                console.calibration.active,
+                console.calibration.phase,
+            )
+        };
+        if calibrating {
+            self.draw_strip(
+                ui,
+                &format!(
+                    "Quick recalibration ({}) · look at the orange target\nBackspace returns to calibration · F11 fullscreen",
+                    calibration_phase.label()
+                ),
+                None,
+            );
+            return;
+        }
+        if phase == Phase::Running && error.is_none() {
+            return;
+        }
+        let line = match phase {
+            Phase::Idle => {
+                "Starting the stimuli…\nSpace pause · Backspace calibration · F11 fullscreen"
+            }
+            Phase::Paused => "Paused · Space resume · Backspace calibration · F11 fullscreen",
+            Phase::Finished => return,
+            Phase::Aborted => {
+                "Session stopped · Space close · Backspace calibration · F11 fullscreen"
+            }
+            Phase::Running => "Running · Space pause · F11 fullscreen",
+        };
+        self.draw_strip(ui, line, error.as_deref());
+    }
+
+    /// Compact status box in the top-left corner.
+    fn draw_strip(&self, ui: &mut egui::Ui, line: &str, error: Option<&str>) {
+        let rect = ui.max_rect();
+        let scale = (rect.width() / 1500.0).clamp(0.8, 2.0);
+        let origin = rect.min + egui::vec2(18.0 * scale, 18.0 * scale);
+        let width = (rect.width() - 36.0 * scale).min(820.0 * scale);
+        let font = 16.0 * scale;
+        // The step line plus every explicit line in `line`, plus an error line.
+        let lines = line.lines().count() + 1 + usize::from(error.is_some());
+        let height = lines as f32 * font * 1.3 + 18.0 * scale;
+        let box_rect = egui::Rect::from_min_size(origin, egui::vec2(width, height));
+        let painter = ui.painter();
+        painter.rect_filled(box_rect, 6.0, egui::Color32::from_black_alpha(190));
+        painter.text(
+            origin + egui::vec2(12.0 * scale, 9.0 * scale),
             egui::Align2::LEFT_TOP,
-            line,
-            egui::FontId::proportional(18.0),
+            format!("Step {} · {}\n{line}", self.step.index(), self.step.label()),
+            egui::FontId::proportional(font),
             egui::Color32::WHITE,
         );
         if let Some(error) = error {
             painter.text(
-                origin + egui::vec2(12.0, 52.0),
-                egui::Align2::LEFT_TOP,
+                origin + egui::vec2(12.0 * scale, height - 10.0 * scale),
+                egui::Align2::LEFT_BOTTOM,
                 error,
-                egui::FontId::proportional(16.0),
+                egui::FontId::proportional(14.0 * scale),
                 egui::Color32::from_rgb(255, 120, 120),
             );
         }
@@ -394,7 +803,10 @@ impl Drop for PresenterOnlyApp {
 mod tests {
     use eframe::egui;
 
-    use super::presenter_viewport;
+    use super::{
+        presenter_viewport, start_step, trials_saved_label, PresenterOptions, Step,
+        DEFAULT_DEBRIEF, DEFAULT_INTRO,
+    };
 
     #[test]
     fn a_fullscreen_presenter_targets_one_monitor() {
@@ -411,5 +823,37 @@ mod tests {
         assert_eq!(builder.fullscreen, Some(false));
         assert_eq!(builder.monitor, None);
         assert_eq!(builder.inner_size, Some(egui::vec2(900.0, 900.0)));
+    }
+
+    #[test]
+    fn the_linear_steps_are_numbered_and_named() {
+        assert_eq!(Step::Welcome.index(), 1);
+        assert_eq!(Step::Adjust.index(), 2);
+        assert_eq!(Step::Calibrate.index(), 3);
+        assert_eq!(Step::Stimuli.index(), 4);
+        assert_eq!(Step::Debrief.index(), 5);
+        assert_eq!(Step::Debrief.label(), "debrief");
+    }
+
+    #[test]
+    fn the_default_pages_are_present() {
+        assert!(DEFAULT_INTRO.contains("Welcome"));
+        assert!(DEFAULT_DEBRIEF.contains("You have completed the session"));
+    }
+
+    #[test]
+    fn the_trial_saved_wording_handles_singular_and_plural() {
+        assert_eq!(trials_saved_label(0), "0 trials saved");
+        assert_eq!(trials_saved_label(1), "1 trial saved");
+        assert_eq!(trials_saved_label(3), "3 trials saved");
+    }
+
+    #[test]
+    fn adjust_starts_at_the_adjust_step() {
+        let options = PresenterOptions::new(std::path::Path::new(".")).adjust(true);
+
+        assert!(options.adjust);
+        assert_eq!(start_step(options.adjust), Step::Adjust);
+        assert_eq!(start_step(false), Step::Welcome);
     }
 }

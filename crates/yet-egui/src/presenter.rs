@@ -151,6 +151,7 @@ pub struct PresenterState {
     preview_texture: Option<(u64, egui::TextureHandle)>,
     adjust: Option<AdjustFrame>,
     adjust_texture: Option<(u64, egui::TextureHandle)>,
+    adjust_hint: Option<String>,
     dirty: bool,
     ready: bool,
     focused: bool,
@@ -184,6 +185,7 @@ impl PresenterState {
             preview_texture: None,
             adjust: None,
             adjust_texture: None,
+            adjust_hint: None,
             dirty: false,
             ready: false,
             focused: true,
@@ -347,6 +349,11 @@ impl PresenterState {
                 ctx.request_repaint_of(self.active_viewport);
             }
         }
+    }
+
+    /// Override the footer hint under the adjust view.
+    pub fn set_adjust_hint(&mut self, hint: Option<String>) {
+        self.adjust_hint = hint;
     }
 
     /// Record a scene for the next paint.
@@ -529,7 +536,7 @@ impl PresenterState {
         painter.image(
             texture.id(),
             rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0)),
             egui::Color32::WHITE,
         );
 
@@ -537,7 +544,7 @@ impl PresenterState {
         painter::paint_eye_roi(
             painter,
             rect,
-            adjust.roi,
+            painter::mirrored_roi(adjust.roi),
             egui::Color32::from_rgb(255, 160, 0),
             4.0,
             "eye ROI",
@@ -554,7 +561,9 @@ impl PresenterState {
         painter.text(
             clip_rect.left_bottom() + egui::vec2(24.0, -20.0),
             egui::Align2::LEFT_BOTTOM,
-            "Press A (presenter) or F3 (console) to finish",
+            self.adjust_hint
+                .as_deref()
+                .unwrap_or("Press F3 (console) to finish"),
             egui::FontId::proportional(font * 0.85),
             egui::Color32::from_gray(210),
         );
@@ -798,6 +807,18 @@ impl EguiPresenter {
     /// Show or hide the enlarged adjust view.
     pub fn set_adjust(&self, adjust: Option<AdjustFrame>) {
         self.lock().set_adjust(adjust);
+    }
+
+    /// Override the footer hint under the adjust view.
+    pub fn set_adjust_hint(&self, hint: Option<String>) {
+        let mut state = self.lock();
+        let changed = state.adjust_hint != hint;
+        state.set_adjust_hint(hint);
+        if changed {
+            if let Some(ctx) = &state.ctx {
+                ctx.request_repaint_of(state.active_viewport);
+            }
+        }
     }
 
     fn request_repaint(&self) {

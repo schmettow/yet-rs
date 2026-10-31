@@ -479,7 +479,7 @@ impl ConsoleState {
         presenter_ready
             && !self.calibration.active
             && !self.preview.adjust
-            && matches!(self.phase, Phase::Idle | Phase::Finished)
+            && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
     }
 
     /// Whether a quick recalibration can start.

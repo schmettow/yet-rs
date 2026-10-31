@@ -173,7 +173,10 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D30** | **Presenter PiP is purely visual and shares the preview capture.** Camera stream (bottom-right) and Quadbright means (bottom-left) are painted after the scene by `PresenterState`, outside `Scene`, so they never reach the CSV or a recorded scene. Toggles: console checkboxes, presenter-only `P`/`Q`, and `--pip-camera`/`--pip-quad`. `PreviewState::pip_stream`/`pip_quad` open the camera even when the console preview is off. | 1.0 parity decision |
 | **D31** | **Abort is recoverable in the console.** `ExperimentCommand::Reset` / `F4` returns `Finished` or `Aborted` to `Idle`, clears the session error and re-enables Start and Calibrate; the engine rejects Reset while Running or Paused. The plan, calibration model and result path are kept. | Usability finding 2026-10-30 |
 | **D32** | **Monitor layout is resolved after the first frame.** The console keeps the WM's initial placement (the screen where it was launched) and is then centered on that monitor using winit's monitor position, outer size and decorations, with a top margin so the title bar is reachable. If the configured presenter monitor equals the console monitor and another output exists, the presenter moves to the next monitor; explicit other-monitor configs are respected. Windowed presenters are centered on their monitor via `PresenterConfig::position_pt`. Wayland may ignore absolute positions; the compositor keeps the window on the active output. | Usability decisions 2026-10-30; `frame.winit_window()` |
-| **D33** | **Adjust is a pre-session camera alignment view.** It shows the full camera frame enlarged on the presenter and console, dims outside the eye ROI and outlines it. It is available while no trial runs and no calibration is active, blocks Start/Resume/Calibrate/Quick until it is closed, and is purely visual. Toggles: console button/**F3**, presenter-only **A**, launch `--adjust`. | Usability decision 2026-10-30 |
+| **D33** | **Adjust is a pre-session camera alignment view.** It shows the full camera frame enlarged on the presenter and console, dims outside the eye ROI and outlines it. It is available while no trial runs and no calibration is active, blocks Start/Resume/Calibrate/Quick until it is closed, and is purely visual. Toggles: console button/**F3**, presenter step 2, launch `--adjust`. | Usability decision 2026-10-30 |
+| **D34** | **`yet-zero present` is a linear five-step flow.** Welcome → Adjust → Calibration → Stimuli → Debrief; **Space** forward, **Backspace** back, **F11** fullscreen (`Cmd+Ctrl+F` on macOS). Backspace in Stimuli pauses the engine and returns to Calibration; a full calibration is allowed while paused, and returning to Stimuli resumes the same session. The linear machine lives in the presenter app; the engine and controller stay UI-free. | Presenter-flow decision 2026-10-30 |
+| **D35** | **Welcome and debrief pages are workspace files.** `Intro.md` and `Debrief.md` in the workspace root are loaded into `LoadedExperiment`; absent files fall back to built-in pages so the flow is always complete. `yet-egui::markdown` renders a small subset (headings, paragraphs, lists, quotes, rules, inline emphasis/code) rather than adding a Markdown dependency. | Presenter-flow decision 2026-10-30 |
+| **D36** | **Adjust is mirrored and Esc is safe.** The adjust frame is painted with horizontally flipped UVs and the ROI outline is mirrored with it; the stored frame/features are unchanged. In presenter mode Esc never exits on the first press: it pauses, shows “Esc again to cancel session. N trials saved.”, and only a second Esc shuts down and flushes; Space/Backspace dismiss the prompt. | Usability decisions 2026-10-30 |
 
 ---
 
@@ -1053,9 +1056,9 @@ the experimenter immediate visual feedback on the presenter.
 | PAR-3 | Console Reset after Abort or Finish | S | Reset returns to Idle, clears the session error and re-enables Start/Calibrate; the engine rejects Reset while running or paused |
 
 **Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented,
-plus the follow-up window placement and Adjust work (D32/D33). 290 workspace
-tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
-`clippy -D warnings` and `doc` are green.
+plus the follow-up window placement, Adjust and linear presenter work
+(D32–D36). 298 workspace tests pass (three ignored hardware tests); `fmt`,
+`check`, `test`, `clippy -D warnings` and `doc` are green.
 
 - **The gate is controller-side (D29):** the console applies `TrialStarted`,
   pauses the engine at the same `SessionTime`, starts `CalibrationRun::quick`
@@ -1084,6 +1087,16 @@ tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
   `painter::paint_eye_roi` dims everything outside the ROI. The console uses the
   same helper in its preview panel. Adjust blocks Start/Resume/Calibrate/Quick
   and is skipped when no camera is available.
+- **Linear presenter (D34):** `presenter_only` owns `Step`
+  (Welcome/Adjust/Calibrate/Stimuli/Debrief). Non-repeat key events drive the
+  flow; the stimulus step starts/resumes the engine and Backspace pauses before
+  moving to calibration. `Calibrate` is now allowed while paused, so the same
+  session can resume after a refit. F11 sends
+  `ViewportCommand::Fullscreen(!fullscreen)`; Cmd+Ctrl+F is accepted on macOS.
+- **Pages (D35):** `load_experiment` attaches `Intro.md`/`Debrief.md` and the
+  presenter renders them with `yet_egui::markdown::show_markdown`. Defaults are
+  built in. The renderer covers headings, paragraphs, lists, quotes, rules and
+  inline emphasis without a new dependency.
 - **Measured:** on the X11 workstation with the StreamCam at `/dev/video0`, the
   Python `Demo` workspace ran the full flow: F7 full calibration (9 targets),
   Space, then per-trial quick collect over a blurred face, quick report, and a
@@ -1101,6 +1114,15 @@ tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
   adjust. Automated click/key input to the console could not be delivered by
   the window manager, so the toggle-off path is covered by presenter and
   console-state tests.
+- **Linear flow:** on the X11 workstation the demo walked through `Intro.md`, the
+  adjust step, a full calibration (RMSE reported on the step page), the stimuli
+  with per-trial quick recalibration, and the automatic `Debrief.md` page. A
+  Backspace during the stimuli paused the session and returned to calibration;
+  Space started a second full calibration while paused. F11 toggled between
+  fullscreen (1440×2560 on DP-3) and an 800×600 window and back. The adjust view
+  was visually confirmed as horizontally mirrored (ROI mirrored with the
+  frame). The first Escape paused Adjust and showed “Esc again to cancel
+  session. 0 trials saved.”; the second Escape closed the window.
 
 ### Sprint 9 — Overlay core
 

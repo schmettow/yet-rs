@@ -49,6 +49,20 @@ fn load(root: &Path) -> yet_stim::LoadedExperiment {
 }
 
 #[test]
+fn intro_and_debrief_pages_are_loaded_from_the_workspace_root() {
+    let dir = workspace();
+    fs::write(dir.path().join("Intro.md"), "# Welcome").unwrap();
+
+    let loaded = load(dir.path());
+    assert_eq!(loaded.intro.as_deref(), Some("# Welcome"));
+    assert_eq!(loaded.debrief, None);
+
+    fs::write(dir.path().join("Debrief.md"), "Thank you").unwrap();
+    let loaded = load(dir.path());
+    assert_eq!(loaded.debrief.as_deref(), Some("Thank you"));
+}
+
+#[test]
 fn a_python_workspace_loads_without_conversion() {
     let dir = workspace();
 
