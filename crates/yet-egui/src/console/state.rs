@@ -13,6 +13,8 @@ use std::time::Duration;
 use yet_core::{CalibrationReport, GazePoint, QuadBrightness};
 use yet_stim::{BlockId, CalibrationPhase, CalibrationSnapshot, Phase, StimulusId};
 
+use crate::presenter::AdjustFrame;
+
 /// Maximum number of log lines kept in memory.
 pub const MAX_LOG_LINES: usize = 300;
 
@@ -155,6 +157,10 @@ pub struct PreviewState {
     /// Draw the Quadbright quadrant means as a picture-in-picture on the
     /// presenter.
     pub pip_quad: bool,
+    /// Show the enlarged camera view for centering the eye.
+    pub adjust: bool,
+    /// Latest full camera frame for the adjust view.
+    pub adjust_frame: Option<AdjustFrame>,
     /// Ask the controller to retry opening the camera.
     pub retry: bool,
     /// Camera or ROI error.
@@ -429,7 +435,10 @@ impl ConsoleState {
 
     /// Whether a session can start.
     pub fn can_start(&self) -> bool {
-        self.phase == Phase::Idle && self.error.is_none() && !self.calibration.active
+        self.phase == Phase::Idle
+            && self.error.is_none()
+            && !self.calibration.active
+            && !self.preview.adjust
     }
 
     /// Clamp the presenter monitor to the monitors the platform reports.
@@ -457,7 +466,7 @@ impl ConsoleState {
 
     /// Whether the session can resume.
     pub fn can_resume(&self) -> bool {
-        self.phase == Phase::Paused && !self.calibration.active
+        self.phase == Phase::Paused && !self.calibration.active && !self.preview.adjust
     }
 
     /// Whether the session can be aborted.
@@ -469,6 +478,7 @@ impl ConsoleState {
     pub fn can_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
+            && !self.preview.adjust
             && matches!(self.phase, Phase::Idle | Phase::Finished)
     }
 
@@ -476,8 +486,17 @@ impl ConsoleState {
     pub fn can_quick_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
+            && !self.preview.adjust
             && self.calibration.fitted
             && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
+    }
+
+    /// Whether the adjust view can be shown or hidden.
+    ///
+    /// Adjusting is a pre-session camera check: it is available whenever no
+    /// trial is running and no calibration owns the presenter.
+    pub fn can_adjust(&self) -> bool {
+        !self.calibration.active && self.phase != Phase::Running
     }
 
     /// Whether the active calibration can be cancelled.
@@ -697,6 +716,34 @@ mod tests {
         assert!(!state.can_abort());
         assert!(state.can_cancel_calibration());
         assert!(!state.can_configure());
+    }
+
+    #[test]
+    fn adjust_is_a_pre_session_camera_check() {
+        let mut state = state();
+        assert!(state.can_adjust());
+        assert!(!state.preview.adjust);
+
+        state.phase = Phase::Running;
+        assert!(!state.can_adjust());
+
+        state.phase = Phase::Idle;
+        state.calibration.active = true;
+        assert!(!state.can_adjust());
+    }
+
+    #[test]
+    fn adjust_blocks_start_resume_and_calibration() {
+        let mut state = state();
+        state.preview.adjust = true;
+        assert!(!state.can_start());
+        assert!(!state.can_calibrate(true));
+
+        state.calibration.fitted = true;
+        assert!(!state.can_quick_calibrate(true));
+
+        state.phase = Phase::Paused;
+        assert!(!state.can_resume());
     }
 
     #[test]

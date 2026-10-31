@@ -42,12 +42,30 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - `yet-egui`: `PreviewFrame` carries the Quadbright quadrant means
   (`quad`) and `PreviewState` has `pip_stream` / `pip_quad`; the preview panel
   keeps its image when only the presenter PiP is enabled.
+- **Console window placement:** removed eframe's inner-size-only centering
+  (which ignored the monitor origin and could push the title bar above the
+  screen, e.g. on a vertically offset DP-1). The console now computes its
+  position from the current winit monitor, outer size and decorations, and
+  keeps a top margin. If the configured presenter monitor equals the console
+  monitor and another output exists, the presenter is moved to the next
+  monitor.
+- **Presenters can be positioned:** `PresenterConfig::position_pt` and
+  `EguiPresenter::set_position_pt` place a windowed viewport;
+  `view::viewport_builder` applies the position while the monitor-targeted
+  fullscreen path is unchanged.
+- `yet-zero run`/`present`: added `--adjust`; presenter-only mode gained the
+  `A` key.
 - `PreferredFormat` moved to `yet-stim::config`; `validate_eye_region` moved to
   `yet-core`; `DEFAULT_EYE_REGION`, `Camera`, `CameraRig` and the platform
   adapters moved to `yet-zero::camera`.
 
 ### Added
 
+- **Adjust** camera-alignment view (console **F3**/button, presenter-only
+  **A**, launch flags `--adjust` for `run` and `present`): the presenter and
+  console show the full camera frame enlarged, dim everything outside the eye
+  ROI and outline the ROI in orange. Available while idle or paused, disabled
+  while a trial or calibration is active.
 - Console **Reset** button (F4): returns a finished or aborted session to
   `Idle`, clears the session error and re-enables Start and Calibrate, so the
   experimenter no longer has to restart the application after an abort.

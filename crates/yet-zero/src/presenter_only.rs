@@ -7,6 +7,7 @@
 //! console window. Keys:
 //!
 //! * `F` toggle the follow circle
+//! * `A` toggle the enlarged camera adjust view
 //! * `P` toggle the camera picture-in-picture
 //! * `Q` toggle the Quadbright picture-in-picture
 //! * `Space` start, pause or resume
@@ -47,6 +48,8 @@ pub struct PresenterOptions<'a> {
     pub pip_stream: bool,
     /// Start with the Quadbright picture-in-picture enabled.
     pub pip_quad: bool,
+    /// Start in the enlarged camera adjust view.
+    pub adjust: bool,
 }
 
 impl<'a> PresenterOptions<'a> {
@@ -60,6 +63,7 @@ impl<'a> PresenterOptions<'a> {
             follow: false,
             pip_stream: false,
             pip_quad: false,
+            adjust: false,
         }
     }
 
@@ -96,6 +100,12 @@ impl<'a> PresenterOptions<'a> {
     /// Start with the Quadbright picture-in-picture enabled.
     pub fn pip_quad(mut self, enabled: bool) -> Self {
         self.pip_quad = enabled;
+        self
+    }
+
+    /// Start in the enlarged camera adjust view.
+    pub fn adjust(mut self, enabled: bool) -> Self {
+        self.adjust = enabled;
         self
     }
 }
@@ -144,6 +154,7 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         console.follow = options.follow;
         console.preview.pip_stream = options.pip_stream;
         console.preview.pip_quad = options.pip_quad;
+        console.preview.adjust = options.adjust;
         console.log(
             LogLevel::Info,
             format!(
@@ -154,7 +165,7 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F follow · P camera PiP · Q Quadbright PiP · Space start/pause · F7 calibrate · F9 quick · F8 abort · Esc quit",
+            "keys: F follow · A adjust · P camera PiP · Q Quadbright PiP · Space start/pause · F7 calibrate · F9 quick · F8 abort · Esc quit",
         );
     }
 
@@ -232,10 +243,11 @@ impl eframe::App for PresenterOnlyApp {
         self.presenter.show_root(ui);
         self.draw_status(ui);
 
-        let (follow, space, calibrate, quick, abort, quit, pip_stream, pip_quad) =
-            ctx.input(|input| {
+        let (follow, adjust, space, calibrate, quick, abort, quit, pip_stream, pip_quad) = ctx
+            .input(|input| {
                 (
                     input.key_pressed(egui::Key::F),
+                    input.key_pressed(egui::Key::A),
                     input.key_pressed(egui::Key::Space),
                     input.key_pressed(egui::Key::F7),
                     input.key_pressed(egui::Key::F9),
@@ -250,6 +262,12 @@ impl eframe::App for PresenterOnlyApp {
             let mut console = lock_console(&self.shared);
             console.follow = !console.follow;
         }
+        if adjust {
+            let mut console = lock_console(&self.shared);
+            if console.preview.adjust || console.can_adjust() {
+                console.preview.adjust = !console.preview.adjust;
+            }
+        }
         if pip_stream {
             let mut console = lock_console(&self.shared);
             console.preview.pip_stream = !console.preview.pip_stream;
@@ -260,10 +278,14 @@ impl eframe::App for PresenterOnlyApp {
         }
         if space {
             let phase = lock_console(&self.shared).phase;
+            let adjust = lock_console(&self.shared).preview.adjust;
             let command = match phase {
-                Phase::Idle => Some(ExperimentCommand::Start),
+                Phase::Idle | Phase::Paused if !adjust => Some(if phase == Phase::Idle {
+                    ExperimentCommand::Start
+                } else {
+                    ExperimentCommand::Resume
+                }),
                 Phase::Running => Some(ExperimentCommand::Pause),
-                Phase::Paused => Some(ExperimentCommand::Resume),
                 _ => None,
             };
             if let Some(command) = command {
@@ -298,6 +320,9 @@ impl PresenterOnlyApp {
     /// reappears when the session stops or an error is present.
     fn draw_status(&self, ui: &egui::Ui) {
         let console = lock_console(&self.shared);
+        if console.preview.adjust {
+            return;
+        }
         let error = console
             .error
             .as_deref()
@@ -325,8 +350,13 @@ impl PresenterOnlyApp {
             (false, true) => " · PiP quad",
             (false, false) => "",
         };
+        let adjust = if console.preview.adjust {
+            " · adjust on (A to finish)"
+        } else {
+            ""
+        };
         let line = format!(
-            "{} · {calibration} · {follow}{pip}\nF7 calibrate · F9 quick · F follow · P camera PiP · Q quad PiP · Space start/pause · F8 abort · Esc quit",
+            "{} · {calibration} · {follow}{pip}{adjust}\nF7 calibrate · F9 quick · F follow · A adjust · P camera PiP · Q quad PiP · Space start/pause · F8 abort · Esc quit",
             console.phase.label()
         );
 

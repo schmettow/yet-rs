@@ -19,6 +19,6 @@ mod view;
 pub use blur::box_blur_rgba;
 pub use overlay::EguiOverlay;
 pub use presenter::{
-    EguiPresenter, PresenterConfig, PresenterPreview, PresenterState, PresenterStatus,
+    AdjustFrame, EguiPresenter, PresenterConfig, PresenterPreview, PresenterState, PresenterStatus,
 };
 pub use view::{show_viewport, viewport_id};

@@ -10,9 +10,14 @@
 //!
 //! Keyboard shortcuts: `F5` starts, `F6` pauses or resumes, `F7` runs a full
 //! calibration, `F9` a quick recalibration, `F10` toggles the camera preview,
-//! `Esc` cancels calibration, `F8` aborts the session, and `F4` resets a
-//! finished or aborted session to idle. The camera and Quadbright picture-in-
-//! picture toggles are console checkboxes and presenter-only `P`/`Q`.
+//! `F3` toggles the enlarged adjust view, `Esc` cancels calibration, `F8` aborts
+//! the session, and `F4` resets a finished or aborted session to idle. The
+//! camera and Quadbright picture-in-picture toggles are console checkboxes and
+//! presenter-only `P`/`Q`.
+//!
+//! On startup the console is centered on the monitor where the window manager
+//! placed it, and the presenter is moved to another monitor when the configured
+//! presenter monitor would share the console output.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -27,7 +32,7 @@ use yet_core::{GazePoint, QuadBrightness};
 use yet_egui::console::{
     CameraChoice, ConsoleState, ConsoleUi, ExperimentCommand, LogLevel, MonitorChoice, PreviewFrame,
 };
-use yet_egui::{EguiOverlay, EguiPresenter, PresenterConfig, PresenterPreview};
+use yet_egui::{AdjustFrame, EguiOverlay, EguiPresenter, PresenterConfig, PresenterPreview};
 use yet_stim::layout::StimulusPlacement;
 use yet_stim::{
     gaze_scene, step, CalibrationGrid, CalibrationPhase, CalibrationRun, CameraConfig,
@@ -55,6 +60,12 @@ const PREVIEW_INTERVAL: Duration = Duration::from_millis(66);
 /// Warn when no camera frame has arrived for this long.
 const CAMERA_STALE: Duration = Duration::from_secs(2);
 
+/// How many frames to repeat the windowed presenter position command.
+///
+/// The first command can arrive before the deferred viewport is mapped and is
+/// then dropped; repeating it also corrects cross-DPI rounding.
+const POSITION_ATTEMPTS: u8 = 20;
+
 /// Options for [`run_console`].
 #[derive(Clone, Copy, Debug)]
 pub struct ConsoleOptions<'a> {
@@ -66,6 +77,8 @@ pub struct ConsoleOptions<'a> {
     pub output: Option<&'a Path>,
     /// Override the configured camera index.
     pub device: Option<usize>,
+    /// Start in the enlarged camera adjust view.
+    pub adjust: bool,
 }
 
 impl<'a> ConsoleOptions<'a> {
@@ -76,6 +89,7 @@ impl<'a> ConsoleOptions<'a> {
             participant: None,
             output: None,
             device: None,
+            adjust: false,
         }
     }
 
@@ -94,6 +108,12 @@ impl<'a> ConsoleOptions<'a> {
     /// Override the configured camera index.
     pub fn device(mut self, device: usize) -> Self {
         self.device = Some(device);
+        self
+    }
+
+    /// Start in the enlarged camera adjust view.
+    pub fn adjust(mut self, adjust: bool) -> Self {
+        self.adjust = adjust;
         self
     }
 }
@@ -148,6 +168,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
     {
         let mut console = lock_console(&shared);
         console.camera_usb_index = initial_device;
+        console.preview.adjust = options.adjust;
         console.log(
             LogLevel::Info,
             format!(
@@ -204,6 +225,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         overlay_warned: false,
         logged_ready: false,
         sized: false,
+        position_attempts: 0,
     };
 
     let native = eframe::NativeOptions {
@@ -217,7 +239,6 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
             .with_surface_config(eframe::SurfaceConfig::LOW_LATENCY),
         system_font_fallback: false,
         persist_window: false,
-        centered: true,
         ..Default::default()
     };
 
@@ -241,6 +262,7 @@ struct ConsoleApp {
     overlay_warned: bool,
     logged_ready: bool,
     sized: bool,
+    position_attempts: u8,
 }
 
 impl eframe::App for ConsoleApp {
@@ -264,15 +286,7 @@ impl eframe::App for ConsoleApp {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(12, 12, 12));
         if !self.sized {
-            if let Some(monitor) = ctx.input(|input| input.viewport().monitor_size) {
-                let target = egui::vec2(1400.0, 860.0).min(monitor * 0.92);
-                let origin = ((monitor - target) * 0.5).max(egui::Vec2::ZERO);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                    origin.x, origin.y,
-                )));
-                self.sized = true;
-            }
+            self.place_windows(&ctx, frame);
         }
         let status = self.presenter.status();
         let monitors = monitor_choices(frame);
@@ -337,6 +351,13 @@ impl eframe::App for ConsoleApp {
         };
         if monitor != status.monitor || fullscreen != status.fullscreen {
             self.presenter.set_monitor(monitor, fullscreen);
+            self.position_attempts = 0;
+            let position = if fullscreen {
+                None
+            } else {
+                self.position_presenter(frame, monitor)
+            };
+            self.presenter.set_position_pt(position);
             let mut console = lock_console(&self.shared);
             console.log(
                 LogLevel::Info,
@@ -345,6 +366,17 @@ impl eframe::App for ConsoleApp {
         }
 
         yet_egui::show_viewport(&ctx, &self.presenter.shared());
+        if fullscreen {
+            self.position_attempts = POSITION_ATTEMPTS;
+        } else if self.position_attempts < POSITION_ATTEMPTS {
+            if let Some((x, y)) = self.position_presenter(frame, monitor) {
+                ctx.send_viewport_cmd_to(
+                    yet_egui::viewport_id(monitor),
+                    egui::ViewportCommand::OuterPosition(egui::pos2(x, y)),
+                );
+                self.position_attempts += 1;
+            }
+        }
         self.update_overlay(&ctx, &status);
         let repaint = if self.overlay.as_ref().is_some_and(EguiOverlay::is_visible) {
             OVERLAY_REPAINT
@@ -356,6 +388,91 @@ impl eframe::App for ConsoleApp {
 }
 
 impl ConsoleApp {
+    /// Center the console on the monitor where it was launched and keep the
+    /// presenter on a different monitor when both would share one.
+    fn place_windows(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let Some(window) = frame.winit_window() else {
+            return;
+        };
+        let Some(current) = window.current_monitor() else {
+            return;
+        };
+        let monitors: Vec<_> = window.available_monitors().collect();
+        let Some(console_index) = monitors.iter().position(|monitor| monitor == &current) else {
+            return;
+        };
+        let pixels_per_point = ctx.pixels_per_point().max(0.1);
+
+        // Center the existing window on its monitor. Only the position is
+        // changed: re-requesting the inner size here would use a first-frame
+        // scale factor that can differ from the platform's stable value.
+        let monitor_pos = current.position();
+        let monitor_size = current.size();
+        let outer = window.outer_size();
+        let monitor_pt =
+            egui::vec2(monitor_size.width as f32, monitor_size.height as f32) / pixels_per_point;
+        let outer_pt = egui::vec2(outer.width as f32, outer.height as f32) / pixels_per_point;
+        let margin = 24.0;
+        let origin = centered_origin(
+            (
+                monitor_pos.x as f32 / pixels_per_point,
+                monitor_pos.y as f32 / pixels_per_point,
+            ),
+            (monitor_pt.x, monitor_pt.y),
+            (outer_pt.x, outer_pt.y),
+            margin,
+        );
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+            origin.0, origin.1,
+        )));
+
+        let (presenter_monitor, fullscreen) = {
+            let mut console = lock_console(&self.shared);
+            let configured = console.presenter_monitor;
+            let presenter_monitor =
+                presenter_monitor_for(configured, console_index, monitors.len());
+            if presenter_monitor != configured {
+                console.presenter_monitor = presenter_monitor;
+            }
+            console.log(
+                LogLevel::Info,
+                format!(
+                    "console {:.0}×{:.0} pt centered on monitor {console_index} ({pixels_per_point:.2} px/pt); presenter on monitor {presenter_monitor}",
+                    outer_pt.x, outer_pt.y
+                ),
+            );
+            (presenter_monitor, console.fullscreen)
+        };
+
+        if fullscreen {
+            self.presenter.set_position_pt(None);
+        } else if let Some(position) = self.position_presenter(frame, presenter_monitor) {
+            self.presenter.set_position_pt(Some(position));
+        }
+        self.sized = true;
+    }
+
+    /// Center the windowed presenter on `monitor_index`.
+    fn position_presenter(
+        &self,
+        frame: &eframe::Frame,
+        monitor_index: usize,
+    ) -> Option<(f32, f32)> {
+        let window = frame.winit_window()?;
+        let monitor = window.available_monitors().nth(monitor_index)?;
+        let scale = monitor.scale_factor() as f32;
+        let position = monitor.position();
+        let size = monitor.size();
+        let monitor_pt = (size.width as f32 / scale, size.height as f32 / scale);
+        let window_pt = self.presenter.window_size_pt();
+        Some(centered_origin(
+            (position.x as f32 / scale, position.y as f32 / scale),
+            monitor_pt,
+            window_pt,
+            24.0,
+        ))
+    }
+
     fn update_overlay(&mut self, ctx: &egui::Context, status: &yet_egui::PresenterStatus) {
         let Some(overlay) = &mut self.overlay else {
             return;
@@ -498,6 +615,7 @@ fn run_loop<G>(
     let mut last_calibration_phase = CalibrationPhase::Idle;
     let mut last_calibration_target = None;
     let mut preview_generation = 0_u64;
+    let mut adjust_generation = 0_u64;
     let mut last_preview: Option<Instant> = None;
     let mut first_trial = false;
     let mut auto_quick = false;
@@ -560,17 +678,18 @@ fn run_loop<G>(
         );
 
         // Console intent: preview on/off, gaze circle and a retry request.
-        let (preview_enabled, pip_stream, pip_quad, retry, follow) = {
+        let (preview_enabled, pip_stream, pip_quad, adjust, retry, follow) = {
             let console = lock_console(shared);
             (
                 console.preview.enabled,
                 console.preview.pip_stream,
                 console.preview.pip_quad,
+                console.preview.adjust,
                 console.preview.retry,
                 console.follow,
             )
         };
-        let preview_active = preview_enabled || pip_stream || pip_quad;
+        let preview_active = preview_enabled || pip_stream || pip_quad || adjust;
         if retry {
             let mut console = lock_console(shared);
             console.preview.retry = false;
@@ -622,6 +741,9 @@ fn run_loop<G>(
                             runner.geometry().size_px,
                             &mut preview_generation,
                         );
+                        if adjust {
+                            update_adjust_frame(shared, tracker, &polled, &mut adjust_generation);
+                        }
                         last_preview = Some(now);
                     }
                     if preview_active {
@@ -643,6 +765,7 @@ fn run_loop<G>(
             }
         }
         sync_presenter_preview(runner, shared, pip_stream, pip_quad);
+        sync_presenter_adjust(runner, shared, adjust);
 
         // Wait for a command or the next tick.
         let active = running || calibrating || (follow && fitted);
@@ -658,6 +781,9 @@ fn run_loop<G>(
                 cancel_calibration(state, runner, calibration.as_mut(), shared, start);
                 abort_if_active(start, state, runner, shared);
                 shut_down = true;
+            }
+            Ok(command) if adjust_blocks(shared, command) => {
+                log_warning(shared, "finish adjusting the camera first");
             }
             Ok(command) => {
                 let at = session_time(start, Instant::now());
@@ -1043,6 +1169,17 @@ fn run_loop<G>(
             next_tick = now + TICK;
         }
     }
+}
+
+/// Whether an adjust view blocks a session or calibration command.
+fn adjust_blocks(shared: &Arc<Mutex<ConsoleState>>, command: ExperimentCommand) -> bool {
+    matches!(
+        command,
+        ExperimentCommand::Start
+            | ExperimentCommand::Resume
+            | ExperimentCommand::Calibrate
+            | ExperimentCommand::QuickCalibrate
+    ) && lock_console(shared).preview.adjust
 }
 
 fn clear_gaze(shared: &Arc<Mutex<ConsoleState>>, latest_gaze: &Rc<Cell<Option<GazePoint>>>) {
@@ -1544,6 +1681,53 @@ fn sync_presenter_preview<G>(
     runner.presenter_mut().set_preview(preview);
 }
 
+/// Update the full camera frame shown while adjusting.
+fn update_adjust_frame(
+    shared: &Arc<Mutex<ConsoleState>>,
+    tracker: &Tracker,
+    polled: &crate::tracker::PolledFrame,
+    generation: &mut u64,
+) {
+    let Some((width, height, data)) = crate::tracker::thumbnail(&polled.frame, 960, 720) else {
+        return;
+    };
+    let frame_width = polled.frame.width();
+    let frame_height = polled.frame.height();
+    if frame_width == 0 || frame_height == 0 {
+        return;
+    }
+    let roi = tracker.roi();
+    *generation += 1;
+    lock_console(shared).preview.adjust_frame = Some(AdjustFrame {
+        width,
+        height,
+        data: Arc::from(data),
+        generation: *generation,
+        roi: [
+            roi.x as f32 / frame_width as f32,
+            roi.y as f32 / frame_height as f32,
+            roi.width as f32 / frame_width as f32,
+            roi.height as f32 / frame_height as f32,
+        ],
+    });
+}
+
+/// Show or hide the enlarged adjust view on the presenter.
+fn sync_presenter_adjust<G>(
+    runner: &mut SessionRunner<'_, std::io::BufWriter<std::fs::File>, EguiPresenter, G>,
+    shared: &Arc<Mutex<ConsoleState>>,
+    adjust: bool,
+) where
+    G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
+{
+    let frame = if adjust {
+        lock_console(shared).preview.adjust_frame.clone()
+    } else {
+        None
+    };
+    runner.presenter_mut().set_adjust(frame);
+}
+
 fn refresh_camera_devices(shared: &Arc<Mutex<ConsoleState>>) {
     let result = crate::camera::list_devices();
     let mut console = lock_console(shared);
@@ -1770,6 +1954,30 @@ pub(crate) fn plan_has_audio(plan: &SessionPlan) -> bool {
         .any(|planned| planned.trial.stimulus.audio.is_some())
 }
 
+/// Pick the presenter monitor.
+///
+/// A configured monitor that differs from the console is respected; when both
+/// would share an output, the next output is used instead.
+fn presenter_monitor_for(configured: usize, console_index: usize, available: usize) -> usize {
+    if available > 1 && configured == console_index {
+        (console_index + 1) % available
+    } else {
+        configured
+    }
+}
+
+/// Center a window inside a monitor and keep its top edge reachable.
+fn centered_origin(
+    monitor_pos: (f32, f32),
+    monitor_size: (f32, f32),
+    window_size: (f32, f32),
+    top_margin: f32,
+) -> (f32, f32) {
+    let x = monitor_pos.0 + (monitor_size.0 - window_size.0).max(0.0) * 0.5;
+    let y = monitor_pos.1 + (monitor_size.1 - window_size.1).max(0.0) * 0.5;
+    (x, y.max(monitor_pos.1 + top_margin))
+}
+
 fn monitor_choices(frame: &eframe::Frame) -> Vec<MonitorChoice> {
     let Some(window) = frame.winit_window() else {
         return Vec::new();
@@ -1809,7 +2017,7 @@ mod tests {
 
     use yet_stim::{BlockId, PresenterCommand, Scene, Stimulus, StimulusId, StimulusKind};
 
-    use super::{split_trial_start, Effect};
+    use super::{centered_origin, presenter_monitor_for, split_trial_start, Effect};
 
     fn trial_start() -> Effect {
         Effect::TrialStarted {
@@ -1841,6 +2049,30 @@ mod tests {
         assert_eq!(effects.len(), 2);
         assert!(matches!(effects[0], Effect::Present(_)));
         assert!(matches!(effects[1], Effect::Presenter(_)));
+    }
+
+    #[test]
+    fn the_presenter_moves_off_the_console_monitor() {
+        assert_eq!(presenter_monitor_for(0, 0, 2), 1);
+        assert_eq!(presenter_monitor_for(1, 1, 2), 0);
+        assert_eq!(presenter_monitor_for(0, 1, 2), 0);
+        assert_eq!(presenter_monitor_for(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn a_centered_window_keeps_its_title_bar_reachable() {
+        assert_eq!(
+            centered_origin((2560.0, 0.0), (1440.0, 2560.0), (900.0, 900.0), 24.0),
+            (2830.0, 830.0)
+        );
+        assert_eq!(
+            centered_origin((0.0, 0.0), (1400.0, 800.0), (1400.0, 860.0), 24.0),
+            (0.0, 24.0)
+        );
+        assert_eq!(
+            centered_origin((0.0, 0.0), (1920.0, 1080.0), (1400.0, 860.0), 24.0),
+            (260.0, 110.0)
+        );
     }
 
     #[test]

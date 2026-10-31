@@ -52,8 +52,8 @@ fn usage() {
         "usage:\n  yet-zero plan <experiment-dir>\n  \
          yet-zero media <experiment-dir>\n  \
          yet-zero devices\n  \
-         yet-zero run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>]\n  \
-         yet-zero present <experiment-dir> [--participant <id>] [--output <csv>] [--device <n>] [--follow] [--pip-camera] [--pip-quad]\n  \
+         yet-zero run <experiment-dir> [--headless] [--participant <id>] [--output <csv>] [--device <n>] [--adjust]\n  \
+         yet-zero present <experiment-dir> [--participant <id>] [--output <csv>] [--device <n>] [--follow] [--pip-camera] [--pip-quad] [--adjust]\n  \
          yet-zero camera <experiment-dir> [--device <n>] [--seconds <s>] [--save-roi <file>]\n  \
          yet-zero calibrate <experiment-dir> [--device <n>] [--samples <n>] [--quick] [--skip-live] [--live-seconds <s>] [--terminal]\n  \
          yet-zero overlay <experiment-dir> [--seconds <s>]"
@@ -207,6 +207,7 @@ fn run_presenter_command(args: &[String]) -> Result<(), CliError> {
     let mut follow = false;
     let mut pip_stream = false;
     let mut pip_quad = false;
+    let mut adjust = false;
     let mut index = 0;
 
     while index < args.len() {
@@ -231,6 +232,7 @@ fn run_presenter_command(args: &[String]) -> Result<(), CliError> {
             "--follow" => follow = true,
             "--pip-camera" => pip_stream = true,
             "--pip-quad" => pip_quad = true,
+            "--adjust" => adjust = true,
             flag if flag.starts_with('-') => return Err(CliError::Usage),
             path if directory.is_none() => directory = Some(Path::new(path)),
             _ => return Err(CliError::Usage),
@@ -251,6 +253,7 @@ fn run_presenter_command(args: &[String]) -> Result<(), CliError> {
     options = options.follow(follow);
     options = options.pip_stream(pip_stream);
     options = options.pip_quad(pip_quad);
+    options = options.adjust(adjust);
     yet_zero::run_presenter(options)?;
     Ok(())
 }
@@ -261,11 +264,13 @@ fn run_session(args: &[String]) -> Result<(), CliError> {
     let mut participant: Option<&str> = None;
     let mut output: Option<&Path> = None;
     let mut device: Option<usize> = None;
+    let mut adjust = false;
     let mut index = 0;
 
     while index < args.len() {
         match args[index].as_str() {
             "--headless" => headless = true,
+            "--adjust" => adjust = true,
             "--participant" => {
                 index += 1;
                 participant = Some(args.get(index).ok_or(CliError::Usage)?.as_str());
@@ -292,6 +297,7 @@ fn run_session(args: &[String]) -> Result<(), CliError> {
 
     if !headless {
         let mut options = ConsoleOptions::new(directory.ok_or(CliError::Usage)?);
+        options = options.adjust(adjust);
         if let Some(participant) = participant {
             options = options.participant(participant);
         }

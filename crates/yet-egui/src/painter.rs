@@ -293,6 +293,62 @@ pub(crate) fn paint_scene(
     }
 }
 
+/// Dim the area outside an eye region and outline it.
+///
+/// `roi` is `[x, y, width, height]` normalized to `0..=1` of `image`.
+pub(crate) fn paint_eye_roi(
+    painter: &egui::Painter,
+    image: egui::Rect,
+    roi: [f32; 4],
+    accent: egui::Color32,
+    stroke_width: f32,
+    label: &str,
+    font: egui::FontId,
+) {
+    let roi = roi.map(|value| value.clamp(0.0, 1.0));
+    let roi_rect = egui::Rect::from_min_max(
+        image.min + egui::vec2(roi[0] * image.width(), roi[1] * image.height()),
+        image.min
+            + egui::vec2(
+                (roi[0] + roi[2]) * image.width(),
+                (roi[1] + roi[3]) * image.height(),
+            ),
+    );
+
+    let dim = egui::Color32::from_black_alpha(130);
+    for band in [
+        egui::Rect::from_min_max(image.min, egui::pos2(image.max.x, roi_rect.min.y)),
+        egui::Rect::from_min_max(egui::pos2(image.min.x, roi_rect.max.y), image.max),
+        egui::Rect::from_min_max(
+            egui::pos2(image.min.x, roi_rect.min.y),
+            egui::pos2(roi_rect.min.x, roi_rect.max.y),
+        ),
+        egui::Rect::from_min_max(
+            egui::pos2(roi_rect.max.x, roi_rect.min.y),
+            egui::pos2(image.max.x, roi_rect.max.y),
+        ),
+    ] {
+        if band.width() > 0.0 && band.height() > 0.0 {
+            painter.rect_filled(band, 0.0, dim);
+        }
+    }
+    painter.rect_stroke(
+        roi_rect,
+        0.0,
+        egui::Stroke::new(stroke_width, accent),
+        egui::StrokeKind::Inside,
+    );
+    if !label.is_empty() {
+        painter.text(
+            roi_rect.left_top() + egui::vec2(6.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            label,
+            font,
+            accent,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use eframe::egui;

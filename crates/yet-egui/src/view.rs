@@ -30,7 +30,11 @@ pub fn viewport_id(monitor: usize) -> egui::ViewportId {
 /// exists: `with_monitor` only sets the target monitor, so re-enabling
 /// fullscreen without a monitor change would otherwise be a no-op. When both
 /// are set, eframe creates the window borderless on that monitor.
-pub fn viewport_builder(monitor: usize, fullscreen: bool) -> egui::ViewportBuilder {
+pub fn viewport_builder(
+    monitor: usize,
+    fullscreen: bool,
+    position_pt: Option<(f32, f32)>,
+) -> egui::ViewportBuilder {
     let builder = egui::ViewportBuilder::default()
         .with_title("yet-rs stimulus")
         .with_app_id("yet-rs-presenter")
@@ -43,7 +47,10 @@ pub fn viewport_builder(monitor: usize, fullscreen: bool) -> egui::ViewportBuild
     if fullscreen {
         builder.with_monitor(monitor)
     } else {
-        builder
+        match position_pt {
+            Some((x, y)) => builder.with_position([x, y]),
+            None => builder,
+        }
     }
 }
 
@@ -52,15 +59,21 @@ pub fn viewport_builder(monitor: usize, fullscreen: bool) -> egui::ViewportBuild
 /// Call this once per console frame. The viewport's closure paints the current
 /// scene; it runs only when that viewport needs a repaint.
 pub fn show_viewport(ctx: &egui::Context, state: &Arc<Mutex<PresenterState>>) {
-    let (monitor, fullscreen, viewport, size_pt) = {
+    let (monitor, fullscreen, viewport, size_pt, position_pt) = {
         let mut state = lock_state(state);
         let (monitor, fullscreen) = state.target_monitor();
         let viewport = viewport_id(monitor);
         state.set_active_viewport(viewport);
-        (monitor, fullscreen, viewport, state.window_size_pt())
+        (
+            monitor,
+            fullscreen,
+            viewport,
+            state.window_size_pt(),
+            state.position_pt(),
+        )
     };
 
-    let builder = viewport_builder(monitor, fullscreen);
+    let builder = viewport_builder(monitor, fullscreen, position_pt);
     let builder = if fullscreen {
         builder
     } else {
@@ -75,6 +88,8 @@ pub fn show_viewport(ctx: &egui::Context, state: &Arc<Mutex<PresenterState>>) {
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui;
+
     #[test]
     fn each_monitor_has_its_own_viewport_identifier() {
         assert_ne!(super::viewport_id(0), super::viewport_id(1));
@@ -83,7 +98,7 @@ mod tests {
 
     #[test]
     fn a_fullscreen_viewport_targets_the_monitor_explicitly() {
-        let builder = super::viewport_builder(1, true);
+        let builder = super::viewport_builder(1, true, None);
 
         assert_eq!(builder.fullscreen, Some(true));
         assert_eq!(builder.monitor, Some(1));
@@ -91,9 +106,16 @@ mod tests {
 
     #[test]
     fn a_windowed_viewport_can_leave_fullscreen() {
-        let builder = super::viewport_builder(1, false);
+        let builder = super::viewport_builder(1, false, None);
 
         assert_eq!(builder.fullscreen, Some(false));
         assert_eq!(builder.monitor, None);
+    }
+
+    #[test]
+    fn a_windowed_viewport_uses_an_explicit_position() {
+        let builder = super::viewport_builder(1, false, Some((1440.0, 320.0)));
+
+        assert_eq!(builder.position, Some(egui::pos2(1440.0, 320.0)));
     }
 }

@@ -172,6 +172,8 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D29** | **Per-trial quick recalibration is a controller gate, not an engine state.** Before a new trial is presented, the controller applies `TrialStarted`, pauses the engine at the same session time, runs `CalibrationRun::quick` over the blurred next stimulus, then resumes; the pause shifts the trial deadline by the recalibration duration. The pure `step` engine and the headless runner never calibrate on their own, so headless output stays deterministic. The gate is skipped without a fitted model. | Python parity decision 2026-10-30; `main.py` `prepareStimulus`/`Quick` |
 | **D30** | **Presenter PiP is purely visual and shares the preview capture.** Camera stream (bottom-right) and Quadbright means (bottom-left) are painted after the scene by `PresenterState`, outside `Scene`, so they never reach the CSV or a recorded scene. Toggles: console checkboxes, presenter-only `P`/`Q`, and `--pip-camera`/`--pip-quad`. `PreviewState::pip_stream`/`pip_quad` open the camera even when the console preview is off. | 1.0 parity decision |
 | **D31** | **Abort is recoverable in the console.** `ExperimentCommand::Reset` / `F4` returns `Finished` or `Aborted` to `Idle`, clears the session error and re-enables Start and Calibrate; the engine rejects Reset while Running or Paused. The plan, calibration model and result path are kept. | Usability finding 2026-10-30 |
+| **D32** | **Monitor layout is resolved after the first frame.** The console keeps the WM's initial placement (the screen where it was launched) and is then centered on that monitor using winit's monitor position, outer size and decorations, with a top margin so the title bar is reachable. If the configured presenter monitor equals the console monitor and another output exists, the presenter moves to the next monitor; explicit other-monitor configs are respected. Windowed presenters are centered on their monitor via `PresenterConfig::position_pt`. Wayland may ignore absolute positions; the compositor keeps the window on the active output. | Usability decisions 2026-10-30; `frame.winit_window()` |
+| **D33** | **Adjust is a pre-session camera alignment view.** It shows the full camera frame enlarged on the presenter and console, dims outside the eye ROI and outlines it. It is available while no trial runs and no calibration is active, blocks Start/Resume/Calibrate/Quick until it is closed, and is purely visual. Toggles: console button/**F3**, presenter-only **A**, launch `--adjust`. | Usability decision 2026-10-30 |
 
 ---
 
@@ -1050,8 +1052,9 @@ the experimenter immediate visual feedback on the presenter.
 | PAR-2 | Presenter camera and Quadbright PiP | M | Both views are purely visual, toggleable in console and presenter-only mode, and never enter the scene or CSV |
 | PAR-3 | Console Reset after Abort or Finish | S | Reset returns to Idle, clears the session error and re-enables Start/Calibrate; the engine rejects Reset while running or paused |
 
-**Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented.
-283 workspace tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
+**Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented,
+plus the follow-up window placement and Adjust work (D32/D33). 290 workspace
+tests pass (three ignored hardware tests); `fmt`, `check`, `test`,
 `clippy -D warnings` and `doc` are green.
 
 - **The gate is controller-side (D29):** the console applies `TrialStarted`,
@@ -1070,14 +1073,34 @@ the experimenter immediate visual feedback on the presenter.
   and clears indices, timers and pause bookkeeping. `ExperimentCommand::Reset`
   also clears `ConsoleState::error`, resets the report counters and the
   first-trial timer. **F4** and the button are gated by `can_reset`.
+- **Window placement (D32):** `ConsoleApp::place_windows` reads the current
+  winit monitor (via `frame.winit_window()`), centers the console with its
+  decorations and a 24 pt top margin, and moves the presenter to the next
+  monitor when the configured monitor would share the console output.
+  `PresenterConfig::position_pt` places windowed presenters;
+  `view::viewport_builder` applies it without changing the fullscreen path.
+- **Adjust (D33):** `AdjustFrame` carries a full camera frame and the normalized
+  eye ROI. `PresenterState::paint_adjust` paints it instead of the scene and
+  `painter::paint_eye_roi` dims everything outside the ROI. The console uses the
+  same helper in its preview panel. Adjust blocks Start/Resume/Calibrate/Quick
+  and is skipped when no camera is available.
 - **Measured:** on the X11 workstation with the StreamCam at `/dev/video0`, the
   Python `Demo` workspace ran the full flow: F7 full calibration (9 targets),
   Space, then per-trial quick collect over a blurred face, quick report, and a
   crisp 3 s stimulus; six distinct stimuli were written with 132 gaze rows. The
   camera PiP showed the ROI and the Quadbright box showed live means (91/108/83/96).
-  The console's own buttons could not be driven by XTest in this session because
-  the window manager kept focus elsewhere; the Reset path is covered by engine
-  and console-state tests.
+- **Window placement:** on the two-monitor X11 desk (DP-1 2560×1600 at +0+662,
+  DP-3 1440×2560 at +2560+0), the console opened at the WM-chosen screen and
+  was centered there with its title bar inside the output; with the Python
+  default presenter monitor 0 (same as console 0), the presenter moved to
+  monitor 1 and stayed a centered 975×975 window. Wayland positioning remains
+  compositor-managed.
+- **Adjust:** `yet-zero present --adjust` and `yet-zero run --adjust` were
+  exercised on the StreamCam. The presenter and console show the full frame
+  with the ROI dimmed/outlined; the presenter-only status strip hides during
+  adjust. Automated click/key input to the console could not be delivered by
+  the window manager, so the toggle-off path is covered by presenter and
+  console-state tests.
 
 ### Sprint 9 — Overlay core
 

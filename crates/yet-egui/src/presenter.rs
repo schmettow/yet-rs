@@ -39,6 +39,8 @@ pub struct PresenterConfig {
     pub nominal_size_px: (u32, u32),
     /// Nominal physical pixels per logical point.
     pub nominal_scale_factor: f32,
+    /// Outer position in logical points for a windowed viewport.
+    pub position_pt: Option<(f32, f32)>,
 }
 
 impl PresenterConfig {
@@ -54,6 +56,7 @@ impl PresenterConfig {
             fullscreen,
             nominal_size_px,
             nominal_scale_factor,
+            position_pt: None,
         }
     }
 }
@@ -119,6 +122,24 @@ pub struct PresenterPreview {
     pub show_quad: bool,
 }
 
+/// One full camera frame for the adjust view.
+///
+/// The frame is shown enlarged while the experimenter centers the camera on
+/// the eye. `roi` is the eye region normalized to `0..=1` in frame space.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdjustFrame {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Row-major 8-bit grayscale pixels.
+    pub data: Arc<[u8]>,
+    /// Generation used to decide when to re-upload the texture.
+    pub generation: u64,
+    /// Eye region as `[x, y, width, height]` in `0..=1`.
+    pub roi: [f32; 4],
+}
+
 /// The painting side of a presenter, shared with the controller thread.
 pub struct PresenterState {
     config: PresenterConfig,
@@ -128,6 +149,8 @@ pub struct PresenterState {
     frame: Option<FrameStamp>,
     preview: Option<PresenterPreview>,
     preview_texture: Option<(u64, egui::TextureHandle)>,
+    adjust: Option<AdjustFrame>,
+    adjust_texture: Option<(u64, egui::TextureHandle)>,
     dirty: bool,
     ready: bool,
     focused: bool,
@@ -159,6 +182,8 @@ impl PresenterState {
             frame: None,
             preview: None,
             preview_texture: None,
+            adjust: None,
+            adjust_texture: None,
             dirty: false,
             ready: false,
             focused: true,
@@ -237,6 +262,22 @@ impl PresenterState {
         self.dirty = true;
     }
 
+    /// Position a windowed viewport on its monitor, in logical points.
+    ///
+    /// Fullscreen viewports ignore this; the monitor index selects the output.
+    pub fn set_position_pt(&mut self, position: Option<(f32, f32)>) {
+        if self.config.position_pt == position {
+            return;
+        }
+        self.config.position_pt = position;
+        self.dirty = true;
+    }
+
+    /// Position of a windowed viewport, in logical points.
+    pub const fn position_pt(&self) -> Option<(f32, f32)> {
+        self.config.position_pt
+    }
+
     /// Remember which viewport the console is currently showing.
     pub fn set_active_viewport(&mut self, viewport: egui::ViewportId) {
         self.active_viewport = viewport;
@@ -279,6 +320,28 @@ impl PresenterState {
             _ => true,
         };
         self.preview = preview;
+        if changed {
+            if let Some(ctx) = &self.ctx {
+                ctx.request_repaint_of(self.active_viewport);
+            }
+        }
+    }
+
+    /// Replace the enlarged camera view shown while adjusting.
+    ///
+    /// While this is `Some`, the presenter paints the camera instead of the
+    /// stimulus. Clearing it marks the stored scene dirty so the next paint
+    /// restores the stimulus.
+    pub fn set_adjust(&mut self, adjust: Option<AdjustFrame>) {
+        let changed = match (&self.adjust, &adjust) {
+            (Some(old), Some(new)) => old.generation != new.generation || old.roi != new.roi,
+            (None, None) => false,
+            _ => true,
+        };
+        if adjust.is_none() && self.adjust.is_some() {
+            self.dirty = true;
+        }
+        self.adjust = adjust;
         if changed {
             if let Some(ctx) = &self.ctx {
                 ctx.request_repaint_of(self.active_viewport);
@@ -398,6 +461,13 @@ impl PresenterState {
 
         ui.painter()
             .rect_filled(clip_rect, 0.0, egui::Color32::from_rgb(24, 24, 24));
+        if let Some(adjust) = self.adjust.clone() {
+            self.paint_adjust(ui, clip_rect, &adjust);
+            self.paints += 1;
+            self.dirty = false;
+            return;
+        }
+
         painter::paint_scene(
             ui.painter(),
             clip_rect,
@@ -410,6 +480,84 @@ impl PresenterState {
 
         self.paints += 1;
         self.dirty = false;
+    }
+
+    /// Paint the enlarged adjust view instead of the scene.
+    fn paint_adjust(&mut self, ui: &egui::Ui, clip_rect: egui::Rect, adjust: &AdjustFrame) {
+        let painter = ui.painter();
+        painter.rect_filled(clip_rect, 0.0, egui::Color32::from_rgb(16, 16, 16));
+
+        let expected = adjust.width as usize * adjust.height as usize;
+        if expected == 0 || adjust.data.len() != expected {
+            return;
+        }
+        let uploaded = self
+            .adjust_texture
+            .as_ref()
+            .map(|(generation, _)| *generation);
+        if uploaded != Some(adjust.generation) {
+            let image = egui::ColorImage::from_gray(
+                [adjust.width as usize, adjust.height as usize],
+                &adjust.data,
+            );
+            match &mut self.adjust_texture {
+                Some((generation, texture)) => {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                    *generation = adjust.generation;
+                }
+                None => {
+                    self.adjust_texture = Some((
+                        adjust.generation,
+                        ui.ctx().load_texture(
+                            "yet-presenter-adjust",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    ));
+                }
+            }
+        }
+        let Some((_, texture)) = &self.adjust_texture else {
+            return;
+        };
+
+        let natural = egui::vec2(adjust.width as f32, adjust.height as f32);
+        let scale =
+            (clip_rect.width() * 0.94 / natural.x).min(clip_rect.height() * 0.86 / natural.y);
+        let rect =
+            egui::Rect::from_center_size(clip_rect.center(), natural * scale.max(f32::EPSILON));
+        painter.image(
+            texture.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        let font = (clip_rect.width() * 0.018).clamp(16.0, 30.0);
+        painter::paint_eye_roi(
+            painter,
+            rect,
+            adjust.roi,
+            egui::Color32::from_rgb(255, 160, 0),
+            4.0,
+            "eye ROI",
+            egui::FontId::proportional(font * 0.8),
+        );
+
+        painter.text(
+            clip_rect.left_top() + egui::vec2(24.0, 20.0),
+            egui::Align2::LEFT_TOP,
+            "Adjust · move the camera until the eye is inside the orange box",
+            egui::FontId::proportional(font),
+            egui::Color32::WHITE,
+        );
+        painter.text(
+            clip_rect.left_bottom() + egui::vec2(24.0, -20.0),
+            egui::Align2::LEFT_BOTTOM,
+            "Press A (presenter) or F3 (console) to finish",
+            egui::FontId::proportional(font * 0.85),
+            egui::Color32::from_gray(210),
+        );
     }
 
     /// Paint the camera stream and Quadbright picture-in-picture overlays.
@@ -608,13 +756,22 @@ impl EguiPresenter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Change the target monitor or fullscreen mode of the viewport.
+    /// Size of a windowed viewport in logical points.
+    pub fn window_size_pt(&self) -> (f32, f32) {
+        self.lock().window_size_pt()
+    }
+
     /// Change the target monitor or fullscreen mode of the viewport.
     ///
     /// The next [`crate::show_viewport`] call creates a new native window with
     /// a monitor-keyed viewport identifier; the old window is removed.
     pub fn set_monitor(&self, monitor: usize, fullscreen: bool) {
         self.lock().set_monitor(monitor, fullscreen);
+    }
+
+    /// Position the windowed presenter on its monitor, in logical points.
+    pub fn set_position_pt(&self, position: Option<(f32, f32)>) {
+        self.lock().set_position_pt(position);
     }
 
     /// Ask the viewport to take input focus on its next paint.
@@ -636,6 +793,11 @@ impl EguiPresenter {
     /// Replace the camera picture-in-picture over the stimulus.
     pub fn set_preview(&self, preview: Option<PresenterPreview>) {
         self.lock().set_preview(preview);
+    }
+
+    /// Show or hide the enlarged adjust view.
+    pub fn set_adjust(&self, adjust: Option<AdjustFrame>) {
+        self.lock().set_adjust(adjust);
     }
 
     fn request_repaint(&self) {
@@ -905,6 +1067,31 @@ mod tests {
 
         assert!(!output.shapes.is_empty());
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_adjust_view_is_painted_instead_of_the_scene() {
+        use std::sync::Arc;
+
+        use super::AdjustFrame;
+
+        let ctx = egui::Context::default();
+        let mut state = PresenterState::new(PresenterConfig::new(0, false, (320, 240), 1.0));
+        state.set_adjust(Some(AdjustFrame {
+            width: 2,
+            height: 2,
+            data: Arc::from(vec![10_u8, 20, 30, 40]),
+            generation: 1,
+            roi: [0.25, 0.25, 0.5, 0.5],
+        }));
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| state.ui(ui));
+
+        assert!(!output.shapes.is_empty());
+        output.textures_delta.clear();
+
+        state.set_adjust(None);
+        assert!(state.dirty);
     }
 
     #[test]

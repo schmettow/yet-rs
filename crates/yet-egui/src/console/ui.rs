@@ -9,6 +9,9 @@
 use eframe::egui;
 use yet_stim::Phase;
 
+use crate::painter;
+use crate::presenter::AdjustFrame;
+
 use super::command::ExperimentCommand;
 use super::state::{CameraChoice, ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
 
@@ -57,6 +60,7 @@ pub struct ConsoleUi {
     pub show_log: bool,
     preview_texture: Option<egui::TextureHandle>,
     preview_generation: u64,
+    adjust_texture: Option<(u64, egui::TextureHandle)>,
     /// Unscaled egui style, captured on the first frame.
     base_style: Option<egui::Style>,
 }
@@ -65,7 +69,8 @@ impl std::fmt::Debug for ConsoleUi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConsoleUi")
             .field("show_log", &self.show_log)
-            .field("has_preview_texture", &self.preview_texture.is_some())
+            .field("preview_texture", &self.preview_texture.is_some())
+            .field("has_adjust_texture", &self.adjust_texture.is_some())
             .field("has_base_style", &self.base_style.is_some())
             .finish()
     }
@@ -78,6 +83,7 @@ impl ConsoleUi {
             show_log: true,
             preview_texture: None,
             preview_generation: 0,
+            adjust_texture: None,
             base_style: None,
         }
     }
@@ -194,7 +200,7 @@ impl ConsoleUi {
             "waiting for the stimulus window"
         };
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(start_enabled, egui::Button::new("Start"))
                 .on_hover_text(start_hint)
@@ -232,6 +238,21 @@ impl ConsoleUi {
                 .clicked()
             {
                 commands.push(ExperimentCommand::Reset);
+            }
+            let adjust_label = if state.preview.adjust {
+                "Done adjusting"
+            } else {
+                "Adjust"
+            };
+            if ui
+                .add_enabled(
+                    state.preview.adjust || state.can_adjust(),
+                    egui::Button::new(adjust_label),
+                )
+                .on_hover_text("Show the full camera image to center the eye (F3)")
+                .clicked()
+            {
+                state.preview.adjust = !state.preview.adjust;
             }
         });
 
@@ -379,6 +400,11 @@ impl ConsoleUi {
                 state.preview.retry = true;
             }
         });
+        if state.preview.adjust {
+            let frame = state.preview.adjust_frame.clone();
+            self.show_adjust(ui, frame.as_ref());
+            return;
+        }
         if !state.preview.enabled {
             return;
         }
@@ -395,6 +421,68 @@ impl ConsoleUi {
             return;
         };
         self.show_preview(ui, frame);
+    }
+
+    fn show_adjust(&mut self, ui: &mut egui::Ui, frame: Option<&AdjustFrame>) {
+        let Some(frame) = frame else {
+            ui.label("Waiting for camera frames…");
+            return;
+        };
+        let expected = frame.width as usize * frame.height as usize;
+        if expected == 0 || frame.data.len() != expected {
+            return;
+        }
+        if self
+            .adjust_texture
+            .as_ref()
+            .map(|(generation, _)| *generation)
+            != Some(frame.generation)
+        {
+            let image = egui::ColorImage::from_gray(
+                [frame.width as usize, frame.height as usize],
+                &frame.data,
+            );
+            match &mut self.adjust_texture {
+                Some((generation, texture)) => {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                    *generation = frame.generation;
+                }
+                None => {
+                    self.adjust_texture = Some((
+                        frame.generation,
+                        ui.ctx().load_texture(
+                            "yet-console-adjust",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    ));
+                }
+            }
+        }
+        let Some((_, texture)) = &self.adjust_texture else {
+            return;
+        };
+
+        let natural = egui::vec2(frame.width as f32, frame.height as f32);
+        let width = ui.available_width().clamp(320.0, 760.0);
+        let scale = (width / natural.x).min(560.0 / natural.y).max(f32::EPSILON);
+        let (rect, _) = ui.allocate_exact_size(natural * scale, egui::Sense::hover());
+        ui.painter().image(
+            texture.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        painter::paint_eye_roi(
+            ui.painter(),
+            rect,
+            frame.roi,
+            egui::Color32::from_rgb(255, 160, 0),
+            2.5,
+            "eye ROI",
+            egui::FontId::proportional(14.0),
+        );
+        ui.label("Move the camera until the eye is inside the orange box. F3 finishes.");
     }
 
     fn show_preview(&mut self, ui: &mut egui::Ui, frame: &PreviewFrame) {
@@ -726,8 +814,8 @@ impl ConsoleUi {
         presenter_ready: bool,
         commands: &mut Vec<ExperimentCommand>,
     ) {
-        let (start, pause, abort, calibrate, quick, cancel, preview, follow, reset) =
-            ui.input(|input| {
+        let (start, pause, abort, calibrate, quick, cancel, preview, follow, reset, adjust) = ui
+            .input(|input| {
                 (
                     input.key_pressed(egui::Key::F5),
                     input.key_pressed(egui::Key::F6),
@@ -738,6 +826,7 @@ impl ConsoleUi {
                     input.key_pressed(egui::Key::F10),
                     input.key_pressed(egui::Key::F),
                     input.key_pressed(egui::Key::F4),
+                    input.key_pressed(egui::Key::F3),
                 )
             });
 
@@ -768,6 +857,9 @@ impl ConsoleUi {
         }
         if preview {
             state.preview.enabled = !state.preview.enabled;
+        }
+        if adjust && (state.preview.adjust || state.can_adjust()) {
+            state.preview.adjust = !state.preview.adjust;
         }
         if follow && !ui.ctx().egui_wants_keyboard_input() {
             state.follow = !state.follow;
@@ -844,6 +936,7 @@ mod tests {
 
     use super::{scale_style, ConsoleUi, MonitorChoice, PresenterStatus, CONSOLE_UI_SCALE};
     use crate::console::state::{ConsoleState, PreviewFrame};
+    use crate::presenter::AdjustFrame;
 
     fn monitors() -> Vec<MonitorChoice> {
         vec![
@@ -913,6 +1006,28 @@ mod tests {
             quad: None,
             gaze: Some(GazePoint::new(100.0, 200.0)),
             gaze_normalized: Some(GazePoint::new(0.5, 0.5)),
+        });
+        let mut console = ConsoleUi::default();
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &[]);
+        });
+        output.textures_delta.clear();
+
+        assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn the_console_renders_the_adjust_view() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.preview.adjust = true;
+        state.preview.adjust_frame = Some(AdjustFrame {
+            width: 4,
+            height: 2,
+            data: Arc::from(vec![0_u8; 8]),
+            generation: 1,
+            roi: [0.25, 0.25, 0.5, 0.5],
         });
         let mut console = ConsoleUi::default();
 

@@ -170,13 +170,14 @@ wrap instead of being clipped. The camera preview is served at up to 480×320.
 
 Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
 is enabled), **Abort** (F8), **Reset** (F4; returns a finished or aborted
-session to Idle so it can be calibrated and started again), **Calibrate** (F7,
-full 3×3 grid), **Quick** (F9, center target; requires an existing fit),
-**Cancel calibration** (Esc), the **Camera preview** toggle (F10), **Follow**
-(F; draws a gaze circle over the stimulus), and the **PiP camera** / **PiP
-quad** toggles (camera stream and Quadbright quadrant means drawn over the
-stimulus; presenter-only keys P and Q). The presenter selector lists the
-monitors reported by the platform,
+session to Idle so it can be calibrated and started again), **Adjust** (F3;
+shows the full camera image enlarged, with the eye ROI outlined, so the camera
+can be centered on the eye), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
+center target; requires an existing fit), **Cancel calibration** (Esc), the
+**Camera preview** toggle (F10), **Follow** (F; draws a gaze circle over the
+stimulus), and the **PiP camera** / **PiP quad** toggles (camera stream and
+Quadbright quadrant means drawn over the stimulus; presenter-only keys P and
+Q). The presenter selector lists the monitors reported by the platform,
 labelled from 1 with resolution and output name; the configuration index stays
 zero-based. On a two-monitor desk the presenter defaults to monitor 2 (index 1).
 Changing the selection recreates the stimulus window borderless-fullscreen on
@@ -186,6 +187,15 @@ instead of leaving a windowed presenter. Presenter and camera settings are
 locked while a session or calibration is active. If the console monitor matches
 the presenter monitor, the console warns that the fullscreen stimulus will cover
 it.
+
+The console opens where the window manager placed it (normally the screen where
+`yet-zero` was started) and then centers itself on that monitor, including
+decorations and a top margin, so the title bar stays reachable. If the
+configured presenter monitor is the same as the console monitor and another
+monitor exists, the presenter is moved to the next monitor; an explicitly
+different configured monitor is respected. Windowed presenters are centered on
+their monitor. Wayland compositors may ignore the absolute position; they keep
+the window on the active output and manage the title bar themselves.
 
 The **Camera** selector is populated from the platform device list (`Scan`
 refreshes it). On Linux it filters V4L2 capture nodes; on Windows/macOS it uses
@@ -233,20 +243,22 @@ cargo run --release -p yet-zero -- present examples/demo --participant demo01
 
 This opens only the stimulus window (or the 900×900 window of a Python
 workspace); there is no console. It is the quickest way to test the tracker on
-a single monitor. Keys: **F** toggles the follow circle, **P** the camera
-picture-in-picture, **Q** the Quadbright picture-in-picture, **Space** starts or
-pauses, **F7** runs a full calibration, **F9** a quick recalibration, **F8**
-aborts and **Esc** quits. Follow is a live tracker view: while idle or paused it
-paints the circle over the current (or a neutral white) scene and keeps the
-camera polling, so it is visible immediately after calibration without starting
-a trial. The circle is purely visual: it is composed into a temporary scene for
-painting and never changes the trial scene or a CSV row. The picture-in-picture
-views are visual, too: the camera stream sits in the bottom-right corner and
-the four quadrant means in the bottom-left, drawn after the scene and never
-written to the result file. A small status strip shows calibration, PiP and
-camera state outside a running trial. `--follow`, `--pip-camera` and
-`--pip-quad` start with the corresponding views enabled, which is useful for an
-automated or scripted check.
+a single monitor. Keys: **F** toggles the follow circle, **A** the enlarged
+adjust view, **P** the camera picture-in-picture, **Q** the Quadbright
+picture-in-picture, **Space** starts or pauses, **F7** runs a full calibration,
+**F9** a quick recalibration, **F8** aborts and **Esc** quits. Follow is a live
+tracker view: while idle or paused it paints the circle over the current (or a
+neutral white) scene and keeps the camera polling, so it is visible immediately
+after calibration without starting a trial. The circle is purely visual: it is
+composed into a temporary scene for painting and never changes the trial scene
+or a CSV row. The picture-in-picture views are visual, too: the camera stream
+sits in the bottom-right corner and the four quadrant means in the bottom-left,
+drawn after the scene and never written to the result file. A small status strip
+shows calibration, PiP and camera state outside a running trial. The adjust view
+shows the full camera frame with the eye ROI outlined, and hides the status
+strip so it does not cover the image. `--follow`, `--pip-camera`, `--pip-quad`
+and `--adjust` start with the corresponding views enabled, which is useful for
+an automated or scripted check.
 
 ### Calibrating in the console
 
@@ -258,18 +270,24 @@ remains useful for camera checks without an experiment session.
    capture rate, a 120×96 gaze map and the current gaze in stimulus pixels and
    normalized coordinates. A camera error leaves the experiment runnable and
    offers **Retry**.
-2. Press **F7**. The presenter shows the 3×3 grid, the active target in orange,
+2. Press **F3** (or **Adjust**) for the alignment view: the presenter and the
+   console show the full camera frame enlarged, everything outside the eye ROI
+   is dimmed and the ROI is outlined in orange. Move the camera until the eye
+   sits inside the box, then press **F3** again (presenter-only: **A**).
+   Adjusting is a pre-session check; it is disabled while a trial runs or a
+   calibration is active.
+3. Press **F7**. The presenter shows the 3×3 grid, the active target in orange,
    and the console shows target progress and collected frames. Each target
    settles for 800 ms, then 20 frames are collected within a 500–1500 ms window.
    The report (sample count and RMSE) stays on the presenter for 2 s.
-3. **Esc** cancels at any time. A cancelled or failed full calibration restores
+4. **Esc** cancels at any time. A cancelled or failed full calibration restores
    the previous model and buffer; a failed quick run keeps the last full report.
    Errors name the cause and the console states whether a calibration is still
    active.
-4. **F9** reruns a single center target. It requires an existing fit (calibrate
+5. **F9** reruns a single center target. It requires an existing fit (calibrate
    with F7 first). The console reports the new RMSE and the drift against the
    previous quick run, or against the full run for the first quick run.
-5. **F5** starts the experiment. With a fitted calibration, every trial is
+6. **F5** starts the experiment. With a fitted calibration, every trial is
 gated by an automatic quick recalibration: the next stimulus is composed, the
 session clock pauses, and one center target is shown over the blurred stimulus
 for the same settle/collect/report cycle as F9. When the run finishes, the
