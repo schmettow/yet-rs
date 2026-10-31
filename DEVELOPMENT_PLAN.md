@@ -168,15 +168,15 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D25** | **The UI framework lives only in `yet-egui`.** `yet-stim` owns the `OverlayBackend` trait and the layer-shell backend; `yet-egui` owns `EguiOverlay`. The binary selects and wires a backend. This avoids a dependency cycle and lets a different presenter replace egui later. | R4; reorganization decision |
 | **D26** | **Python workspaces are first-class.** A directory with `Config.csv` and `Stimuli/` loads without conversion; `SLIDE_TIME`, `SHUFFLE`/`SEED`, `STIM_FILE` and the `File` column map to the native model, results go to `Data/` with the `Yeta1` prefix, and an optional `config.toml` overrides machine settings. | 1.0 parity decision 2026-10-26 |
 | **D27** | **Camera selection is a session setting.** Enumeration is per platform (`linuxvideo` V4L2, `nokhwa` Windows/macOS). Changing the device reopens capture and invalidates calibration; selection is locked while a session or calibration is active. | 1.0 parity decision |
-| **D28** | **Follow is purely visual.** The gaze circle is appended to a temporary scene for painting and never changes the stored stimulus scene or CSV. Presenter-only mode has no console and exposes `F`/`Space`/`F7`/`F9`/`F8`/`Esc`. | 1.0 parity decision |
+| **D28** | **Follow is purely visual.** The gaze circle is appended to a temporary scene for painting and never changes the stored stimulus scene or CSV. Presenter-only mode has no console and exposes `F`/`P`/`Q` diagnostics inside the linear Space/Backspace/F11 flow; `Esc` is ignored there. | 1.0 parity decision; updated 2026-10-31 |
 | **D29** | **Per-trial quick recalibration is a controller gate, not an engine state.** Before a new trial is presented, the controller applies `TrialStarted`, pauses the engine at the same session time, runs `CalibrationRun::quick` over the blurred next stimulus, then resumes; the pause shifts the trial deadline by the recalibration duration. The pure `step` engine and the headless runner never calibrate on their own, so headless output stays deterministic. The gate is skipped without a fitted model. | Python parity decision 2026-10-30; `main.py` `prepareStimulus`/`Quick` |
 | **D30** | **Presenter PiP is purely visual and shares the preview capture.** Camera stream (bottom-right) and Quadbright means (bottom-left) are painted after the scene by `PresenterState`, outside `Scene`, so they never reach the CSV or a recorded scene. Toggles: console checkboxes, presenter-only `P`/`Q`, and `--pip-camera`/`--pip-quad`. `PreviewState::pip_stream`/`pip_quad` open the camera even when the console preview is off. | 1.0 parity decision |
 | **D31** | **Abort is recoverable in the console.** `ExperimentCommand::Reset` / `F4` returns `Finished` or `Aborted` to `Idle`, clears the session error and re-enables Start and Calibrate; the engine rejects Reset while Running or Paused. The plan, calibration model and result path are kept. | Usability finding 2026-10-30 |
 | **D32** | **Monitor layout is resolved after the first frame.** The console keeps the WM's initial placement (the screen where it was launched) and is then centered on that monitor using winit's monitor position, outer size and decorations, with a top margin so the title bar is reachable. If the configured presenter monitor equals the console monitor and another output exists, the presenter moves to the next monitor; explicit other-monitor configs are respected. Windowed presenters are centered on their monitor via `PresenterConfig::position_pt`. Wayland may ignore absolute positions; the compositor keeps the window on the active output. | Usability decisions 2026-10-30; `frame.winit_window()` |
 | **D33** | **Adjust is a pre-session camera alignment view.** It shows the full camera frame enlarged on the presenter and console, dims outside the eye ROI and outlines it. It is available while no trial runs and no calibration is active, blocks Start/Resume/Calibrate/Quick until it is closed, and is purely visual. Toggles: console button/**F3**, presenter step 2, launch `--adjust`. | Usability decision 2026-10-30 |
-| **D34** | **`yet-zero present` is a linear five-step flow.** Welcome → Adjust → Calibration → Stimuli → Debrief; **Space** forward, **Backspace** back, **F11** fullscreen (`Cmd+Ctrl+F` on macOS). Backspace in Stimuli pauses the engine and returns to Calibration; a full calibration is allowed while paused, and returning to Stimuli resumes the same session. The linear machine lives in the presenter app; the engine and controller stay UI-free. | Presenter-flow decision 2026-10-30 |
+| **D34** | **`yet-zero present` is a linear flow with a Backspace walk.** Welcome → Adjust → Calibration → Stimuli → Debrief; **Space** forward, **Backspace** back, **F11** fullscreen (`Cmd+Ctrl+F` on macOS). Backspace in Stimuli pauses the engine and starts the calibration grid itself (no instruction page); a full calibration is allowed while paused, and returning to Stimuli resumes the same session. Repeated Backspace continues Calibrate → Adjust → cancel confirmation → exit. The linear machine lives in the presenter app; the engine and controller stay UI-free. | Presenter-flow decision 2026-10-30; updated 2026-10-31 |
 | **D35** | **Welcome and debrief pages are workspace files.** `Intro.md` and `Debrief.md` in the workspace root are loaded into `LoadedExperiment`; absent files fall back to built-in pages so the flow is always complete. `yet-egui::markdown` renders a small subset (headings, paragraphs, lists, quotes, rules, inline emphasis/code) rather than adding a Markdown dependency. | Presenter-flow decision 2026-10-30 |
-| **D36** | **Adjust is mirrored and Esc is safe.** The adjust frame is painted with horizontally flipped UVs and the ROI outline is mirrored with it; the stored frame/features are unchanged. In presenter mode Esc never exits on the first press: it pauses, shows “Esc again to cancel session. N trials saved.”, and only a second Esc shuts down and flushes; Space/Backspace dismiss the prompt. | Usability decisions 2026-10-30 |
+| **D36** | **Adjust is mirrored and cancellation is deliberate.** The adjust frame is painted with horizontally flipped UVs and the ROI outline is mirrored with it; the stored frame/features are unchanged. Presenter mode never stops on Esc: stopping is the Backspace walk from Stimuli through Calibrate and Adjust to a “Sure you want to cancel the session? x/n trials saved.” page, where only another Backspace closes and flushes. Space returns to Adjust. | Usability decisions 2026-10-30/31 |
 
 ---
 
@@ -1057,8 +1057,9 @@ the experimenter immediate visual feedback on the presenter.
 
 **Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented,
 plus the follow-up window placement, Adjust and linear presenter work
-(D32–D36). 298 workspace tests pass (three ignored hardware tests); `fmt`,
-`check`, `test`, `clippy -D warnings` and `doc` are green.
+(D32–D36). 300 workspace tests pass (three ignored hardware tests); `fmt`,
+`check`, `test`, `clippy -D warnings` and `doc` are green. The Backspace walk is
+locked by pure `back_action` tests, independent of the GUI.
 
 - **The gate is controller-side (D29):** the console applies `TrialStarted`,
   pauses the engine at the same `SessionTime`, starts `CalibrationRun::quick`
@@ -1117,12 +1118,13 @@ plus the follow-up window placement, Adjust and linear presenter work
 - **Linear flow:** on the X11 workstation the demo walked through `Intro.md`, the
   adjust step, a full calibration (RMSE reported on the step page), the stimuli
   with per-trial quick recalibration, and the automatic `Debrief.md` page. A
-  Backspace during the stimuli paused the session and returned to calibration;
-  Space started a second full calibration while paused. F11 toggled between
-  fullscreen (1440×2560 on DP-3) and an 800×600 window and back. The adjust view
-  was visually confirmed as horizontally mirrored (ROI mirrored with the
-  frame). The first Escape paused Adjust and showed “Esc again to cancel
-  session. 0 trials saved.”; the second Escape closed the window.
+  Backspace during the stimuli paused the session and started the calibration
+  grid immediately; Space started a second full calibration while paused. F11
+  toggled between fullscreen (1440×2560 on DP-3) and an 800×600 window and back.
+  The adjust view was visually confirmed as horizontally mirrored (ROI mirrored
+  with the frame). The Backspace walk paused at Adjust and then showed “Sure you
+  want to cancel the session? 0/4 trials saved.”; another Backspace closed the
+  window (2026-10-31).
 
 ### Sprint 9 — Overlay core
 

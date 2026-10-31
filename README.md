@@ -257,25 +257,25 @@ workspace); there is no console. It runs a linear flow:
 
 The primary controls are **Space** (forward), **Backspace** (back) and **F11**
 (fullscreen; **Cmd+Ctrl+F** on macOS). Backspace in the stimulus step pauses
-the session and returns to calibration, so the experimenter can recalibrate or
-go one step further back to adjust the camera, then continue the same session
-with Space. `--adjust` starts directly at step 2. `Intro.md` and `Debrief.md`
-are read automatically when present; the built-in pages keep the flow complete
-without them.
+the session and starts a fresh calibration grid immediately. Repeating
+Backspace walks **Calibrate → Adjust → cancel confirmation → exit**: the
+confirmation says “Sure you want to cancel the session? x/n trials saved.” and
+only another Backspace closes the program (flushing the result). Space on the
+confirmation returns to Adjust and continues forward. **Esc is ignored in
+presenter mode**, so it cannot stop a running session by accident. `--adjust`
+starts directly at step 2. `Intro.md` and `Debrief.md` are read automatically
+when present; the built-in pages keep the flow complete without them.
 
 Diagnostic extras remain available but are not part of the linear flow:
-**F** toggles the follow circle, **P**/**Q** the camera/Quadbright
-picture-in-picture, and **Esc** stops the program. **Esc is safe:** the first
-press pauses the session and shows a confirmation with the number of trials
-already saved; a second Esc shuts down and flushes the result, while Space or
-Backspace continues the flow. The adjust view is horizontally mirrored, like a
-selfie preview, so moving the camera feels natural; the ROI outline is mirrored
-with it. The circle and PiP views are purely visual: they are composed for
-painting only and never change the trial scene or a CSV row. A small status
-strip shows calibration, PiP and camera state outside a running trial. The
-adjust view hides the status strip so it does not cover the image. `--follow`,
-`--pip-camera` and `--pip-quad` start with those views enabled, which is useful
-for an automated or scripted check.
+**F** toggles the follow circle and **P**/**Q** the camera/Quadbright
+picture-in-picture. The adjust view is horizontally mirrored, like a selfie
+preview, so moving the camera feels natural; the ROI outline is mirrored with
+it. The circle and PiP views are purely visual: they are composed for painting
+only and never change the trial scene or a CSV row. A small status strip shows
+calibration, PiP and camera state outside a running trial. The adjust view hides
+the status strip so it does not cover the image. `--follow`, `--pip-camera` and
+`--pip-quad` start with those views enabled, which is useful for an automated or
+scripted check.
 
 ### Custom welcome and debrief pages
 

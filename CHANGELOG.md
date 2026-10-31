@@ -56,10 +56,11 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - **Adjust view is mirrored:** the presenter and console show the full camera
   frame horizontally flipped (selfie-style), and the eye-ROI outline is mirrored
   with it. Presentation-only; the stored frame and features are unchanged.
-- **Esc asks for confirmation:** the first Escape in presenter mode pauses the
-  session and shows “Esc again to cancel session. N trials saved.”; a second
-  Escape shuts down and flushes the result. Space or Backspace dismisses the
-  prompt and continues the flow.
+- **Presenter mode stops through Backspace, not Esc.** From the stimulus step,
+  Backspace pauses the session and starts the calibration grid immediately;
+  further Backspace presses walk Calibrate → Adjust → “Sure you want to cancel
+  the session? x/n trials saved.” → exit, flushing the result. Esc is ignored in
+  presenter mode, so it cannot stop a running session by accident.
 - `yet-zero run`/`present`: added `--adjust`; presenter-only mode now runs the
   linear flow with Space/Backspace/F11 instead of the old F7/F9/F8 shortcuts.
 - `yet-stim`: `LoadedExperiment` now carries optional `intro` and `debrief`
@@ -78,15 +79,15 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - **Linear presenter flow:** `yet-zero present` walks through
   Welcome → Adjust → Calibration → Stimuli → Debrief with **Space** (forward),
   **Backspace** (back) and **F11** (fullscreen; **Cmd+Ctrl+F** on macOS).
-  Backspace in the stimulus step pauses the session and returns to calibration
-  (one step further: adjust), so the same session continues afterwards. Full
-  calibration is now also allowed while paused.
+  Backspace in the stimulus step pauses the session and starts the calibration
+  grid itself (no instruction page), so the same session continues afterwards.
+  Full calibration is now also allowed while paused.
 - **Custom welcome and debrief pages:** optional `Intro.md`/`Debrief.md` in the
   workspace root are rendered at the first and last step by the new
   `yet-egui::markdown` subset renderer; built-in pages are used when absent.
   `examples/demo` ships both files.
 - `yet-zero present` no longer advertises the F7/F9/F8 shortcuts; `F`/`P`/`Q`
-  and `Esc` remain as diagnostic extras.
+  remain as diagnostic extras, and `Esc` is ignored.
 - Console **Reset** button (F4): returns a finished or aborted session to
   `Idle`, clears the session error and re-enables Start and Calibrate, so the
   experimenter no longer has to restart the application after an abort.

@@ -12,10 +12,10 @@
 //! return to calibration (and from there to the adjust view) and continue the
 //! same session afterwards.
 //!
-//! `F` (follow), `P`/`Q` (camera/Quadbright PiP) and `Escape` (stop with
-//! confirmation) remain available as diagnostic keys but are not part of the
-//! linear flow. A first Escape pauses the session and shows how many trials
-//! were saved; a second Escape shuts down and flushes the result file.
+//! `F` (follow) and `P`/`Q` (camera/Quadbright PiP) remain available as
+//! diagnostic keys but are not part of the linear flow. `Escape` is ignored in
+//! presenter mode; stopping the program is deliberately a Backspace walk:
+//! Stimuli → Calibration → Adjust → “cancel?” → exit.
 
 use std::path::Path;
 use std::sync::mpsc::Sender;
@@ -59,6 +59,7 @@ enum Step {
     Calibrate,
     Stimuli,
     Debrief,
+    ConfirmCancel,
 }
 
 impl Step {
@@ -70,6 +71,7 @@ impl Step {
             Self::Calibrate => 3,
             Self::Stimuli => 4,
             Self::Debrief => 5,
+            Self::ConfirmCancel => 6,
         }
     }
 
@@ -81,6 +83,7 @@ impl Step {
             Self::Calibrate => "calibration",
             Self::Stimuli => "stimuli",
             Self::Debrief => "debrief",
+            Self::ConfirmCancel => "cancel",
         }
     }
 }
@@ -258,7 +261,6 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         calibrate_started: false,
         calibration_seen_active: false,
         close_requested: false,
-        escape_confirm: false,
     };
     let native = eframe::NativeOptions {
         viewport: presenter_viewport(
@@ -294,13 +296,36 @@ const fn start_step(adjust: bool) -> Step {
     }
 }
 
-/// Human-readable trial count for the Esc confirmation.
-fn trials_saved_label(trials: usize) -> String {
-    if trials == 1 {
-        "1 trial saved".to_owned()
-    } else {
-        format!("{trials} trials saved")
+/// What Backspace does in the linear presenter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackAction {
+    /// Welcome and debrief have no previous step.
+    Stay,
+    /// Move to another step of the flow.
+    Go(Step),
+    /// Enter calibration and start the grid immediately.
+    Calibrate,
+    /// Close the presenter and flush the result.
+    Exit,
+}
+
+/// The Backspace walk, kept pure so the flow survives UI changes.
+///
+/// `Stimuli` deliberately maps to `Calibrate` rather than the instruction
+/// page: Backspace must land on the grid itself.
+const fn back_action(step: Step) -> BackAction {
+    match step {
+        Step::Welcome | Step::Debrief => BackAction::Stay,
+        Step::Adjust => BackAction::Go(Step::ConfirmCancel),
+        Step::Calibrate => BackAction::Go(Step::Adjust),
+        Step::Stimuli => BackAction::Calibrate,
+        Step::ConfirmCancel => BackAction::Exit,
     }
+}
+
+/// Human-readable progress for the cancel confirmation.
+fn saved_label(completed: usize, total: usize) -> String {
+    format!("{completed}/{total} trials saved")
 }
 
 fn presenter_viewport(
@@ -330,7 +355,6 @@ struct PresenterOnlyApp {
     calibrate_started: bool,
     calibration_seen_active: bool,
     close_requested: bool,
-    escape_confirm: bool,
 }
 
 impl eframe::App for PresenterOnlyApp {
@@ -340,8 +364,8 @@ impl eframe::App for PresenterOnlyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let (space, backspace, toggle_fullscreen, escape, follow, pip_stream, pip_quad) = ctx
-            .input(|input| {
+        let (space, backspace, toggle_fullscreen, follow, pip_stream, pip_quad) =
+            ctx.input(|input| {
                 let pressed = |key| {
                     input.events.iter().any(|event| {
                         matches!(
@@ -361,23 +385,12 @@ impl eframe::App for PresenterOnlyApp {
                     pressed(egui::Key::Space),
                     pressed(egui::Key::Backspace),
                     pressed(egui::Key::F11) || mac_fullscreen,
-                    pressed(egui::Key::Escape),
                     pressed(egui::Key::F),
                     pressed(egui::Key::P),
                     pressed(egui::Key::Q),
                 )
             });
 
-        if escape {
-            if self.escape_confirm {
-                self.close();
-            } else {
-                if lock_console(&self.shared).phase == Phase::Running {
-                    let _ = self.commands.send(ExperimentCommand::Pause);
-                }
-                self.escape_confirm = true;
-            }
-        }
         if toggle_fullscreen {
             let fullscreen = ctx
                 .input(|input| input.viewport().fullscreen)
@@ -396,16 +409,11 @@ impl eframe::App for PresenterOnlyApp {
             let mut console = lock_console(&self.shared);
             console.preview.pip_quad = !console.preview.pip_quad;
         }
-        if !escape {
-            if self.escape_confirm && (space || backspace) {
-                self.escape_confirm = false;
-            }
-            if space {
-                self.forward();
-            }
-            if backspace {
-                self.backward();
-            }
+        if space {
+            self.forward();
+        }
+        if backspace {
+            self.backward();
         }
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -415,9 +423,6 @@ impl eframe::App for PresenterOnlyApp {
 
         self.presenter.show_root(ui);
         self.draw_step(ui);
-        if self.escape_confirm {
-            self.draw_escape_confirm(ui);
-        }
 
         // Keep the adjust view, calibration and paused states responsive.
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -433,26 +438,31 @@ impl PresenterOnlyApp {
             Step::Calibrate => self.forward_calibration(),
             Step::Stimuli => self.forward_stimuli(),
             Step::Debrief => self.close(),
+            Step::ConfirmCancel => self.enter(Step::Adjust),
         }
     }
 
     /// Go back one step. From the stimulus step this pauses the session.
     fn backward(&mut self) {
-        match self.step {
-            Step::Welcome | Step::Debrief => {}
-            Step::Adjust => self.enter(Step::Welcome),
-            Step::Calibrate => {
+        match back_action(self.step) {
+            BackAction::Stay => {}
+            BackAction::Go(Step::Adjust) => {
                 if lock_console(&self.shared).calibration.active {
                     let _ = self.commands.send(ExperimentCommand::CancelCalibration);
                 }
                 self.enter(Step::Adjust);
             }
-            Step::Stimuli => {
+            BackAction::Go(step) => self.enter(step),
+            BackAction::Calibrate => {
                 // Cancel an in-flight quick recalibration first, then pause.
                 let _ = self.commands.send(ExperimentCommand::CancelCalibration);
                 let _ = self.commands.send(ExperimentCommand::Pause);
                 self.enter(Step::Calibrate);
+                // Backspace from a stimulus lands on the calibration grid, not
+                // on the instruction page.
+                self.begin_calibration();
             }
+            BackAction::Exit => self.close(),
         }
     }
 
@@ -468,6 +478,10 @@ impl PresenterOnlyApp {
         self.calibrate_started = false;
         self.calibration_seen_active = false;
         self.step = step;
+
+        if step == Step::ConfirmCancel && lock_console(&self.shared).phase == Phase::Running {
+            let _ = self.commands.send(ExperimentCommand::Pause);
+        }
 
         if step == Step::Stimuli {
             let phase = lock_console(&self.shared).phase;
@@ -516,6 +530,11 @@ impl PresenterOnlyApp {
             return;
         }
         // Start, or re-send if the command has not been picked up yet.
+        self.begin_calibration();
+    }
+
+    /// Request a full calibration and mark it as started for page state.
+    fn begin_calibration(&mut self) {
         let _ = self.commands.send(ExperimentCommand::Calibrate);
         self.calibrate_started = true;
     }
@@ -581,6 +600,7 @@ impl PresenterOnlyApp {
             Step::Calibrate => self.draw_calibration(ui),
             Step::Stimuli => self.draw_stimulus_status(ui),
             Step::Debrief => self.draw_debrief(ui),
+            Step::ConfirmCancel => self.draw_cancel_page(ui),
         }
     }
 
@@ -593,48 +613,21 @@ impl PresenterOnlyApp {
         self.draw_page(ui, &text, "Step 5 · Debrief · Space close · F11 fullscreen");
     }
 
-    /// Confirmation overlay for the emergency Esc key.
-    fn draw_escape_confirm(&self, ui: &mut egui::Ui) {
-        let trials = lock_console(&self.shared).trials_completed;
-        let message = format!(
-            "Esc again to cancel session. {}.",
-            trials_saved_label(trials)
+    /// Confirmation page reached by Backspace from the adjust step.
+    fn draw_cancel_page(&self, ui: &mut egui::Ui) {
+        let (completed, total) = {
+            let console = lock_console(&self.shared);
+            (console.trials_completed, console.trials_total)
+        };
+        let text = format!(
+            "# Cancel the session?\n\nSure you want to cancel the session? **{}**.\n\n\
+             Backspace exits and saves the result. Space returns to the camera adjustment.",
+            saved_label(completed, total)
         );
-        let rect = ui.max_rect();
-        let scale = (rect.width() / 1500.0).clamp(0.8, 2.0);
-        let box_rect = egui::Rect::from_center_size(
-            rect.center(),
-            egui::vec2((rect.width() * 0.66).min(780.0 * scale), 190.0 * scale),
-        );
-        let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(150));
-        painter.rect_filled(box_rect, 10.0, egui::Color32::from_rgb(28, 28, 28));
-        painter.rect_stroke(
-            box_rect,
-            10.0,
-            egui::Stroke::new(1.5, egui::Color32::from_gray(110)),
-            egui::StrokeKind::Inside,
-        );
-        painter.text(
-            box_rect.center_top() + egui::vec2(0.0, 24.0 * scale),
-            egui::Align2::CENTER_TOP,
-            "Stop the session?",
-            egui::FontId::proportional(24.0 * scale),
-            egui::Color32::WHITE,
-        );
-        painter.text(
-            box_rect.center() + egui::vec2(0.0, -6.0 * scale),
-            egui::Align2::CENTER_CENTER,
-            message,
-            egui::FontId::proportional(18.0 * scale),
-            egui::Color32::WHITE,
-        );
-        painter.text(
-            box_rect.center_bottom() + egui::vec2(0.0, -18.0 * scale),
-            egui::Align2::CENTER_BOTTOM,
-            "Space continues · Backspace goes back · F11 fullscreen",
-            egui::FontId::proportional(14.0 * scale),
-            egui::Color32::from_gray(190),
+        self.draw_page(
+            ui,
+            &text,
+            "Backspace exits · Space back to adjust · F11 fullscreen",
         );
     }
 
@@ -804,8 +797,8 @@ mod tests {
     use eframe::egui;
 
     use super::{
-        presenter_viewport, start_step, trials_saved_label, PresenterOptions, Step,
-        DEFAULT_DEBRIEF, DEFAULT_INTRO,
+        back_action, presenter_viewport, saved_label, start_step, BackAction, PresenterOptions,
+        Step, DEFAULT_DEBRIEF, DEFAULT_INTRO,
     };
 
     #[test]
@@ -833,6 +826,38 @@ mod tests {
         assert_eq!(Step::Stimuli.index(), 4);
         assert_eq!(Step::Debrief.index(), 5);
         assert_eq!(Step::Debrief.label(), "debrief");
+        assert_eq!(Step::ConfirmCancel.label(), "cancel");
+    }
+
+    #[test]
+    fn backspace_walks_stimuli_to_calibration_then_adjust_then_cancel() {
+        let mut step = Step::Stimuli;
+        let mut visited = Vec::new();
+        loop {
+            match back_action(step) {
+                BackAction::Calibrate => {
+                    visited.push(Step::Calibrate);
+                    step = Step::Calibrate;
+                }
+                BackAction::Go(next) => {
+                    visited.push(next);
+                    step = next;
+                }
+                BackAction::Exit => break,
+                BackAction::Stay => panic!("unexpected stay from {step:?}"),
+            }
+        }
+
+        assert_eq!(
+            visited,
+            vec![Step::Calibrate, Step::Adjust, Step::ConfirmCancel]
+        );
+    }
+
+    #[test]
+    fn backspace_does_not_leave_the_outer_pages() {
+        assert_eq!(back_action(Step::Welcome), BackAction::Stay);
+        assert_eq!(back_action(Step::Debrief), BackAction::Stay);
     }
 
     #[test]
@@ -842,10 +867,9 @@ mod tests {
     }
 
     #[test]
-    fn the_trial_saved_wording_handles_singular_and_plural() {
-        assert_eq!(trials_saved_label(0), "0 trials saved");
-        assert_eq!(trials_saved_label(1), "1 trial saved");
-        assert_eq!(trials_saved_label(3), "3 trials saved");
+    fn the_trial_saved_wording_shows_progress() {
+        assert_eq!(saved_label(0, 18), "0/18 trials saved");
+        assert_eq!(saved_label(2, 18), "2/18 trials saved");
     }
 
     #[test]
