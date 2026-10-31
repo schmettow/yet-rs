@@ -59,16 +59,20 @@ sudo apt update
 sudo apt install build-essential pkg-config libasound2-dev
 ```
 
+`build-essential` also installs a C++ compiler, which yet-zero does not use;
+installing `gcc`, `pkg-config` and `libasound2-dev` is enough if you prefer the
+minimal set.
+
 Linux, Fedora:
 
 ```sh
-sudo dnf install gcc gcc-c++ pkgconf-pkg-config alsa-lib-devel
+sudo dnf install gcc pkgconf-pkg-config alsa-lib-devel
 ```
 
 Linux, Arch:
 
 ```sh
-sudo pacman -S base-devel pkgconf alsa-lib
+sudo pacman -S gcc pkgconf alsa-lib
 ```
 
 macOS:
@@ -77,12 +81,20 @@ macOS:
 xcode-select --install
 ```
 
-Windows: install the Visual Studio Build Tools with the **Desktop development
-with C++** workload; Rust uses the MSVC linker.
+This installs the Xcode Command Line Tools, which provide the system linker and
+the macOS SDK. A full Xcode installation is not required.
 
-The ALSA package is required because `rodio`/`cpal` links against the system
-audio library. A working GL or Vulkan driver is required at runtime for the
-egui/wgpu windows.
+Windows: install the **Visual Studio Build Tools** with the **Desktop
+development with C++** workload, or just the MSVC build tools and Windows SDK
+components. Rust uses the MSVC linker (`link.exe`); yet-zero contains no C or
+C++ source.
+
+**Pure Rust does not mean no native toolchain.** Rust still invokes the platform
+linker, and a few dependencies bind system libraries: ALSA on Linux,
+CoreAudio/AVFoundation on macOS, and Win32/Media Foundation on Windows. There is
+no OpenCV, no C/C++ source to compile and no CMake step. The ALSA package is
+required because `rodio`/`cpal` links against the system audio library. A working
+GL or Vulkan driver is required at runtime for the egui/wgpu windows.
 
 ### 3. Install yet-zero
 
@@ -90,6 +102,9 @@ egui/wgpu windows.
 cargo install --locked yet-zero
 yet-zero --help
 ```
+
+`cargo install` builds from source, so the linker and platform SDK from step 2
+must be present on the machine that installs the crate.
 
 `cargo install` places the binary in `~/.cargo/bin`. If `yet-zero` is not found,
 add that directory to `PATH` (rustup normally does this) or restart the shell.
@@ -324,6 +339,11 @@ yet-zero overlay <experiment-dir> [--seconds <s>]
 **`package requires rustc 1.95`**
 Update Rust with `rustup update stable`.
 
+**`link.exe not found` or a linker error**
+The platform linker or SDK from step 2 is missing. Rust ships the compiler but
+uses the system linker: MSVC Build Tools on Windows, the Xcode Command Line
+Tools on macOS and `gcc` on Linux.
+
 **No camera found or permission denied**
 Run `yet-zero devices`. On Linux, add your user to the `video` group and log in
 again. On macOS, grant camera access. On Windows, enable camera access for
@@ -386,7 +406,7 @@ Both the Python prototype and this crate install a `yet-zero` executable. Use
 ## License
 
 GPL-3.0-only. Portions of the logic are derived from the Apache-2.0 Python
-`yet_zero` prototype. See the repository `LICENSE` and `README` for details.
+`yet_zero` prototype. See `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.md`.
 
 ## Links
 

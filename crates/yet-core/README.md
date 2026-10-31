@@ -89,4 +89,4 @@ yet-zero -> yet-egui -> yet-stim -> yet-core
 ## License
 
 GPL-3.0-only. Portions of the logic are derived from the Apache-2.0 Python
-`yet_zero` prototype. See the repository `LICENSE` and `README` for details.
+`yet_zero` prototype. See `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.md`.

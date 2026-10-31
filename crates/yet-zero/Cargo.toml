@@ -2,14 +2,16 @@
 
 [package]
 name = "yet-zero"
-description = "Yet-UI: the eye-tracking experiment application"
+description = "Webcam-based eye-tracking experiment runner with console, presenter and gaze overlay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish = false
+readme = "README.md"
+keywords = ["eye-tracking", "gaze", "experiment", "webcam", "cli"]
+categories = ["science", "computer-vision", "command-line-utilities", "gui"]
 
 [lib]
 name = "yet_zero"

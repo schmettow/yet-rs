@@ -9,6 +9,39 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- No changes yet.
+
+## [0.1.0] - 2026-10-31
+
+First public release. The workspace contains four published crates:
+`yet-core`, `yet-stim`, `yet-egui` and the `yet-zero` application. The release
+reaches feature parity with the Python `yet_zero` prototype and loads its
+workspaces unchanged. The experimenter console adds a multi-monitor workflow
+that the prototype does not have.
+
+### Quality
+
+- `cargo llvm-cov --workspace --all-features`: 57.75% region coverage
+  (7,634 of 18,070 regions), 64.78% function coverage and 57.30% line coverage
+  (5,241 of 12,275 lines). Doctests are not measured on stable Rust. The
+  uncovered remainder is concentrated in GUI event loops, OS camera adapters,
+  the Wayland layer-shell path and the interactive CLI, which are exercised on
+  hardware or by the ignored smoke tests.
+- `cargo test --workspace --all-features --locked`: 313 passed, 0 failed,
+  3 ignored (real camera, tracker hardware and audio output).
+- `cargo fmt --all --check`, `cargo check --workspace --all-targets
+  --all-features --locked`, `cargo clippy --workspace --all-targets
+  --all-features --locked -- -D warnings` and `cargo doc --workspace --no-deps
+  --all-features --locked` pass.
+- `cargo package --workspace --list --allow-dirty` includes `README.md`,
+  `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.md` in every crate and omits
+  the repository-only `workspace_demos` test.
+- `cargo publish --workspace --dry-run --allow-dirty` packages and verifies all
+  four crates in dependency order. The only warning is the intentional
+  exclusion of `tests/workspace_demos.rs` from the `yet-stim` package.
+
+### Changed
+
 - **The experimenter console follows the presenter's setup order.**
   `1 · Camera adjustment` and `2 · Calibration` come before `3 · Experiment`;
   Start is disabled until the adjust view has been finished and a calibration
@@ -34,8 +67,8 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   the ROI is not written back to `config.toml` yet.
   The default eye region is now 2:1 with 90% of the frame width
   (`[0.05, 0.275, 0.9, 0.45]`).
-- **Workspace reorganized from eight crates into three publishable libraries
-  and one binary**, with a strict dependency direction
+- **Workspace reorganized from eight crates into three libraries plus the
+  `yet-zero` application**, with a strict dependency direction
   `yet-zero -> yet-egui -> yet-stim -> yet-core`.
 - `yet-core` is now `#![no_std]` with `alloc`. It keeps only the abstract gaze
   essentials (time/clock, camera roles and `FrameSet`, grayscale frames and
@@ -50,7 +83,7 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   and `EguiOverlay`. It depends on `yet-stim` and never on the binary crate.
 - `yet-zero` replaces the `yet-app` binary and owns camera capture, the session
   driver, the headless runner, the CLI and backend selection. It keeps a
-  library target for tests only and is `publish = false`.
+  library target for integration tests and is published as `yet-zero`.
 - `yet-egui`: the deferred overlay viewport now requests its own repaint at
   30 Hz. A 30 s X11 smoke raised the measured paint rate from 4.2 to 27.4
   painted scenes/s with bounded coalescing (`requested=868 painted=823

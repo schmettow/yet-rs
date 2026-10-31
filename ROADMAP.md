@@ -33,7 +33,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   counters and a soak summary. The Windows/macOS runtime matrix, the real
   KDE/Sway/naked visual matrix and the 60-minute focus/soak gate remain open;
   GNOME is documented as unsupported.
-- [ ] **M7 v0.1.0 (S11)** — release checklist, pilot data and complete docs.
+- [ ] **M7 v0.1.0 (S11)** — publication metadata, per-crate READMEs, license
+  notices, packaging and the crates.io dry run are prepared. The 2–3-person
+  pilot data, a human calibration RMSE and the Windows/macOS runtime matrix
+  remain open.
 
 ## Sprint status
 
@@ -149,7 +152,12 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   and Reset while paused or terminal. The Quadbright view moved from the
   presenter PiP to the background of the console gaze-prediction viewer;
   presenter `Q` and `--pip-quad` were removed.
-- **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
+- **Publication preparation (2026-10-31)** — metadata, per-crate READMEs,
+  license and Apache notice files, package excludes for repository-only tests,
+  and the crates.io dry run. `cargo publish --workspace` publishes the four
+  crates in dependency order.
+- **Next:** Windows/macOS runtime validation, the 60-minute overlay soak and
+  the 2–3-person pilot.
 
 ## Post-v1
 

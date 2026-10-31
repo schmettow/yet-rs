@@ -9,6 +9,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["eye-tracking", "experiment", "stimulus", "media", "audio"]
+categories = ["science", "multimedia"]
+exclude = ["tests/workspace_demos.rs"]
 
 [dependencies]
 yet-core = { workspace = true, features = ["yet-zero"] }
