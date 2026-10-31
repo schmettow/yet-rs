@@ -29,10 +29,10 @@ fn camera_protocol_types_are_send() {
 }
 
 #[test]
-fn the_default_eye_region_is_the_centered_half() {
+fn the_default_eye_region_is_two_to_one() {
     assert_eq!(
         info(640, 480).eye_region(DEFAULT_EYE_REGION),
-        Some(EyeRegion::new(160, 120, 320, 240))
+        Some(EyeRegion::new(32, 132, 576, 216))
     );
 }
 
@@ -40,7 +40,7 @@ fn the_default_eye_region_is_the_centered_half() {
 fn an_odd_resolution_keeps_the_rounded_region_inside_the_frame() {
     assert_eq!(
         info(641, 481).eye_region(DEFAULT_EYE_REGION),
-        Some(EyeRegion::new(160, 120, 321, 241))
+        Some(EyeRegion::new(32, 132, 577, 217))
     );
 }
 

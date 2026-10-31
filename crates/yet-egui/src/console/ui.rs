@@ -19,8 +19,8 @@ use crate::presenter::AdjustFrame;
 
 use super::command::ExperimentCommand;
 use super::state::{
-    adjust_eye_region, CameraChoice, ConsoleState, LogLevel, PresenterStatus, PreviewFrame,
-    EYE_REGION_MOVE_STEP, EYE_REGION_SIZE_STEP,
+    adjust_eye_region, resize_eye_region, CameraChoice, ConsoleState, LogLevel, PresenterStatus,
+    PreviewFrame, EYE_REGION_MOVE_STEP, EYE_REGION_SIZE_STEP,
 };
 
 /// Fallback number of monitor choices when the platform reports no monitors.
@@ -654,11 +654,12 @@ impl ConsoleUi {
             egui::FontId::proportional(14.0),
         );
         ui.label(
-            "Move the camera, or resize with + / − and move with the arrow keys. F3 finishes.",
+            "Move the camera, or + / − to scale · Ctrl+←/→ width · Ctrl+↑/↓ height · arrows move. F3 finishes.",
         );
         let [x, y, width, height] = frame.roi;
+        let ratio = if height > 0.0 { width / height } else { 0.0 };
         ui.label(format!(
-            "Eye ROI x {:.0}% · y {:.0}% · {:.0}% × {:.0}%",
+            "Eye ROI x {:.0}% · y {:.0}% · {:.0}% × {:.0}% · {ratio:.2}:1",
             x * 100.0,
             y * 100.0,
             width * 100.0,
@@ -1069,7 +1070,7 @@ impl ConsoleUi {
         }
 
         if state.preview.adjust && !ui.ctx().egui_wants_keyboard_input() {
-            let (left, right, up, down, grow, shrink) = ui.input(|input| {
+            let (left, right, up, down, grow, shrink, ctrl) = ui.input(|input| {
                 (
                     input.key_pressed(egui::Key::ArrowLeft),
                     input.key_pressed(egui::Key::ArrowRight),
@@ -1077,14 +1078,27 @@ impl ConsoleUi {
                     input.key_pressed(egui::Key::ArrowDown),
                     input.key_pressed(egui::Key::Plus) || input.key_pressed(egui::Key::Equals),
                     input.key_pressed(egui::Key::Minus),
+                    input.modifiers.ctrl || input.modifiers.command,
                 )
             });
             if left || right || up || down || grow || shrink {
-                let dx = (right as i32 - left as i32) as f32 * EYE_REGION_MOVE_STEP;
-                let dy = (down as i32 - up as i32) as f32 * EYE_REGION_MOVE_STEP;
-                let dsize = (grow as i32 - shrink as i32) as f32 * EYE_REGION_SIZE_STEP;
                 let region = if let Some(frame) = state.preview.adjust_frame.as_mut() {
-                    let region = adjust_eye_region(frame.roi, dx, dy, dsize);
+                    let mut region = frame.roi;
+                    if grow || shrink {
+                        let dsize = (grow as i32 - shrink as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        region = adjust_eye_region(region, 0.0, 0.0, dsize);
+                    }
+                    if ctrl {
+                        let dw = (right as i32 - left as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        let dh = (up as i32 - down as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        region = resize_eye_region(region, dw, dh);
+                    } else {
+                        // The adjust view is mirrored horizontally, so the
+                        // arrow keys must move the ROI in display space.
+                        let dx = (left as i32 - right as i32) as f32 * EYE_REGION_MOVE_STEP;
+                        let dy = (down as i32 - up as i32) as f32 * EYE_REGION_MOVE_STEP;
+                        region = adjust_eye_region(region, dx, dy, 0.0);
+                    }
                     frame.roi = region;
                     Some(region)
                 } else {
@@ -1332,7 +1346,7 @@ mod tests {
     }
 
     #[test]
-    fn the_adjust_view_edits_the_eye_region() {
+    fn the_adjust_view_mirrors_horizontal_eye_region_movement() {
         let ctx = egui::Context::default();
         let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
         state.preview.adjust = true;
@@ -1361,8 +1375,69 @@ mod tests {
         output.textures_delta.clear();
 
         let region = state.eye_region_request.expect("an ROI request");
-        assert!((region[0] - 0.26).abs() < 1e-6, "{region:?}");
+        assert!((region[0] - 0.24).abs() < 1e-6, "{region:?}");
         assert_eq!(state.preview.adjust_frame.as_ref().unwrap().roi, region);
+
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::ArrowLeft,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..Default::default()
+        };
+        let mut second = ctx.run_ui(input, |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &[]);
+        });
+        second.textures_delta.clear();
+        let region = state.eye_region_request.expect("an ROI request");
+        assert!((region[0] - 0.25).abs() < 1e-6, "{region:?}");
+    }
+
+    #[test]
+    fn control_arrows_resize_the_eye_region_sides() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.preview.adjust = true;
+        state.preview.adjust_frame = Some(AdjustFrame {
+            width: 4,
+            height: 2,
+            data: Arc::from(vec![0_u8; 8]),
+            generation: 1,
+            roi: [0.25, 0.25, 0.5, 0.5],
+        });
+        let mut console = ConsoleUi::default();
+        let input = egui::RawInput {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::ArrowRight,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        ctrl: true,
+                        ..Default::default()
+                    },
+                },
+            ],
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &[]);
+        });
+        output.textures_delta.clear();
+
+        let region = state.eye_region_request.expect("an ROI request");
+        assert!(region[2] > 0.5, "width grew: {region:?}");
+        assert!(region[0] < 0.25, "the center stayed fixed: {region:?}");
+        assert_eq!(region[3], 0.5, "height unchanged: {region:?}");
     }
 
     #[test]

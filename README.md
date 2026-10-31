@@ -265,8 +265,10 @@ the desktop or a terminal. It runs a linear flow:
 
 1. **Welcome** — `Intro.md` from the workspace root, or a built-in default.
 2. **Adjust** — the enlarged camera view with the eye ROI outlined. Use
-   **+**/**−** to resize the frame and the arrow keys to move it; the console
-   shows the current ROI percentages.
+   **+**/**−** to scale the frame, **Ctrl+←/→** to change the width and
+   **Ctrl+↑/↓** the height, and the arrow keys to move it; the console shows
+   the current ROI percentages and ratio. The default frame is 2:1 with 90% of
+   the frame width.
 3. **Calibration** — Space runs the full 3×3 calibration; the step waits for
    the report and then continues.
 4. **Stimuli** — starts the session and runs every trial, including the
@@ -289,9 +291,10 @@ Diagnostic extras remain available but are not part of the linear flow:
 **F** toggles the follow circle and **P** the camera picture-in-picture. The
 adjust view is horizontally mirrored, like a selfie preview, so moving the camera
 feels natural; the ROI outline is mirrored with it. In the adjust step,
-**+**/**−** resize the eye frame and the arrow keys move it. The circle and PiP
-view are purely visual: they are composed for painting only and never change the
-trial scene or a CSV row. A small status strip shows calibration, PiP and camera state
+**+**/**−** scale the eye frame, **Ctrl+←/→** change its width and **Ctrl+↑/↓**
+its height, and the arrow keys move it; horizontal movement follows the mirrored
+preview. The circle and PiP view are purely visual: they are composed for
+painting only and never change the trial scene or a CSV row. A small status strip shows calibration, PiP and camera state
 outside a running trial. The adjust view hides the status strip so it does not
 cover the image. `--follow` and `--pip-camera` start with those views enabled,
 which is useful for an automated or scripted check.
@@ -320,9 +323,11 @@ remains useful for camera checks without an experiment session.
    console show the full camera frame enlarged, everything outside the eye ROI
    is dimmed and the ROI is outlined in orange. Move the camera until the eye
    sits inside the box. You can also edit the eye frame live: **+**/**−**
-   resize it and the arrow keys move it; the console reports the ROI
-   percentages. Changing the ROI invalidates a fitted calibration, so
-   recalibrate afterwards. Press **F3** again to finish. Adjusting is available
+   scale it uniformly, **Ctrl+←/→** changes the width, **Ctrl+↑/↓** the height,
+   and the arrow keys move it; the console reports the ROI percentages and
+   ratio. Horizontal arrows follow the mirrored preview, so pressing left moves
+   the frame left on screen. Changing the ROI invalidates a fitted calibration,
+   so recalibrate afterwards. Press **F3** again to finish. Adjusting is available
    while idle, paused or after a session; pause a running session first. The ROI
    applies to the running session immediately and is not written back to
    `config.toml` yet.
@@ -482,7 +487,7 @@ width = 640
 height = 480
 fps = 30
 format = "yuyv"               # auto, gray, yuyv or mjpeg
-eye_region = [0.25, 0.25, 0.5, 0.5]   # normalized x, y, width, height
+eye_region = [0.05, 0.275, 0.9, 0.45]   # 2:1, 90% width, centered
 ```
 
 The Yet camera is the **GEMBIRD/AppoTech UVC** device, usually `/dev/video2`; it

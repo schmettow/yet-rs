@@ -183,13 +183,27 @@ pub const EYE_REGION_SIZE_STEP: f32 = 0.02;
 /// result stays inside the frame and never gets smaller than
 /// [`MIN_EYE_REGION_SIZE`].
 pub fn adjust_eye_region(region: [f32; 4], dx: f32, dy: f32, dsize: f32) -> [f32; 4] {
+    let [x, y, width, height] = resize_eye_region(region, dsize, dsize);
+    [
+        (x + dx).clamp(0.0, 1.0 - width),
+        (y + dy).clamp(0.0, 1.0 - height),
+        width,
+        height,
+    ]
+}
+
+/// Resize the two sides independently, keeping the center in place.
+///
+/// `dw` changes the width and `dh` the height. Both sides are clamped to
+/// [`MIN_EYE_REGION_SIZE`] and the frame.
+pub fn resize_eye_region(region: [f32; 4], dw: f32, dh: f32) -> [f32; 4] {
     let [x, y, width, height] = region;
     let center_x = x + width / 2.0;
     let center_y = y + height / 2.0;
-    let new_width = (width + dsize).clamp(MIN_EYE_REGION_SIZE, 1.0);
-    let new_height = (height + dsize).clamp(MIN_EYE_REGION_SIZE, 1.0);
-    let new_x = (center_x - new_width / 2.0 + dx).clamp(0.0, 1.0 - new_width);
-    let new_y = (center_y - new_height / 2.0 + dy).clamp(0.0, 1.0 - new_height);
+    let new_width = (width + dw).clamp(MIN_EYE_REGION_SIZE, 1.0);
+    let new_height = (height + dh).clamp(MIN_EYE_REGION_SIZE, 1.0);
+    let new_x = (center_x - new_width / 2.0).clamp(0.0, 1.0 - new_width);
+    let new_y = (center_y - new_height / 2.0).clamp(0.0, 1.0 - new_height);
     [new_x, new_y, new_width, new_height]
 }
 
@@ -602,7 +616,8 @@ mod tests {
     use yet_stim::{CalibrationPhase, CalibrationSnapshot, Phase};
 
     use super::{
-        adjust_eye_region, CameraChoice, ConsoleState, LogLevel, MAX_LOG_LINES, MIN_EYE_REGION_SIZE,
+        adjust_eye_region, resize_eye_region, CameraChoice, ConsoleState, LogLevel, MAX_LOG_LINES,
+        MIN_EYE_REGION_SIZE,
     };
 
     fn state() -> ConsoleState {
@@ -646,6 +661,21 @@ mod tests {
             adjust_eye_region(region, 0.0, 0.0, -0.25),
             [0.375, 0.375, 0.25, 0.25]
         );
+    }
+
+    #[test]
+    fn the_two_eye_region_sides_can_be_resized_independently() {
+        let region = [0.25, 0.25, 0.5, 0.5];
+
+        assert_eq!(
+            resize_eye_region(region, 0.25, -0.25),
+            [0.125, 0.375, 0.75, 0.25]
+        );
+        let clamped = resize_eye_region([0.05, 0.275, 0.9, 0.45], 0.5, 0.5);
+        assert_eq!(clamped[2], 1.0);
+        assert_eq!(clamped[0], 0.0);
+        assert_eq!(clamped[3], 0.95);
+        assert!((clamped[1] - 0.025).abs() < 1e-6);
     }
 
     #[test]

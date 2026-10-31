@@ -141,7 +141,8 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 - **Console workflow refinements (2026-10-31)** — 1.5× scale (75% of the former
   2×); controls ordered as Adjust → Calibration → Experiment; Start gated on a
   finished adjustment and a fitted calibration. The adjust view edits the eye
-  frame live (`+`/`−` size, arrow keys move) and invalidates the calibration.
+  frame live (`+`/`−` uniform scale, `Ctrl+←/→` width, `Ctrl+↑/↓` height, arrows
+  move) and invalidates the calibration; the default is 2:1 with 90% width.
   Pause/Continue is one toggle button; Pause during a quick recalibration holds
   the session paused; Adjust, Calibrate and Quick are enabled only when not
   running (pause first); Exit is enabled only while paused (with the safeguard),

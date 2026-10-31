@@ -25,7 +25,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use eframe::egui;
-use yet_egui::console::{adjust_eye_region, EYE_REGION_MOVE_STEP, EYE_REGION_SIZE_STEP};
+use yet_egui::console::{
+    adjust_eye_region, resize_eye_region, EYE_REGION_MOVE_STEP, EYE_REGION_SIZE_STEP,
+};
 use yet_egui::console::{ConsoleState, ExperimentCommand, LogLevel};
 use yet_egui::markdown::show_markdown;
 use yet_egui::{EguiPresenter, PresenterConfig};
@@ -37,7 +39,7 @@ use crate::driver::{prepare, RunError};
 
 /// Hint shown under the enlarged camera view in the linear flow.
 const ADJUST_HINT: &str =
-    "Step 2 · Adjust · +/− size · arrow keys move · Space continue · Backspace back · F11 fullscreen";
+    "Step 2 · Adjust · +/− scale · Ctrl+←/→ width · Ctrl+↑/↓ height · arrows move · Space continue · Backspace back";
 
 /// Built-in welcome page when the workspace has no `Intro.md`.
 const DEFAULT_INTRO: &str = "\
@@ -415,7 +417,7 @@ impl eframe::App for PresenterOnlyApp {
             console.preview.pip_stream = !console.preview.pip_stream;
         }
         if self.step == Step::Adjust {
-            let (left, right, up, down, grow, shrink) = ctx.input(|input| {
+            let (left, right, up, down, grow, shrink, ctrl) = ctx.input(|input| {
                 (
                     input.key_pressed(egui::Key::ArrowLeft),
                     input.key_pressed(egui::Key::ArrowRight),
@@ -423,15 +425,28 @@ impl eframe::App for PresenterOnlyApp {
                     input.key_pressed(egui::Key::ArrowDown),
                     input.key_pressed(egui::Key::Plus) || input.key_pressed(egui::Key::Equals),
                     input.key_pressed(egui::Key::Minus),
+                    input.modifiers.ctrl || input.modifiers.command,
                 )
             });
             if left || right || up || down || grow || shrink {
-                let dx = (right as i32 - left as i32) as f32 * EYE_REGION_MOVE_STEP;
-                let dy = (down as i32 - up as i32) as f32 * EYE_REGION_MOVE_STEP;
-                let dsize = (grow as i32 - shrink as i32) as f32 * EYE_REGION_SIZE_STEP;
                 let mut console = lock_console(&self.shared);
                 let region = console.preview.adjust_frame.as_mut().map(|frame| {
-                    let region = adjust_eye_region(frame.roi, dx, dy, dsize);
+                    let mut region = frame.roi;
+                    if grow || shrink {
+                        let dsize = (grow as i32 - shrink as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        region = adjust_eye_region(region, 0.0, 0.0, dsize);
+                    }
+                    if ctrl {
+                        let dw = (right as i32 - left as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        let dh = (up as i32 - down as i32) as f32 * EYE_REGION_SIZE_STEP;
+                        region = resize_eye_region(region, dw, dh);
+                    } else {
+                        // The adjust view is mirrored horizontally, so the
+                        // arrow keys must move the ROI in display space.
+                        let dx = (left as i32 - right as i32) as f32 * EYE_REGION_MOVE_STEP;
+                        let dy = (down as i32 - up as i32) as f32 * EYE_REGION_MOVE_STEP;
+                        region = adjust_eye_region(region, dx, dy, 0.0);
+                    }
                     frame.roi = region;
                     region
                 });

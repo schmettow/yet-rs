@@ -29,10 +29,11 @@ use yet_stim::config::PreferredFormat;
 
 use yet_core::{EyeRegion, GrayFrame};
 
-/// Default normalized eye region: the centered half of the frame.
+/// Default normalized eye region: the full frame width at a 2:1 aspect ratio.
 ///
-/// This is the ROI the SPK-3 camera spike used (320×240 inside 640×480).
-pub const DEFAULT_EYE_REGION: [f32; 4] = [0.25, 0.25, 0.5, 0.5];
+/// Width is 90% of the frame width, height is 45%, centered in the frame.
+/// Adjust it live in the console or presenter adjust view.
+pub const DEFAULT_EYE_REGION: [f32; 4] = [0.05, 0.275, 0.9, 0.45];
 
 /// Stop the capture loop after this many consecutive device errors.
 const MAX_CONSECUTIVE_ERRORS: u32 = 30;

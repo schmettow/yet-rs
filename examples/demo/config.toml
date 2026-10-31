@@ -16,8 +16,8 @@ width = 640
 height = 480
 fps = 30
 format = "yuyv"
-# Centered half-frame; adjust to the eye position of the Yet camera.
-eye_region = [0.25, 0.25, 0.5, 0.5]
+# 2:1 eye frame, 90% of the frame width, centered; edit live in Adjust.
+eye_region = [0.05, 0.275, 0.9, 0.45]
 
 [presenter]
 backend = "egui"
