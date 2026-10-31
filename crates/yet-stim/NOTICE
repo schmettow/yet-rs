@@ -1,0 +1,8 @@
+yet-rs
+Copyright (C) Martin Schmettow
+
+Portions of this software are derived from the yet_zero Python project
+(https://github.com/schmettow/YET), Copyright (C) Martin Schmettow,
+licensed under the Apache License, Version 2.0.
+
+A copy of the Apache License 2.0 is included in THIRD_PARTY_LICENSES.md.

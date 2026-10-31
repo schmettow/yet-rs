@@ -2,13 +2,16 @@
 
 [package]
 name = "yet-egui"
-description = "Egui components for yet-rs"
+description = "Egui presenter, console and overlay components for yet-rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["eye-tracking", "egui", "gui", "presenter"]
+categories = ["gui", "science"]
 
 [dependencies]
 yet-core.workspace = true
