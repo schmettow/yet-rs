@@ -140,13 +140,14 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   paths are covered by engine and UI-state tests.
 - **Console workflow refinements (2026-10-31)** — 1.5× scale (75% of the former
   2×); controls ordered as Adjust → Calibration → Experiment; Start gated on a
-  finished adjustment and a fitted calibration. Pause/Continue is one toggle
-  button; Pause during a quick recalibration holds the session paused; Adjust,
-  Calibrate and Quick are enabled only when not running (pause first); Exit is
-  enabled only while paused (with the safeguard), and Reset while paused or
-  terminal. The Quadbright view moved from the presenter PiP to the background
-  of the console gaze-prediction viewer; presenter `Q` and `--pip-quad` were
-  removed.
+  finished adjustment and a fitted calibration. The adjust view edits the eye
+  frame live (`+`/`−` size, arrow keys move) and invalidates the calibration.
+  Pause/Continue is one toggle button; Pause during a quick recalibration holds
+  the session paused; Adjust, Calibrate and Quick are enabled only when not
+  running (pause first); Exit is enabled only while paused (with the safeguard),
+  and Reset while paused or terminal. The Quadbright view moved from the
+  presenter PiP to the background of the console gaze-prediction viewer;
+  presenter `Q` and `--pip-quad` were removed.
 - **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1

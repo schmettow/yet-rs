@@ -25,6 +25,11 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   the four means as its background and draws the predicted gaze dot on top. The
   `PiP quad` checkbox, presenter key `Q` and `--pip-quad` were removed; the
   camera PiP (`P`, `--pip-camera`) remains.
+- **Live eye-ROI editing in the adjust view.** `+`/`−` resize the normalized eye
+  frame and the arrow keys move it; the console shows the ROI percentages. The
+  controller applies the region to the tracker, invalidates a fitted
+  calibration and logs the pixel ROI. Available in the console and the
+  presenter-only adjust step; the ROI is not written back to `config.toml` yet.
 - **Workspace reorganized from eight crates into three publishable libraries
   and one binary**, with a strict dependency direction
   `yet-zero -> yet-egui -> yet-stim -> yet-core`.

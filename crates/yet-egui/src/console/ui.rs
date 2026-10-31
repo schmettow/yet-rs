@@ -18,7 +18,10 @@ use crate::painter;
 use crate::presenter::AdjustFrame;
 
 use super::command::ExperimentCommand;
-use super::state::{CameraChoice, ConsoleState, LogLevel, PresenterStatus, PreviewFrame};
+use super::state::{
+    adjust_eye_region, CameraChoice, ConsoleState, LogLevel, PresenterStatus, PreviewFrame,
+    EYE_REGION_MOVE_STEP, EYE_REGION_SIZE_STEP,
+};
 
 /// Fallback number of monitor choices when the platform reports no monitors.
 pub const MONITOR_CHOICES: usize = 4;
@@ -650,7 +653,17 @@ impl ConsoleUi {
             "eye ROI",
             egui::FontId::proportional(14.0),
         );
-        ui.label("Move the camera until the eye is inside the orange box. F3 finishes.");
+        ui.label(
+            "Move the camera, or resize with + / − and move with the arrow keys. F3 finishes.",
+        );
+        let [x, y, width, height] = frame.roi;
+        ui.label(format!(
+            "Eye ROI x {:.0}% · y {:.0}% · {:.0}% × {:.0}%",
+            x * 100.0,
+            y * 100.0,
+            width * 100.0,
+            height * 100.0
+        ));
     }
 
     fn show_preview(&mut self, ui: &mut egui::Ui, frame: &PreviewFrame) {
@@ -1055,6 +1068,34 @@ impl ConsoleUi {
             state.follow = !state.follow;
         }
 
+        if state.preview.adjust && !ui.ctx().egui_wants_keyboard_input() {
+            let (left, right, up, down, grow, shrink) = ui.input(|input| {
+                (
+                    input.key_pressed(egui::Key::ArrowLeft),
+                    input.key_pressed(egui::Key::ArrowRight),
+                    input.key_pressed(egui::Key::ArrowUp),
+                    input.key_pressed(egui::Key::ArrowDown),
+                    input.key_pressed(egui::Key::Plus) || input.key_pressed(egui::Key::Equals),
+                    input.key_pressed(egui::Key::Minus),
+                )
+            });
+            if left || right || up || down || grow || shrink {
+                let dx = (right as i32 - left as i32) as f32 * EYE_REGION_MOVE_STEP;
+                let dy = (down as i32 - up as i32) as f32 * EYE_REGION_MOVE_STEP;
+                let dsize = (grow as i32 - shrink as i32) as f32 * EYE_REGION_SIZE_STEP;
+                let region = if let Some(frame) = state.preview.adjust_frame.as_mut() {
+                    let region = adjust_eye_region(frame.roi, dx, dy, dsize);
+                    frame.roi = region;
+                    Some(region)
+                } else {
+                    None
+                };
+                if let Some(region) = region {
+                    state.eye_region_request = Some(region);
+                }
+            }
+        }
+
         if state.phase == Phase::Finished {
             ui.label(
                 "Session finished. Close the console window when you have copied the results.",
@@ -1288,6 +1329,40 @@ mod tests {
 
         assert!(state.pause_after_calibration);
         assert!(commands.is_empty(), "the engine is already paused");
+    }
+
+    #[test]
+    fn the_adjust_view_edits_the_eye_region() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.preview.adjust = true;
+        state.preview.adjust_frame = Some(AdjustFrame {
+            width: 4,
+            height: 2,
+            data: Arc::from(vec![0_u8; 8]),
+            generation: 1,
+            roi: [0.25, 0.25, 0.5, 0.5],
+        });
+        let mut console = ConsoleUi::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &[]);
+        });
+        output.textures_delta.clear();
+
+        let region = state.eye_region_request.expect("an ROI request");
+        assert!((region[0] - 0.26).abs() < 1e-6, "{region:?}");
+        assert_eq!(state.preview.adjust_frame.as_ref().unwrap().roi, region);
     }
 
     #[test]

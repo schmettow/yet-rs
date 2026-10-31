@@ -13,7 +13,8 @@ mod ui;
 
 pub use command::ExperimentCommand;
 pub use state::{
-    CalibrationStatus, CameraChoice, ConsoleState, LogLevel, LogLine, OverlayStatus,
-    PresenterStatus, PreviewFrame, PreviewState, MAX_LOG_LINES,
+    adjust_eye_region, CalibrationStatus, CameraChoice, ConsoleState, LogLevel, LogLine,
+    OverlayStatus, PresenterStatus, PreviewFrame, PreviewState, EYE_REGION_MOVE_STEP,
+    EYE_REGION_SIZE_STEP, MAX_LOG_LINES, MIN_EYE_REGION_SIZE,
 };
 pub use ui::{ConsoleUi, MonitorChoice, MONITOR_CHOICES};

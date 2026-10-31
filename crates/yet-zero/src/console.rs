@@ -660,6 +660,35 @@ fn run_loop<G>(
             }
         }
 
+        let requested_region = lock_console(shared).eye_region_request.take();
+        if let Some(normalized) = requested_region {
+            if let Some(tracker) = tracker.as_mut() {
+                let roi = tracker.info().eye_region(normalized);
+                if let Some(roi) = roi {
+                    tracker.set_roi(roi);
+                    calibration = None;
+                    latest_gaze.set(None);
+                    let mut console = lock_console(shared);
+                    console.calibration = Default::default();
+                    console.overlay.gaze = None;
+                    console.log(
+                        LogLevel::Info,
+                        format!(
+                            "eye ROI x={} y={} {}×{}; run a calibration",
+                            roi.x, roi.y, roi.width, roi.height
+                        ),
+                    );
+                } else {
+                    log_warning(shared, "the adjusted eye region is invalid");
+                }
+            } else {
+                log_warning(
+                    shared,
+                    "the eye region was not applied because the camera is not open",
+                );
+            }
+        }
+
         let now = Instant::now();
         {
             let mut console = lock_console(shared);

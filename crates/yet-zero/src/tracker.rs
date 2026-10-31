@@ -64,6 +64,14 @@ impl Tracker {
         self.roi
     }
 
+    /// Replace the eye region used for features and the preview.
+    ///
+    /// The caller validates the pixel region against the negotiated frame; a
+    /// changed region invalidates any fitted calibration.
+    pub fn set_roi(&mut self, roi: EyeRegion) {
+        self.roi = roi;
+    }
+
     /// Capture rate since opening the camera.
     pub fn capture_fps(&self) -> Option<f32> {
         let seconds = self.opened_at.elapsed().as_secs_f32();

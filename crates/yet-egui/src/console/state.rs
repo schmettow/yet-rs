@@ -168,6 +168,31 @@ pub struct PreviewState {
     pub capture_fps: Option<f32>,
 }
 
+/// Smallest side of the normalized eye region.
+pub const MIN_EYE_REGION_SIZE: f32 = 0.05;
+
+/// Normalized movement per arrow-key press.
+pub const EYE_REGION_MOVE_STEP: f32 = 0.01;
+
+/// Normalized size change per `+`/`-` press.
+pub const EYE_REGION_SIZE_STEP: f32 = 0.02;
+
+/// Move and resize a normalized `[x, y, width, height]` eye region.
+///
+/// Resizing keeps the center in place; movement is applied afterwards. The
+/// result stays inside the frame and never gets smaller than
+/// [`MIN_EYE_REGION_SIZE`].
+pub fn adjust_eye_region(region: [f32; 4], dx: f32, dy: f32, dsize: f32) -> [f32; 4] {
+    let [x, y, width, height] = region;
+    let center_x = x + width / 2.0;
+    let center_y = y + height / 2.0;
+    let new_width = (width + dsize).clamp(MIN_EYE_REGION_SIZE, 1.0);
+    let new_height = (height + dsize).clamp(MIN_EYE_REGION_SIZE, 1.0);
+    let new_x = (center_x - new_width / 2.0 + dx).clamp(0.0, 1.0 - new_width);
+    let new_y = (center_y - new_height / 2.0 + dy).clamp(0.0, 1.0 - new_height);
+    [new_x, new_y, new_width, new_height]
+}
+
 /// Gaze overlay state shared between the controller and the console.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OverlayStatus {
@@ -270,6 +295,9 @@ pub struct ConsoleState {
     /// Together with a fitted calibration this is the prerequisite for starting
     /// a session, mirroring the presenter's Adjust → Calibration → Stimuli flow.
     pub adjusted: bool,
+    /// Normalized `[x, y, width, height]` eye region requested in the adjust
+    /// view; the controller applies it to the tracker and clears it.
+    pub eye_region_request: Option<[f32; 4]>,
     /// Calibration flow and reports.
     pub calibration: CalibrationStatus,
     /// Live camera preview.
@@ -326,6 +354,7 @@ impl ConsoleState {
             error: None,
             pause_after_calibration: false,
             adjusted: false,
+            eye_region_request: None,
             calibration: CalibrationStatus::default(),
             preview: PreviewState::default(),
             overlay: OverlayStatus::default(),
@@ -572,7 +601,9 @@ mod tests {
     use yet_core::CalibrationReport;
     use yet_stim::{CalibrationPhase, CalibrationSnapshot, Phase};
 
-    use super::{CameraChoice, ConsoleState, LogLevel, MAX_LOG_LINES};
+    use super::{
+        adjust_eye_region, CameraChoice, ConsoleState, LogLevel, MAX_LOG_LINES, MIN_EYE_REGION_SIZE,
+    };
 
     fn state() -> ConsoleState {
         ConsoleState::new("demo", "42", 1, 0, true, 4)
@@ -597,6 +628,41 @@ mod tests {
         assert!(!state.camera_rescan);
         assert!(!state.follow);
         assert!(!state.preview.pip_stream);
+    }
+
+    #[test]
+    fn the_eye_region_can_be_moved_and_resized() {
+        let region = [0.25, 0.25, 0.5, 0.5];
+
+        assert_eq!(
+            adjust_eye_region(region, 0.125, -0.125, 0.0),
+            [0.375, 0.125, 0.5, 0.5]
+        );
+        assert_eq!(
+            adjust_eye_region(region, 0.0, 0.0, 0.25),
+            [0.125, 0.125, 0.75, 0.75]
+        );
+        assert_eq!(
+            adjust_eye_region(region, 0.0, 0.0, -0.25),
+            [0.375, 0.375, 0.25, 0.25]
+        );
+    }
+
+    #[test]
+    fn the_eye_region_stays_inside_the_frame() {
+        let region = [0.0, 0.0, 0.5, 0.5];
+
+        assert_eq!(
+            adjust_eye_region(region, -1.0, -1.0, 0.0),
+            [0.0, 0.0, 0.5, 0.5]
+        );
+        assert_eq!(
+            adjust_eye_region(region, 1.0, 1.0, 0.0),
+            [0.5, 0.5, 0.5, 0.5]
+        );
+        let tiny = adjust_eye_region(region, 0.0, 0.0, -10.0);
+        assert_eq!(tiny[2], MIN_EYE_REGION_SIZE);
+        assert_eq!(tiny[3], MIN_EYE_REGION_SIZE);
     }
 
     #[test]
