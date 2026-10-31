@@ -265,6 +265,11 @@ pub struct ConsoleState {
     pub log_elapsed: Duration,
     /// Fatal error, shown prominently.
     pub error: Option<String>,
+    /// Whether the experimenter has shown and closed the adjust view.
+    ///
+    /// Together with a fitted calibration this is the prerequisite for starting
+    /// a session, mirroring the presenter's Adjust → Calibration → Stimuli flow.
+    pub adjusted: bool,
     /// Calibration flow and reports.
     pub calibration: CalibrationStatus,
     /// Live camera preview.
@@ -319,6 +324,7 @@ impl ConsoleState {
             elapsed: Duration::ZERO,
             log_elapsed: Duration::ZERO,
             error: None,
+            adjusted: false,
             calibration: CalibrationStatus::default(),
             preview: PreviewState::default(),
             overlay: OverlayStatus::default(),
@@ -434,11 +440,16 @@ impl ConsoleState {
     }
 
     /// Whether a session can start.
+    ///
+    /// The experiment follows the presenter's setup order: the camera must have
+    /// been adjusted and a calibration must be fitted before the first trial.
     pub fn can_start(&self) -> bool {
         self.phase == Phase::Idle
             && self.error.is_none()
             && !self.calibration.active
             && !self.preview.adjust
+            && self.adjusted
+            && self.calibration.fitted
     }
 
     /// Clamp the presenter monitor to the monitors the platform reports.
@@ -475,28 +486,49 @@ impl ConsoleState {
     }
 
     /// Whether a full calibration can start.
+    ///
+    /// A running session may be interrupted: the UI pauses it first and then
+    /// starts the calibration, so the same session remains paused afterwards.
     pub fn can_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
             && !self.preview.adjust
-            && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
+            && matches!(
+                self.phase,
+                Phase::Idle | Phase::Running | Phase::Paused | Phase::Finished
+            )
     }
 
     /// Whether a quick recalibration can start.
+    ///
+    /// Like a full calibration, it may interrupt a running session; the UI
+    /// pauses the session first.
     pub fn can_quick_calibrate(&self, presenter_ready: bool) -> bool {
         presenter_ready
             && !self.calibration.active
             && !self.preview.adjust
             && self.calibration.fitted
-            && matches!(self.phase, Phase::Idle | Phase::Paused | Phase::Finished)
+            && matches!(
+                self.phase,
+                Phase::Idle | Phase::Running | Phase::Paused | Phase::Finished
+            )
     }
 
     /// Whether the adjust view can be shown or hidden.
     ///
-    /// Adjusting is a pre-session camera check: it is available whenever no
-    /// trial is running and no calibration owns the presenter.
+    /// Adjusting is available at any time except while a calibration owns the
+    /// presenter. Entering it during a run pauses the session first; leaving it
+    /// marks the camera-alignment step as done.
     pub fn can_adjust(&self) -> bool {
-        !self.calibration.active && self.phase != Phase::Running
+        !self.calibration.active
+    }
+
+    /// Finish the adjust view and remember that the camera was aligned.
+    pub fn finish_adjust(&mut self) {
+        if self.preview.adjust {
+            self.preview.adjust = false;
+            self.adjusted = true;
+        }
     }
 
     /// Whether the active calibration can be cancelled.
@@ -637,8 +669,26 @@ mod tests {
     }
 
     #[test]
+    fn start_requires_adjustment_and_calibration() {
+        let mut state = state();
+        assert!(!state.can_start(), "setup was not done yet");
+
+        state.adjusted = true;
+        assert!(!state.can_start(), "calibration is still missing");
+
+        state.adjusted = false;
+        state.calibration.fitted = true;
+        assert!(!state.can_start(), "adjustment is still missing");
+
+        state.adjusted = true;
+        assert!(state.can_start());
+    }
+
+    #[test]
     fn controls_follow_the_engine_phase() {
         let mut state = state();
+        state.adjusted = true;
+        state.calibration.fitted = true;
         assert!(state.can_start());
         assert!(!state.can_pause());
         assert!(!state.can_resume());
@@ -663,6 +713,8 @@ mod tests {
     #[test]
     fn an_error_blocks_start() {
         let mut state = state();
+        state.adjusted = true;
+        state.calibration.fitted = true;
         state.error = Some("missing stimulus".to_owned());
 
         assert!(!state.can_start());
@@ -707,8 +759,11 @@ mod tests {
         assert!(state.can_quick_calibrate(true));
 
         state.phase = Phase::Running;
-        assert!(!state.can_calibrate(true));
-        assert!(!state.can_quick_calibrate(true));
+        assert!(state.can_calibrate(true), "calibration interrupts a run");
+        assert!(
+            state.can_quick_calibrate(true),
+            "quick recalibration interrupts a run"
+        );
 
         state.calibration.active = true;
         assert!(!state.can_start());
@@ -719,17 +774,28 @@ mod tests {
     }
 
     #[test]
-    fn adjust_is_a_pre_session_camera_check() {
+    fn adjust_is_available_unless_a_calibration_owns_the_presenter() {
         let mut state = state();
         assert!(state.can_adjust());
         assert!(!state.preview.adjust);
 
         state.phase = Phase::Running;
-        assert!(!state.can_adjust());
+        assert!(state.can_adjust(), "adjust interrupts a run");
 
         state.phase = Phase::Idle;
         state.calibration.active = true;
         assert!(!state.can_adjust());
+    }
+
+    #[test]
+    fn finishing_adjust_marks_the_camera_step_done() {
+        let mut state = state();
+        state.preview.adjust = true;
+
+        state.finish_adjust();
+
+        assert!(state.adjusted);
+        assert!(!state.preview.adjust);
     }
 
     #[test]

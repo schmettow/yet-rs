@@ -5,6 +5,11 @@
 //! The console shows engine state, presentation statistics, and a bounded log.
 //! It never receives a scene, a media identifier, or a texture: the stimulus
 //! is rendered exclusively by the presenter viewport.
+//!
+//! Controls follow the presentation flow: **1 · Camera adjustment**,
+//! **2 · Calibration**, then **3 · Experiment**. Start requires both setup
+//! steps. Adjust, Calibrate and Quick remain available during a session and
+//! pause it first; Exit asks for confirmation before aborting.
 
 use eframe::egui;
 use yet_stim::Phase;
@@ -20,9 +25,9 @@ pub const MONITOR_CHOICES: usize = 4;
 
 /// Multiplier for the experimenter console's text and spacing.
 ///
-/// The console targets a notebook's main screen: a wide window with
-/// comfortably large controls and log text.
-pub const CONSOLE_UI_SCALE: f32 = 2.0;
+/// The console targets a notebook's main screen: a wide window with readable
+/// controls and log text. 1.5 is 75% of the previous 2.0 scale.
+pub const CONSOLE_UI_SCALE: f32 = 1.5;
 
 /// Minimum width before the console splits into two columns.
 const TWO_COLUMN_MIN_WIDTH: f32 = 860.0;
@@ -63,6 +68,8 @@ pub struct ConsoleUi {
     adjust_texture: Option<(u64, egui::TextureHandle)>,
     /// Unscaled egui style, captured on the first frame.
     base_style: Option<egui::Style>,
+    /// Whether the exit safeguard is asking for confirmation.
+    exit_confirm: bool,
 }
 
 impl std::fmt::Debug for ConsoleUi {
@@ -72,6 +79,7 @@ impl std::fmt::Debug for ConsoleUi {
             .field("preview_texture", &self.preview_texture.is_some())
             .field("has_adjust_texture", &self.adjust_texture.is_some())
             .field("has_base_style", &self.base_style.is_some())
+            .field("exit_confirm", &self.exit_confirm)
             .finish()
     }
 }
@@ -85,6 +93,7 @@ impl ConsoleUi {
             preview_generation: 0,
             adjust_texture: None,
             base_style: None,
+            exit_confirm: false,
         }
     }
 
@@ -98,6 +107,9 @@ impl ConsoleUi {
     ) -> Vec<ExperimentCommand> {
         self.apply_scale(ui);
         let mut commands = Vec::new();
+        if self.exit_confirm && !state.can_abort() {
+            self.exit_confirm = false;
+        }
 
         ui.horizontal_wrapped(|ui| {
             ui.heading("yet-rs console");
@@ -125,9 +137,11 @@ impl ConsoleUi {
                             .auto_shrink([false, false])
                             .max_height(height)
                             .show(ui, |ui| {
-                                self.phase_panel(ui, state, presenter, &mut commands);
+                                self.status_panel(ui, state);
                                 ui.separator();
-                                self.calibration_panel(ui, state, presenter, &mut commands);
+                                self.setup_panel(ui, state, presenter, &mut commands);
+                                ui.separator();
+                                self.session_panel(ui, state, presenter, &mut commands);
                                 ui.separator();
                                 self.progress_panel(ui, state);
                                 ui.separator();
@@ -149,19 +163,23 @@ impl ConsoleUi {
                 );
             });
         } else {
-            self.phase_panel(ui, state, presenter, &mut commands);
+            self.status_panel(ui, state);
             ui.separator();
-            self.calibration_panel(ui, state, presenter, &mut commands);
+            self.setup_panel(ui, state, presenter, &mut commands);
+            ui.separator();
+            self.session_panel(ui, state, presenter, &mut commands);
             ui.separator();
             self.progress_panel(ui, state);
             ui.separator();
             self.presenter_panel(ui, state, presenter, monitors);
+            ui.separator();
             self.preview_panel(ui, state);
             ui.separator();
             self.log_panel(ui, state);
             self.shortcuts(ui, state, presenter.ready, &mut commands);
         }
 
+        self.exit_dialog(ui.ctx(), state, &mut commands);
         commands
     }
 
@@ -175,13 +193,7 @@ impl ConsoleUi {
         ui.set_style(style);
     }
 
-    fn phase_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        state: &mut ConsoleState,
-        presenter: PresenterStatus,
-        commands: &mut Vec<ExperimentCommand>,
-    ) {
+    fn status_panel(&self, ui: &mut egui::Ui, state: &ConsoleState) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(state.phase_label()).strong());
             ui.label(format!("{:.1} s", state.elapsed.as_secs_f64()));
@@ -193,11 +205,76 @@ impl ConsoleUi {
             }
         });
 
-        let start_enabled = state.can_start() && presenter.ready;
-        let start_hint = if presenter.ready {
-            "F5"
+        if let Some(error) = &state.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {error}"));
+            ui.label("The session stopped. Fix the problem named above, then restart the console.");
+        }
+    }
+
+    /// Step 1 and 2: align the camera, then calibrate.
+    fn setup_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &mut ConsoleState,
+        presenter: PresenterStatus,
+        commands: &mut Vec<ExperimentCommand>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("1 · Camera adjustment").strong());
+            if state.adjusted {
+                ui.colored_label(egui::Color32::LIGHT_GREEN, "done");
+            } else {
+                ui.colored_label(egui::Color32::YELLOW, "required before start");
+            }
+        });
+        let adjust_label = if state.preview.adjust {
+            "Finish adjusting"
         } else {
+            "Adjust camera"
+        };
+        if ui
+            .add_enabled(
+                state.preview.adjust || state.can_adjust(),
+                egui::Button::new(adjust_label),
+            )
+            .on_hover_text("Enlarged, mirrored camera image with the eye ROI (F3)")
+            .clicked()
+        {
+            self.toggle_adjust(state, commands);
+        }
+        if state.preview.adjust {
+            ui.label("Align the eye with the orange ROI, then choose “Finish adjusting”.");
+        }
+
+        ui.separator();
+        self.calibration_panel(ui, state, presenter, commands);
+
+        if state.adjusted && state.calibration.fitted {
+            ui.colored_label(
+                egui::Color32::LIGHT_GREEN,
+                "Setup complete · ready to start",
+            );
+        }
+    }
+
+    /// Step 3: start, pause, continue or exit the session.
+    fn session_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &mut ConsoleState,
+        presenter: PresenterStatus,
+        commands: &mut Vec<ExperimentCommand>,
+    ) {
+        ui.label(egui::RichText::new("3 · Experiment").strong());
+        let start_enabled = state.can_start() && presenter.ready;
+        let start_hint = if !presenter.ready {
             "waiting for the stimulus window"
+        } else if !state.adjusted {
+            "adjust the camera first"
+        } else if !state.calibration.fitted {
+            "calibrate first"
+        } else {
+            "F5"
         };
 
         ui.horizontal_wrapped(|ui| {
@@ -216,8 +293,8 @@ impl ConsoleUi {
                 commands.push(ExperimentCommand::Pause);
             }
             if ui
-                .add_enabled(state.can_resume(), egui::Button::new("Resume"))
-                .on_hover_text("F6")
+                .add_enabled(state.can_resume(), egui::Button::new("Continue"))
+                .on_hover_text("F6 · continue after a pause")
                 .clicked()
             {
                 commands.push(ExperimentCommand::Resume);
@@ -225,41 +302,102 @@ impl ConsoleUi {
             if ui
                 .add_enabled(
                     state.can_abort(),
-                    egui::Button::new(egui::RichText::new("Abort").color(egui::Color32::LIGHT_RED)),
+                    egui::Button::new(egui::RichText::new("Exit").color(egui::Color32::LIGHT_RED)),
                 )
-                .on_hover_text("F8")
+                .on_hover_text("F8 · asks before the session is cancelled")
                 .clicked()
             {
-                commands.push(ExperimentCommand::Abort);
+                self.exit_confirm = true;
             }
             if ui
                 .add_enabled(state.can_reset(), egui::Button::new("Reset"))
-                .on_hover_text("Return to idle after Finish or Abort (F4)")
+                .on_hover_text("Return to idle after Finish or Exit (F4)")
                 .clicked()
             {
                 commands.push(ExperimentCommand::Reset);
             }
-            let adjust_label = if state.preview.adjust {
-                "Done adjusting"
-            } else {
-                "Adjust"
-            };
-            if ui
-                .add_enabled(
-                    state.preview.adjust || state.can_adjust(),
-                    egui::Button::new(adjust_label),
-                )
-                .on_hover_text("Show the full camera image to center the eye (F3)")
-                .clicked()
-            {
-                state.preview.adjust = !state.preview.adjust;
-            }
         });
 
-        if let Some(error) = &state.error {
-            ui.separator();
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {error}"));
-            ui.label("The session stopped. Fix the problem named above, then restart the console.");
+        if state.phase == Phase::Idle && !start_enabled {
+            let hint = if !presenter.ready {
+                "Waiting for the stimulus window."
+            } else if !state.adjusted {
+                "Start is disabled until the camera adjustment is finished."
+            } else if !state.calibration.fitted {
+                "Start is disabled until a full calibration is fitted."
+            } else {
+                ""
+            };
+            if !hint.is_empty() {
+                ui.colored_label(egui::Color32::YELLOW, hint);
+            }
+        }
+    }
+
+    /// Toggle the adjust view, pausing a running session first.
+    fn toggle_adjust(&mut self, state: &mut ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+        if state.preview.adjust {
+            state.finish_adjust();
+        } else if state.can_adjust() {
+            if state.phase == Phase::Running {
+                commands.push(ExperimentCommand::Pause);
+            }
+            state.preview.adjust = true;
+        }
+    }
+
+    /// Pause a running session before an interrupting calibration.
+    fn queue_interrupt(
+        state: &ConsoleState,
+        commands: &mut Vec<ExperimentCommand>,
+        command: ExperimentCommand,
+    ) {
+        if state.phase == Phase::Running {
+            commands.push(ExperimentCommand::Pause);
+        }
+        commands.push(command);
+    }
+
+    fn exit_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        state: &ConsoleState,
+        commands: &mut Vec<ExperimentCommand>,
+    ) {
+        if !self.exit_confirm {
+            return;
+        }
+        let mut confirmed = false;
+        let mut dismissed = false;
+        egui::Window::new("Exit session?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Sure you want to cancel the session? {}/{} trials saved.",
+                    state.trials_completed, state.trials_total
+                ));
+                ui.label("The result file is written before the console returns to idle.");
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Exit and save").color(egui::Color32::LIGHT_RED),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Keep running").clicked() {
+                        dismissed = true;
+                    }
+                });
+            });
+        if confirmed {
+            commands.push(ExperimentCommand::Abort);
+            self.exit_confirm = false;
+        } else if dismissed {
+            self.exit_confirm = false;
         }
     }
 
@@ -272,7 +410,7 @@ impl ConsoleUi {
     ) {
         let status = &state.calibration;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Calibration").strong());
+            ui.label(egui::RichText::new("2 · Calibration").strong());
             ui.label(status.phase.label());
             if status.fitted {
                 ui.colored_label(egui::Color32::LIGHT_GREEN, "model fitted");
@@ -287,17 +425,17 @@ impl ConsoleUi {
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(can_calibrate, egui::Button::new("Calibrate"))
-                .on_hover_text("F7 · full 3×3 grid")
+                .on_hover_text("F7 · full 3×3 grid · pauses a running session")
                 .clicked()
             {
-                commands.push(ExperimentCommand::Calibrate);
+                Self::queue_interrupt(state, commands, ExperimentCommand::Calibrate);
             }
             if ui
                 .add_enabled(can_quick, egui::Button::new("Quick"))
-                .on_hover_text("F9 · one center target")
+                .on_hover_text("F9 · one center target · pauses a running session")
                 .clicked()
             {
-                commands.push(ExperimentCommand::QuickCalibrate);
+                Self::queue_interrupt(state, commands, ExperimentCommand::QuickCalibrate);
             }
             if ui
                 .add_enabled(can_cancel, egui::Button::new("Cancel"))
@@ -310,11 +448,6 @@ impl ConsoleUi {
 
         if !presenter.ready {
             ui.label("Calibration waits for the stimulus window.");
-        } else if !status.fitted && !status.active {
-            ui.colored_label(
-                egui::Color32::YELLOW,
-                "No fitted calibration. The experiment still runs, but no gaze rows are written.",
-            );
         }
         if let Some(error) = &state.preview.error {
             ui.colored_label(egui::Color32::LIGHT_RED, format!("Camera: {error}"));
@@ -814,7 +947,7 @@ impl ConsoleUi {
         presenter_ready: bool,
         commands: &mut Vec<ExperimentCommand>,
     ) {
-        let (start, pause, abort, calibrate, quick, cancel, preview, follow, reset, adjust) = ui
+        let (start, pause, exit, calibrate, quick, cancel, preview, follow, reset, adjust) = ui
             .input(|input| {
                 (
                     input.key_pressed(egui::Key::F5),
@@ -840,26 +973,30 @@ impl ConsoleUi {
                 commands.push(ExperimentCommand::Resume);
             }
         }
-        if abort && state.can_abort() {
-            commands.push(ExperimentCommand::Abort);
+        if exit && state.can_abort() {
+            self.exit_confirm = true;
         }
         if reset && state.can_reset() {
             commands.push(ExperimentCommand::Reset);
         }
         if calibrate && state.can_calibrate(presenter_ready) {
-            commands.push(ExperimentCommand::Calibrate);
+            Self::queue_interrupt(state, commands, ExperimentCommand::Calibrate);
         }
         if quick && state.can_quick_calibrate(presenter_ready) {
-            commands.push(ExperimentCommand::QuickCalibrate);
+            Self::queue_interrupt(state, commands, ExperimentCommand::QuickCalibrate);
         }
-        if cancel && state.can_cancel_calibration() {
-            commands.push(ExperimentCommand::CancelCalibration);
+        if cancel {
+            if self.exit_confirm {
+                self.exit_confirm = false;
+            } else if state.can_cancel_calibration() {
+                commands.push(ExperimentCommand::CancelCalibration);
+            }
         }
         if preview {
             state.preview.enabled = !state.preview.enabled;
         }
-        if adjust && (state.preview.adjust || state.can_adjust()) {
-            state.preview.adjust = !state.preview.adjust;
+        if adjust {
+            self.toggle_adjust(state, commands);
         }
         if follow && !ui.ctx().egui_wants_keyboard_input() {
             state.follow = !state.follow;
@@ -935,6 +1072,7 @@ mod tests {
     use yet_stim::Phase;
 
     use super::{scale_style, ConsoleUi, MonitorChoice, PresenterStatus, CONSOLE_UI_SCALE};
+    use crate::console::command::ExperimentCommand;
     use crate::console::state::{ConsoleState, PreviewFrame};
     use crate::presenter::AdjustFrame;
 
@@ -1053,7 +1191,7 @@ mod tests {
     }
 
     #[test]
-    fn console_text_and_widgets_are_doubled() {
+    fn console_text_and_widgets_use_the_75_percent_scale() {
         let base = egui::Style::default();
         let body = base.text_styles[&egui::TextStyle::Body].size;
         let extent = base.spacing.interact_size;
@@ -1062,9 +1200,49 @@ mod tests {
 
         scale_style(&mut scaled, CONSOLE_UI_SCALE);
 
-        assert_eq!(scaled.text_styles[&egui::TextStyle::Body].size, body * 2.0);
-        assert_eq!(scaled.spacing.interact_size, extent * 2.0);
-        assert_eq!(scaled.spacing.item_spacing, spacing * 2.0);
+        assert_eq!(CONSOLE_UI_SCALE, 1.5);
+        assert_eq!(scaled.text_styles[&egui::TextStyle::Body].size, body * 1.5);
+        assert_eq!(scaled.spacing.interact_size, extent * 1.5);
+        assert_eq!(scaled.spacing.item_spacing, spacing * 1.5);
+    }
+
+    #[test]
+    fn an_interrupting_calibration_queues_pause_first() {
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.phase = Phase::Running;
+        state.calibration.fitted = true;
+        let mut commands = Vec::new();
+
+        ConsoleUi::queue_interrupt(&state, &mut commands, ExperimentCommand::QuickCalibrate);
+        assert_eq!(
+            commands,
+            vec![ExperimentCommand::Pause, ExperimentCommand::QuickCalibrate]
+        );
+
+        commands.clear();
+        state.phase = Phase::Paused;
+        ConsoleUi::queue_interrupt(&state, &mut commands, ExperimentCommand::Calibrate);
+        assert_eq!(commands, vec![ExperimentCommand::Calibrate]);
+    }
+
+    #[test]
+    fn the_exit_safeguard_renders_over_a_running_session() {
+        let ctx = egui::Context::default();
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.phase = Phase::Running;
+        state.trials_completed = 2;
+        let mut console = ConsoleUi {
+            exit_confirm: true,
+            ..ConsoleUi::default()
+        };
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = console.ui(ui, &mut state, PresenterStatus::default(), &monitors());
+        });
+        output.textures_delta.clear();
+
+        assert!(console.exit_confirm, "the safeguard waits for a decision");
+        assert!(!output.shapes.is_empty());
     }
 
     #[test]

@@ -489,7 +489,11 @@ impl PresenterOnlyApp {
         let adjust = step == Step::Adjust;
         {
             let mut console = lock_console(&self.shared);
-            console.preview.adjust = adjust;
+            if adjust {
+                console.preview.adjust = true;
+            } else {
+                console.finish_adjust();
+            }
         }
         self.presenter
             .set_adjust_hint(adjust.then(|| ADJUST_HINT.to_owned()));

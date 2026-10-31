@@ -9,6 +9,14 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ### Changed
 
+- **The experimenter console follows the presenter's setup order.**
+  `1 · Camera adjustment` and `2 · Calibration` come before `3 · Experiment`;
+  Start is disabled until the adjust view has been finished and a calibration
+  is fitted. Adjust, Calibrate and Quick remain available while a session runs
+  and pause it first, so the experimenter can interrupt at any point.
+  Pause/Continue replace Pause/Resume, and Exit (F8, button included) opens the
+  “Sure you want to cancel the session? x/n trials saved.” safeguard instead of
+  aborting immediately.
 - **Workspace reorganized from eight crates into three publishable libraries
   and one binary**, with a strict dependency direction
   `yet-zero -> yet-egui -> yet-stim -> yet-core`.
@@ -371,11 +379,12 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   before overlay work, future backlog items, risks and decisions. No model,
   sensor or camera behavior changed in v1.
 - The experimenter console targets a notebook's main screen: text, padding and
-  controls are scaled 2×, the window opens at 1400×860 logical points clamped
-  to 92% of the monitor, and wide windows use a two-column layout (controls and
-  presenter on the left, camera preview and log on the right). Narrow windows
-  fall back to one column, the left column scrolls independently, log lines
-  wrap instead of clipping, and the camera preview is served at up to 480×320.
+  controls are scaled 1.5× (75% of the earlier 2×), the window opens at 1400×860
+  logical points clamped to 92% of the monitor, and wide windows use a
+  two-column layout (controls and presenter on the left, camera preview and log
+  on the right). Narrow windows fall back to one column, the left column scrolls
+  independently, log lines wrap instead of clipping, and the camera preview is
+  served at up to 480×320.
 - `config.toml` camera settings gained `width`, `height`, `fps`, `format` and a
   normalized `eye_region`; all are optional with 640×480, 30 fps, `auto` and no
   region defaults. `display.presenter_origin` was removed again in S6: eframe

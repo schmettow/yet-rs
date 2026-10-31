@@ -166,22 +166,28 @@ about ten times per second for its clock, and that leaves the stimulus window
 untouched; the console therefore cannot cause timing jitter in the stimulus.
 
 The console targets a notebook's main screen. It opens at 1400×860 logical
-points, clamped to 92% of the monitor, and scales text, padding and controls 2×.
-A wide window uses two columns: controls, calibration, progress and presenter
-statistics on the left, camera preview and the log on the right. Narrow windows
-fall back to one column, and the left column scrolls independently. Log lines
-wrap instead of being clipped. The camera preview is served at up to 480×320.
+points, clamped to 92% of the monitor, and scales text, padding and controls
+1.5× (75% of the earlier 2× scale). A wide window uses two columns: controls,
+calibration, progress and presenter statistics on the left, camera preview and
+the log on the right. Narrow windows fall back to one column, and the left
+column scrolls independently. Log lines wrap instead of being clipped. The
+camera preview is served at up to 480×320.
 
-Controls: **Start** (F5), **Pause/Resume** (F6 toggles; only the valid action
-is enabled), **Abort** (F8), **Reset** (F4; returns a finished or aborted
-session to Idle so it can be calibrated and started again), **Adjust** (F3;
-shows the full camera image enlarged, with the eye ROI outlined, so the camera
-can be centered on the eye), **Calibrate** (F7, full 3×3 grid), **Quick** (F9,
-center target; requires an existing fit), **Cancel calibration** (Esc), the
-**Camera preview** toggle (F10), **Follow** (F; draws a gaze circle over the
-stimulus), and the **PiP camera** / **PiP quad** toggles (camera stream and
-Quadbright quadrant means drawn over the stimulus; presenter-only keys P and
-Q). The presenter selector lists the monitors reported by the platform,
+Controls follow the same order as `yet-zero present`: **1 · Camera adjustment**
+(F3; shows the full, mirrored camera image enlarged with the eye ROI outlined),
+**2 · Calibration** (F7 full 3×3 grid; **Quick** F9 for one center target;
+**Cancel** Esc), then **3 · Experiment**. **Start** (F5) stays disabled until
+the adjustment has been finished and a calibration is fitted. **Pause** and
+**Continue** (F6 toggles; only the valid action is enabled), **Exit** (F8; asks
+“Sure you want to cancel the session? x/n trials saved.” and only then aborts
+and flushes), and **Reset** (F4; returns a finished or aborted session to Idle
+so it can be calibrated and started again). Adjust, Calibrate and Quick remain
+available while a session runs: they pause it first, so the experimenter can
+interrupt at any moment and continue afterwards. The **Camera preview** toggle
+(F10), **Follow** (F; draws a gaze circle over the stimulus), and the **PiP
+camera** / **PiP quad** toggles (camera stream and Quadbright quadrant means
+drawn over the stimulus; presenter-only keys P and Q) are unchanged. The
+presenter selector lists the monitors reported by the platform,
 labelled from 1 with resolution and output name; the configuration index stays
 zero-based. On a two-monitor desk the presenter defaults to monitor 2 (index 1).
 Changing the selection recreates the stimulus window borderless-fullscreen on
@@ -220,8 +226,10 @@ Samples: 0 (the camera was not wired into the session yet)
 ```
 
 The S7 path keeps the same scheduler and presenter. The camera now runs on the
-controller thread, so a calibrated session writes gaze rows; without a
-calibration the CSV keeps its header and no gaze rows, and the console says so.
+controller thread, so a calibrated session writes gaze rows. Starting is gated
+on a fitted calibration, so a session without gaze rows is no longer the normal
+path; if the camera is lost mid-session, the controller logs the error and the
+remaining trials run without new gaze samples.
 
 **Compositor dimming.** KWin's *Dim Inactive* effect multiplies an unfocused
 window by 75%. While the console has focus, the stimulus is dimmed, which

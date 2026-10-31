@@ -173,10 +173,11 @@ These come from the two analyses. If one changes, **update the analysis first**,
 | **D30** | **Presenter PiP is purely visual and shares the preview capture.** Camera stream (bottom-right) and Quadbright means (bottom-left) are painted after the scene by `PresenterState`, outside `Scene`, so they never reach the CSV or a recorded scene. Toggles: console checkboxes, presenter-only `P`/`Q`, and `--pip-camera`/`--pip-quad`. `PreviewState::pip_stream`/`pip_quad` open the camera even when the console preview is off. | 1.0 parity decision |
 | **D31** | **Abort is recoverable in the console.** `ExperimentCommand::Reset` / `F4` returns `Finished` or `Aborted` to `Idle`, clears the session error and re-enables Start and Calibrate; the engine rejects Reset while Running or Paused. The plan, calibration model and result path are kept. | Usability finding 2026-10-30 |
 | **D32** | **Monitor layout is resolved after the first frame.** The console keeps the WM's initial placement (the screen where it was launched) and is then centered on that monitor using winit's monitor position, outer size and decorations, with a top margin so the title bar is reachable. If the configured presenter monitor equals the console monitor and another output exists, the presenter moves to the next monitor; explicit other-monitor configs are respected. Windowed presenters are centered on their monitor via `PresenterConfig::position_pt`. Wayland may ignore absolute positions; the compositor keeps the window on the active output. | Usability decisions 2026-10-30; `frame.winit_window()` |
-| **D33** | **Adjust is a pre-session camera alignment view.** It shows the full camera frame enlarged on the presenter and console, dims outside the eye ROI and outlines it. It is available while no trial runs and no calibration is active, blocks Start/Resume/Calibrate/Quick until it is closed, and is purely visual. Toggles: console button/**F3**, presenter step 2, launch `--adjust`. | Usability decision 2026-10-30 |
+| **D33** | **Adjust is a camera alignment view, not only a pre-session check.** It shows the full, mirrored camera frame enlarged, dims outside the eye ROI and outlines it. It is available at any time except while a calibration owns the presenter; entering it during a run pauses the session first, and closing it marks the adjustment step done. While it is open, Start/Resume/Calibrate/Quick are blocked. Toggles: console button/**F3**, presenter step 2, launch `--adjust`. | Usability decision 2026-10-30; updated 2026-10-31 |
 | **D34** | **`yet-zero present` is a linear flow with a Backspace walk.** Welcome → Adjust → Calibration → Stimuli → Debrief; **Space** forward, **Backspace** back, **F11** toggle fullscreen (`Cmd+Ctrl+F` on macOS), **Esc** leave fullscreen. The presenter always starts fullscreen on `display.presenter_monitor`, regardless of a workspace's windowed default. Backspace in Stimuli pauses the engine and starts the calibration grid itself (no instruction page); a full calibration is allowed while paused, and returning to Stimuli resumes the same session. Repeated Backspace continues Calibrate → Adjust → exit safeguard → exit. The linear machine lives in the presenter app; the engine and controller stay UI-free. | Presenter-flow decision 2026-10-30; updated 2026-10-31 |
 | **D35** | **Welcome and debrief pages are workspace files.** `Intro.md` and `Debrief.md` in the workspace root are loaded into `LoadedExperiment`; absent files fall back to built-in pages so the flow is always complete. `yet-egui::markdown` renders a small subset (headings, paragraphs, lists, quotes, rules, inline emphasis/code) rather than adding a Markdown dependency. | Presenter-flow decision 2026-10-30 |
 | **D36** | **Adjust is mirrored and Esc is constrained to fullscreen.** The adjust frame is painted with horizontally flipped UVs and the ROI outline is mirrored with it; the stored frame/features are unchanged. Escape never cancels, aborts or closes in presenter mode; it only leaves fullscreen, and F11 toggles fullscreen back on. Stopping is the Backspace walk from Stimuli through Calibrate and Adjust to the exit safeguard (“Sure you want to cancel the session? x/n trials saved.”), where only another Backspace closes and flushes. Space returns to Adjust. | Usability decisions 2026-10-30/31 |
+| **D37** | **The console mirrors the presenter's setup order and interrupts safely.** `1 · Camera adjustment` → `2 · Calibration` → `3 · Experiment`. Start requires `adjusted` (the adjust view was shown and closed), `calibration.fitted` and a ready presenter. Adjust, full calibration and quick recalibration stay enabled while a session runs; the UI queues `Pause` before the interrupt, so the session remains paused afterwards and `Continue` resumes it. Exit opens the same `x/n trials saved` safeguard as the presenter and only then sends `Abort`; Reset returns to Idle. | Console workflow decision 2026-10-31 |
 
 ---
 
@@ -966,11 +967,15 @@ the Linux workstation. 221 workspace tests pass (three ignored hardware tests).
   WAV metadata and warns about a >100 ms duration mismatch. `prepare_media.sh`
   produces frames plus a 48 kHz stereo WAV and fails clearly for a missing
   input, FFmpeg errors, zero frames or audio extraction errors.
-- **The console:** 2× text and controls, a 1400×860 default window clamped to
-  92% of the monitor, and a wide two-column layout (controls/presenter left,
-  preview/log right; single column below 860 points). Log lines wrap. This is
-  the notebook-oriented layout requested after S8; the same console remains
-  usable maximized on the lab's 2560×1600 monitor.
+- **The console:** 1.5× text and controls (75% of the earlier 2×), a 1400×860
+  default window clamped to 92% of the monitor, and a wide two-column layout
+  (controls/presenter left, preview/log right; single column below 860 points).
+  The controls now follow the presenter: `1 · Camera adjustment`, `2 ·
+  Calibration`, `3 · Experiment`; Start is gated on a finished adjustment and a
+  fitted calibration, while Adjust/Calibrate/Quick interrupt a running session by
+  pausing it first. Exit asks for confirmation; Continue replaces Resume. Log
+  lines wrap. This is the notebook-oriented layout requested after S8; the same
+  console remains usable maximized on the lab's 2560×1600 monitor.
 - **Deferred:** frame decoding is just-in-time, not a background prefetch
   worker; a looped clip does not restart its WAV; underruns are a best-effort
   empty-queue signal. Windows/macOS playback and a screen-and-sound A/V
@@ -1057,10 +1062,10 @@ the experimenter immediate visual feedback on the presenter.
 
 **Implementation note (S8.6, 2026-10-30):** PAR-1 to PAR-3 are implemented,
 plus the follow-up window placement, Adjust and linear presenter work
-(D32–D36). 301 workspace tests pass (three ignored hardware tests); `fmt`,
-`check`, `test`, `clippy -D warnings` and `doc` are green. The Backspace walk and
-Escape rule are locked by pure `back_action`/`leaves_fullscreen` tests,
-independent of the GUI.
+(D32–D37). 305 workspace tests pass (three ignored hardware tests); `fmt`,
+`check`, `test`, `clippy -D warnings` and `doc` are green. The Backspace walk,
+Escape rule, console setup gate and exit safeguard are locked by pure state and
+render tests, independent of the GUI.
 
 - **The gate is controller-side (D29):** the console applies `TrialStarted`,
   pauses the engine at the same `SessionTime`, starts `CalibrationRun::quick`

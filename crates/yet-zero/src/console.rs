@@ -185,7 +185,7 @@ pub fn run_console(options: ConsoleOptions<'_>) -> Result<(), RunError> {
         );
         console.log(
             LogLevel::Info,
-            "keys: F5 start · F6 pause/resume · F7 calibrate · F9 quick · F10 preview · F3 adjust · F4 reset · F8 abort · F follow",
+            "keys: F5 start · F6 pause/continue · F7 calibrate · F9 quick · F10 preview · F3 adjust · F4 reset · F8 exit safeguard · F follow",
         );
         console.log(LogLevel::Info, "waiting for the stimulus window…");
         console.overlay.available = overlay_available;
@@ -649,6 +649,7 @@ fn run_loop<G>(
                 console.preview.frame = None;
                 console.preview.error = None;
                 console.preview.capture_fps = None;
+                console.adjusted = false;
                 console.calibration = Default::default();
                 console.overlay.gaze = None;
                 console.camera_error = None;
