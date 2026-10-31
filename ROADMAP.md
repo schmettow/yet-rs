@@ -127,19 +127,25 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   recalibration over the blurred next stimulus, exactly like `main.py`: the
   controller pauses the clock, collects one center target, and resumes with the
   trial deadline shifted. The pure engine and headless runner stay
-  deterministic. Added presenter PiP for the camera stream and the Quadbright
-  means (console checkboxes, presenter `P`/`Q`, `--pip-camera`/`--pip-quad`),
-  a console **Reset** (`F4`), an **Adjust** view (console `F3`, presenter step
-  2, `--adjust`), and a linear presenter flow
+  deterministic. Added presenter camera PiP (`P`, `--pip-camera`), a console
+  **Reset** (`F4`), an **Adjust** view (console `F3`, presenter step 2,
+  `--adjust`), and a linear presenter flow
   Welcome → Adjust → Calibration → Stimuli → Debrief with Space/Backspace/F11.
   `Intro.md`/`Debrief.md` supply the welcome and debrief pages (built-in
   defaults otherwise). The console centers on its launch monitor and the
-  presenter moves to another output when both would share one. 298 tests pass;
-  the full flow, back-navigation into paused calibration, F11, adjust, PiP and
-  dual-monitor placement were exercised on the X11 workstation with the
-  StreamCam. Console button/key input could not be driven by XTest
-  (window-manager focus), so those paths are covered by engine and UI-state
-  tests.
+  presenter moves to another output when both would share one. The full flow,
+  back-navigation into paused calibration, F11, adjust, PiP and dual-monitor
+  placement were exercised on the X11 workstation with the StreamCam. Console
+  button/key input could not be driven by XTest (window-manager focus), so those
+  paths are covered by engine and UI-state tests.
+- **Console workflow refinements (2026-10-31)** — 1.5× scale (75% of the former
+  2×); controls ordered as Adjust → Calibration → Experiment; Start gated on a
+  finished adjustment and a fitted calibration; Adjust/Calibrate/Quick interrupt
+  a running session by pausing it; Pause only while running, Continue only while
+  paused, Exit only while paused (with the safeguard), Reset while paused or
+  terminal. The Quadbright view moved from the presenter PiP to the background
+  of the console gaze-prediction viewer; presenter `Q` and `--pip-quad` were
+  removed.
 - **Next:** Windows/macOS runtime validation and the 60-minute overlay soak.
 
 ## Post-v1

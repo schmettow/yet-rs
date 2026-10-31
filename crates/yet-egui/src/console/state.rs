@@ -154,9 +154,6 @@ pub struct PreviewState {
     pub enabled: bool,
     /// Draw the camera stream as a picture-in-picture on the presenter.
     pub pip_stream: bool,
-    /// Draw the Quadbright quadrant means as a picture-in-picture on the
-    /// presenter.
-    pub pip_quad: bool,
     /// Show the enlarged camera view for centering the eye.
     pub adjust: bool,
     /// Latest full camera frame for the adjust view.
@@ -471,6 +468,9 @@ impl ConsoleState {
     }
 
     /// Whether the session can pause.
+    ///
+    /// Pause is available whenever a session is running; it is disabled once
+    /// the session is paused.
     pub fn can_pause(&self) -> bool {
         self.phase == Phase::Running && !self.calibration.active
     }
@@ -481,8 +481,11 @@ impl ConsoleState {
     }
 
     /// Whether the session can be aborted.
+    ///
+    /// Exit requires a paused session, so a running experiment must be paused
+    /// first; this makes ending a session a deliberate two-step action.
     pub fn can_abort(&self) -> bool {
-        matches!(self.phase, Phase::Running | Phase::Paused) && !self.calibration.active
+        self.phase == Phase::Paused && !self.calibration.active
     }
 
     /// Whether a full calibration can start.
@@ -542,9 +545,14 @@ impl ConsoleState {
             && matches!(self.phase, Phase::Idle | Phase::Finished | Phase::Aborted)
     }
 
-    /// Whether a finished or aborted session can return to idle.
+    /// Whether the session can return to idle.
+    ///
+    /// A running session must be paused first. Finished and aborted sessions
+    /// remain resettable, because a terminal session cannot be paused; from
+    /// `Paused`, Reset first aborts the session and then returns to idle.
     pub fn can_reset(&self) -> bool {
-        !self.calibration.active && matches!(self.phase, Phase::Finished | Phase::Aborted)
+        !self.calibration.active
+            && matches!(self.phase, Phase::Paused | Phase::Finished | Phase::Aborted)
     }
 }
 
@@ -580,7 +588,6 @@ mod tests {
         assert!(!state.camera_rescan);
         assert!(!state.follow);
         assert!(!state.preview.pip_stream);
-        assert!(!state.preview.pip_quad);
     }
 
     #[test]
@@ -698,16 +705,38 @@ mod tests {
         state.phase = Phase::Running;
         assert!(!state.can_start());
         assert!(state.can_pause());
-        assert!(state.can_abort());
+        assert!(!state.can_abort(), "exit requires a pause first");
+        assert!(!state.can_reset(), "reset requires a pause first");
         assert!(!state.can_configure());
 
         state.phase = Phase::Paused;
         assert!(state.can_resume());
         assert!(state.can_abort());
+        assert!(state.can_reset());
 
         state.phase = Phase::Finished;
         assert!(!state.can_start());
+        assert!(!state.can_abort());
+        assert!(state.can_reset());
         assert!(state.can_configure());
+    }
+
+    #[test]
+    fn exit_and_reset_require_a_paused_session() {
+        let mut state = state();
+        state.adjusted = true;
+        state.calibration.fitted = true;
+
+        assert!(!state.can_abort());
+        assert!(!state.can_reset());
+
+        state.phase = Phase::Running;
+        assert!(!state.can_abort());
+        assert!(!state.can_reset());
+
+        state.phase = Phase::Paused;
+        assert!(state.can_abort());
+        assert!(state.can_reset());
     }
 
     #[test]
@@ -813,12 +842,15 @@ mod tests {
     }
 
     #[test]
-    fn reset_is_available_after_abort_or_finish() {
+    fn reset_is_available_after_a_pause_or_a_terminal_state() {
         let mut state = state();
         assert!(!state.can_reset());
 
         state.phase = Phase::Running;
         assert!(!state.can_reset());
+
+        state.phase = Phase::Paused;
+        assert!(state.can_reset());
 
         state.phase = Phase::Aborted;
         assert!(state.can_reset());

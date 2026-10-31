@@ -679,18 +679,17 @@ fn run_loop<G>(
         );
 
         // Console intent: preview on/off, gaze circle and a retry request.
-        let (preview_enabled, pip_stream, pip_quad, adjust, retry, follow) = {
+        let (preview_enabled, pip_stream, adjust, retry, follow) = {
             let console = lock_console(shared);
             (
                 console.preview.enabled,
                 console.preview.pip_stream,
-                console.preview.pip_quad,
                 console.preview.adjust,
                 console.preview.retry,
                 console.follow,
             )
         };
-        let preview_active = preview_enabled || pip_stream || pip_quad || adjust;
+        let preview_active = preview_enabled || pip_stream || adjust;
         if retry {
             let mut console = lock_console(shared);
             console.preview.retry = false;
@@ -765,7 +764,7 @@ fn run_loop<G>(
                 }
             }
         }
-        sync_presenter_preview(runner, shared, pip_stream, pip_quad);
+        sync_presenter_preview(runner, shared, pip_stream);
         sync_presenter_adjust(runner, shared, adjust);
 
         // Wait for a command or the next tick.
@@ -1655,16 +1654,15 @@ fn update_preview(
     console.preview.capture_fps = tracker.capture_fps();
 }
 
-/// Mirror the shared preview frame and the PiP flags onto the presenter.
+/// Mirror the camera stream PiP flag and frame onto the presenter.
 fn sync_presenter_preview<G>(
     runner: &mut SessionRunner<'_, std::io::BufWriter<std::fs::File>, EguiPresenter, G>,
     shared: &Arc<Mutex<ConsoleState>>,
     pip_stream: bool,
-    pip_quad: bool,
 ) where
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
-    let preview = if pip_stream || pip_quad {
+    let preview = if pip_stream {
         let console = lock_console(shared);
         console
             .preview
@@ -1675,9 +1673,7 @@ fn sync_presenter_preview<G>(
                 height: frame.height,
                 data: Arc::clone(&frame.data),
                 generation: frame.generation,
-                quad: frame.quad,
-                show_stream: pip_stream,
-                show_quad: pip_quad,
+                show_stream: true,
             })
     } else {
         None

@@ -299,22 +299,26 @@ impl ConsoleUi {
             {
                 commands.push(ExperimentCommand::Resume);
             }
-            if ui
+            let exit = ui
                 .add_enabled(
                     state.can_abort(),
                     egui::Button::new(egui::RichText::new("Exit").color(egui::Color32::LIGHT_RED)),
                 )
-                .on_hover_text("F8 · asks before the session is cancelled")
-                .clicked()
-            {
+                .on_hover_text("F8 · asks before the session is cancelled");
+            let exit = if state.phase == Phase::Running {
+                exit.on_disabled_hover_text("Pause the session first")
+            } else {
+                exit
+            };
+            if exit.clicked() {
                 self.exit_confirm = true;
             }
             if ui
                 .add_enabled(state.can_reset(), egui::Button::new("Reset"))
-                .on_hover_text("Return to idle after Finish or Exit (F4)")
+                .on_hover_text("F4 · pause first, then return to idle")
                 .clicked()
             {
-                commands.push(ExperimentCommand::Reset);
+                Self::reset_session(state, commands);
             }
         });
 
@@ -358,6 +362,14 @@ impl ConsoleUi {
         commands.push(command);
     }
 
+    /// Return to idle; a paused session is aborted first.
+    fn reset_session(state: &ConsoleState, commands: &mut Vec<ExperimentCommand>) {
+        if state.phase == Phase::Paused {
+            commands.push(ExperimentCommand::Abort);
+        }
+        commands.push(ExperimentCommand::Reset);
+    }
+
     fn exit_dialog(
         &mut self,
         ctx: &egui::Context,
@@ -378,7 +390,7 @@ impl ConsoleUi {
                     "Sure you want to cancel the session? {}/{} trials saved.",
                     state.trials_completed, state.trials_total
                 ));
-                ui.label("The result file is written before the console returns to idle.");
+                ui.label("The result file is written before the session stops.");
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
@@ -521,10 +533,6 @@ impl ConsoleUi {
             ui.label("F10");
             ui.checkbox(&mut state.preview.pip_stream, "PiP camera")
                 .on_hover_text("Draw the camera stream over the stimulus (presenter key P)");
-            ui.checkbox(&mut state.preview.pip_quad, "PiP quad")
-                .on_hover_text(
-                    "Draw the eye-region quadrant means over the stimulus (presenter key Q)",
-                );
             if let Some(fps) = state.preview.capture_fps {
                 ui.label(format!("{fps:.1} fps capture"));
             }
@@ -651,7 +659,23 @@ impl ConsoleUi {
 
             let (rect, _) = ui.allocate_exact_size(GAZE_MAP_SIZE, egui::Sense::hover());
             let painter = ui.painter();
-            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(32));
+            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(24));
+            if let Some(quad) = frame.quad {
+                let values = quad.to_array();
+                let half = rect.size() / 2.0;
+                for (index, value) in values.iter().enumerate() {
+                    let cell = egui::Rect::from_min_size(
+                        rect.min
+                            + egui::vec2((index % 2) as f32 * half.x, (index / 2) as f32 * half.y),
+                        half,
+                    );
+                    let level = value.clamp(0.0, 255.0).round() as u8;
+                    painter.rect_filled(cell, 0.0, egui::Color32::from_gray(level));
+                }
+                let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(72));
+                painter.line_segment([rect.center_top(), rect.center_bottom()], grid);
+                painter.line_segment([rect.left_center(), rect.right_center()], grid);
+            }
             painter.rect_stroke(
                 rect,
                 2.0,
@@ -663,10 +687,12 @@ impl ConsoleUi {
                     rect.left() + gaze.x.clamp(0.0, 1.0) * rect.width(),
                     rect.top() + gaze.y.clamp(0.0, 1.0) * rect.height(),
                 );
-                painter.circle_filled(point, 4.0, egui::Color32::RED);
+                painter.circle_filled(point, 5.0, egui::Color32::from_black_alpha(190));
+                painter.circle_filled(point, 3.5, egui::Color32::RED);
             }
 
             ui.vertical(|ui| {
+                ui.label(egui::RichText::new("gaze prediction").strong());
                 if let Some(gaze) = frame.gaze {
                     ui.label(format!("gaze {:.0}, {:.0} px", gaze.x, gaze.y));
                 } else {
@@ -677,6 +703,9 @@ impl ConsoleUi {
                         "normalized {:.3}, {:.3}",
                         normalized.x, normalized.y
                     ));
+                }
+                if frame.quad.is_some() {
+                    ui.colored_label(egui::Color32::GRAY, "Quadbright background");
                 }
             });
         });
@@ -977,7 +1006,7 @@ impl ConsoleUi {
             self.exit_confirm = true;
         }
         if reset && state.can_reset() {
-            commands.push(ExperimentCommand::Reset);
+            Self::reset_session(state, commands);
         }
         if calibrate && state.can_calibrate(presenter_ready) {
             Self::queue_interrupt(state, commands, ExperimentCommand::Calibrate);
@@ -1068,7 +1097,7 @@ mod tests {
     use std::sync::Arc;
 
     use eframe::egui;
-    use yet_core::GazePoint;
+    use yet_core::{GazePoint, QuadBrightness};
     use yet_stim::Phase;
 
     use super::{scale_style, ConsoleUi, MonitorChoice, PresenterStatus, CONSOLE_UI_SCALE};
@@ -1114,7 +1143,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_session_offers_pause_and_abort() {
+    fn a_running_session_offers_pause_but_not_exit() {
         let ctx = egui::Context::default();
         let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
         state.phase = Phase::Running;
@@ -1128,7 +1157,25 @@ mod tests {
 
         assert!(commands.is_empty());
         assert!(state.can_pause());
-        assert!(state.can_abort());
+        assert!(!state.can_abort(), "the user must pause before exiting");
+    }
+
+    #[test]
+    fn resetting_a_paused_session_aborts_it_first() {
+        let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
+        state.phase = Phase::Paused;
+        let mut commands = Vec::new();
+
+        ConsoleUi::reset_session(&state, &mut commands);
+        assert_eq!(
+            commands,
+            vec![ExperimentCommand::Abort, ExperimentCommand::Reset]
+        );
+
+        commands.clear();
+        state.phase = Phase::Finished;
+        ConsoleUi::reset_session(&state, &mut commands);
+        assert_eq!(commands, vec![ExperimentCommand::Reset]);
     }
 
     #[test]
@@ -1141,7 +1188,7 @@ mod tests {
             height: 2,
             data: Arc::from(vec![0_u8, 64, 128, 255]),
             generation: 1,
-            quad: None,
+            quad: Some(QuadBrightness::new(40.0, 80.0, 160.0, 220.0)),
             gaze: Some(GazePoint::new(100.0, 200.0)),
             gaze_normalized: Some(GazePoint::new(0.5, 0.5)),
         });
@@ -1226,10 +1273,10 @@ mod tests {
     }
 
     #[test]
-    fn the_exit_safeguard_renders_over_a_running_session() {
+    fn the_exit_safeguard_renders_over_a_paused_session() {
         let ctx = egui::Context::default();
         let mut state = ConsoleState::new("demo", "42", 1, 0, true, 4);
-        state.phase = Phase::Running;
+        state.phase = Phase::Paused;
         state.trials_completed = 2;
         let mut console = ConsoleUi {
             exit_confirm: true,

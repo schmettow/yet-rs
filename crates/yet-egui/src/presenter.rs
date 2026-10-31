@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use image::RgbaImage;
-use yet_core::QuadBrightness;
 use yet_stim::media::NullAudioPlayer;
 use yet_stim::{
     AudioPlayer, FrameStamp, MediaId, PresentStats, Presenter, PresenterCommand, PresenterError,
@@ -114,12 +113,8 @@ pub struct PresenterPreview {
     pub data: Arc<[u8]>,
     /// Generation used to decide when to re-upload the texture.
     pub generation: u64,
-    /// Quadrant means of the eye region.
-    pub quad: Option<QuadBrightness>,
     /// Whether to draw the camera stream.
     pub show_stream: bool,
-    /// Whether to draw the Quadbright visualization.
-    pub show_quad: bool,
 }
 
 /// One full camera frame for the adjust view.
@@ -313,10 +308,7 @@ impl PresenterState {
     pub fn set_preview(&mut self, preview: Option<PresenterPreview>) {
         let changed = match (&self.preview, &preview) {
             (Some(old), Some(new)) => {
-                old.generation != new.generation
-                    || old.show_stream != new.show_stream
-                    || old.show_quad != new.show_quad
-                    || old.quad != new.quad
+                old.generation != new.generation || old.show_stream != new.show_stream
             }
             (None, None) => false,
             _ => true,
@@ -569,12 +561,12 @@ impl PresenterState {
         );
     }
 
-    /// Paint the camera stream and Quadbright picture-in-picture overlays.
+    /// Paint the camera stream picture-in-picture overlay.
     fn paint_preview(&mut self, ui: &egui::Ui, clip_rect: egui::Rect) {
         let Some(preview) = self.preview.clone() else {
             return;
         };
-        if !preview.show_stream && !preview.show_quad {
+        if !preview.show_stream {
             return;
         }
 
@@ -611,58 +603,6 @@ impl PresenterState {
                     egui::StrokeKind::Inside,
                 );
             }
-        }
-
-        if preview.show_quad {
-            let quad = preview.quad.unwrap_or_default().to_array();
-            let size = egui::vec2(width, width * 0.75);
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    clip_rect.left() + margin,
-                    clip_rect.bottom() - margin - size.y,
-                ),
-                size,
-            );
-            painter.rect_filled(rect.expand(2.0), 4.0, egui::Color32::from_black_alpha(170));
-            let font = (width * 0.075).clamp(11.0, 24.0);
-            for (index, value) in quad.iter().enumerate() {
-                let column = index % 2;
-                let row = index / 2;
-                let cell = egui::Rect::from_min_size(
-                    rect.min + egui::vec2(column as f32 * size.x / 2.0, row as f32 * size.y / 2.0),
-                    egui::vec2(size.x / 2.0, size.y / 2.0),
-                );
-                let level = value.clamp(0.0, 255.0).round() as u8;
-                painter.rect_filled(cell, 0.0, egui::Color32::from_gray(level));
-                let text_color = if level > 140 {
-                    egui::Color32::BLACK
-                } else {
-                    egui::Color32::WHITE
-                };
-                painter.text(
-                    cell.center(),
-                    egui::Align2::CENTER_CENTER,
-                    level.to_string(),
-                    egui::FontId::monospace(font),
-                    text_color,
-                );
-            }
-            let cross = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(120));
-            painter.line_segment([rect.center_top(), rect.center_bottom()], cross);
-            painter.line_segment([rect.left_center(), rect.right_center()], cross);
-            painter.rect_stroke(
-                rect,
-                2.0,
-                egui::Stroke::new(1.5, egui::Color32::WHITE),
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                rect.left_top() - egui::vec2(0.0, 4.0),
-                egui::Align2::LEFT_BOTTOM,
-                "Quadbright · eye ROI",
-                egui::FontId::proportional(font),
-                egui::Color32::WHITE,
-            );
         }
     }
 
@@ -1068,8 +1008,6 @@ mod tests {
     fn a_presenter_preview_is_painted_over_the_scene() {
         use std::sync::Arc;
 
-        use yet_core::QuadBrightness;
-
         use super::PresenterPreview;
 
         let ctx = egui::Context::default();
@@ -1079,9 +1017,7 @@ mod tests {
             height: 2,
             data: Arc::from(vec![10_u8, 20, 30, 40, 50, 60, 70, 80]),
             generation: 1,
-            quad: Some(QuadBrightness::new(10.0, 20.0, 30.0, 40.0)),
             show_stream: true,
-            show_quad: true,
         }));
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| state.ui(ui));
@@ -1129,9 +1065,7 @@ mod tests {
             height: 1,
             data: Arc::from(vec![128_u8]),
             generation: 3,
-            quad: None,
             show_stream: true,
-            show_quad: false,
         };
 
         state.set_preview(Some(preview.clone()));

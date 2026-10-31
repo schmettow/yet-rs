@@ -75,9 +75,8 @@ dependency direction is strictly `yet-zero -> yet-egui -> yet-stim -> yet-core`.
   with no console: Welcome → Adjust → Calibration → Stimuli → Debrief.
   Starts fullscreen; **Space** forward, **Backspace** back, **F11** toggle
   fullscreen, **Esc** leave fullscreen without cancelling. `Intro.md` and
-  `Debrief.md` customise the outer steps. **F**/**P**/**Q** remain diagnostic
-  toggles. The console has the same **F** follow toggle and offers both PiP
-  toggles as checkboxes.
+  `Debrief.md` customise the outer steps. **F**/**P** remain diagnostic toggles.
+  The console has the same **F** follow toggle and a **PiP camera** checkbox.
 - `tools/run-naked.sh` — renders the two-output Sway profile and starts a naked
   compositor session, with `--render-only`, output-name, participant and binary
   overrides. The profile disables XWayland and keeps the console on one output
@@ -177,16 +176,19 @@ Controls follow the same order as `yet-zero present`: **1 · Camera adjustment**
 (F3; shows the full, mirrored camera image enlarged with the eye ROI outlined),
 **2 · Calibration** (F7 full 3×3 grid; **Quick** F9 for one center target;
 **Cancel** Esc), then **3 · Experiment**. **Start** (F5) stays disabled until
-the adjustment has been finished and a calibration is fitted. **Pause** and
-**Continue** (F6 toggles; only the valid action is enabled), **Exit** (F8; asks
-“Sure you want to cancel the session? x/n trials saved.” and only then aborts
-and flushes), and **Reset** (F4; returns a finished or aborted session to Idle
-so it can be calibrated and started again). Adjust, Calibrate and Quick remain
-available while a session runs: they pause it first, so the experimenter can
-interrupt at any moment and continue afterwards. The **Camera preview** toggle
-(F10), **Follow** (F; draws a gaze circle over the stimulus), and the **PiP
-camera** / **PiP quad** toggles (camera stream and Quadbright quadrant means
-drawn over the stimulus; presenter-only keys P and Q) are unchanged. The
+the adjustment has been finished and a calibration is fitted. **Pause** (F6) is
+enabled while a session runs; **Continue** (F6) only while paused. **Exit** (F8)
+is enabled only while paused; it asks “Sure you want to cancel the session? x/n
+trials saved.” and only then aborts and flushes. **Reset** (F4) is enabled while
+paused — it aborts the paused session first — and for finished/aborted sessions,
+returning to Idle so it can be calibrated and started again. Adjust, Calibrate
+and Quick remain available while a session runs: they pause it first, so the
+experimenter can interrupt at any moment and continue afterwards. The **Camera
+preview** toggle (F10), **Follow** (F; draws a gaze circle over the stimulus),
+and the **PiP camera** toggle (camera stream drawn over the stimulus;
+presenter-only key P) are unchanged. The gaze-prediction viewer next to the
+camera preview uses the four Quadbright means as its background and draws the
+predicted gaze dot on top. The presenter no longer shows a Quadbright view. The
 presenter selector lists the monitors reported by the platform,
 labelled from 1 with resolution and output name; the configuration index stays
 zero-based. On a two-monitor desk the presenter defaults to monitor 2 (index 1).
@@ -278,15 +280,14 @@ returns to Adjust and continues forward. `--adjust` starts directly at step 2.
 pages keep the flow complete without them.
 
 Diagnostic extras remain available but are not part of the linear flow:
-**F** toggles the follow circle and **P**/**Q** the camera/Quadbright
-picture-in-picture. The adjust view is horizontally mirrored, like a selfie
-preview, so moving the camera feels natural; the ROI outline is mirrored with
-it. The circle and PiP views are purely visual: they are composed for painting
-only and never change the trial scene or a CSV row. A small status strip shows
-calibration, PiP and camera state outside a running trial. The adjust view hides
-the status strip so it does not cover the image. `--follow`, `--pip-camera` and
-`--pip-quad` start with those views enabled, which is useful for an automated or
-scripted check.
+**F** toggles the follow circle and **P** the camera picture-in-picture. The
+adjust view is horizontally mirrored, like a selfie preview, so moving the camera
+feels natural; the ROI outline is mirrored with it. The circle and PiP view are
+purely visual: they are composed for painting only and never change the trial
+scene or a CSV row. A small status strip shows calibration, PiP and camera state
+outside a running trial. The adjust view hides the status strip so it does not
+cover the image. `--follow` and `--pip-camera` start with those views enabled,
+which is useful for an automated or scripted check.
 
 ### Custom welcome and debrief pages
 
@@ -330,12 +331,12 @@ gated by an automatic quick recalibration: the next stimulus is composed, the
 session clock pauses, and one center target is shown over the blurred stimulus
 for the same settle/collect/report cycle as F9. When the run finishes, the
 clock resumes with the trial deadline shifted by the recalibration, so the
-stimulus is visible for its full `SLIDE_TIME`. Without a fit, the gate is
-skipped and the CSV keeps its header and no gaze rows. Gaze samples are mapped
-to stimulus pixels and normalized coordinates and written per tick. Full
-calibration is available while idle, paused or after a session; a manual quick
-recalibration (**F9**) also works while paused and leaves the session paused
-when it finishes.
+stimulus is visible for its full `SLIDE_TIME`. Start is disabled until a fit
+exists, so a console session always has a model for the gate and writes gaze
+rows. Gaze samples are mapped to stimulus pixels and normalized coordinates and
+written per tick. Full calibration is available while idle, paused or after a
+session; a manual quick recalibration (**F9**) also works while paused and
+leaves the session paused when it finishes.
 
 A trial interrupted by a calibration failure resumes with the previous model;
 a cancelled automatic recalibration also resumes the trial. The gate is a
@@ -344,9 +345,10 @@ and never start a calibration on their own.
 
 The preview is a diagnostic view on the console. It never touches the stimulus
 window, and preview updates are capped at about 15 Hz while the controller keeps
-its 60 Hz tick. The PiP toggles reuse the same preview frame; enabling either
-one makes the controller open the camera and keep it polling even when the
-console preview is off.
+its 60 Hz tick. The **PiP camera** toggle reuses the same preview frame; enabling
+it makes the controller open the camera and keep it polling even when the console
+preview is off. The gaze-prediction viewer always uses the captured frame's
+Quadbright means as its background when preview frames are available.
 
 ### Pilot test (UX-4)
 

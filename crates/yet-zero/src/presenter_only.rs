@@ -14,9 +14,9 @@
 //! return to calibration (and from there to the adjust view) and continue the
 //! same session afterwards.
 //!
-//! `F` (follow) and `P`/`Q` (camera/Quadbright PiP) remain available as
-//! diagnostic keys but are not part of the linear flow. Escape never cancels a
-//! session; stopping the program is deliberately a Backspace walk:
+//! `F` (follow) and `P` (camera PiP) remain available as diagnostic keys but
+//! are not part of the linear flow. Escape never cancels a session; stopping
+//! the program is deliberately a Backspace walk:
 //! Stimuli → Calibration → Adjust → “cancel?” → exit.
 
 use std::path::Path;
@@ -105,8 +105,6 @@ pub struct PresenterOptions<'a> {
     pub follow: bool,
     /// Start with the camera picture-in-picture enabled.
     pub pip_stream: bool,
-    /// Start with the Quadbright picture-in-picture enabled.
-    pub pip_quad: bool,
     /// Start directly in the adjust step.
     pub adjust: bool,
 }
@@ -121,7 +119,6 @@ impl<'a> PresenterOptions<'a> {
             device: None,
             follow: false,
             pip_stream: false,
-            pip_quad: false,
             adjust: false,
         }
     }
@@ -153,12 +150,6 @@ impl<'a> PresenterOptions<'a> {
     /// Start with the camera picture-in-picture enabled.
     pub fn pip_stream(mut self, enabled: bool) -> Self {
         self.pip_stream = enabled;
-        self
-    }
-
-    /// Start with the Quadbright picture-in-picture enabled.
-    pub fn pip_quad(mut self, enabled: bool) -> Self {
-        self.pip_quad = enabled;
         self
     }
 
@@ -227,7 +218,6 @@ pub fn run_presenter(options: PresenterOptions<'_>) -> Result<(), RunError> {
         console.camera_usb_index = initial_device;
         console.follow = options.follow;
         console.preview.pip_stream = options.pip_stream;
-        console.preview.pip_quad = options.pip_quad;
         console.preview.adjust = start_step == Step::Adjust;
         console.log(
             LogLevel::Info,
@@ -375,8 +365,8 @@ impl eframe::App for PresenterOnlyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let (space, backspace, toggle_fullscreen, escape, follow, pip_stream, pip_quad) = ctx
-            .input(|input| {
+        let (space, backspace, toggle_fullscreen, escape, follow, pip_stream) =
+            ctx.input(|input| {
                 let pressed = |key| {
                     input.events.iter().any(|event| {
                         matches!(
@@ -399,7 +389,6 @@ impl eframe::App for PresenterOnlyApp {
                     pressed(egui::Key::Escape),
                     pressed(egui::Key::F),
                     pressed(egui::Key::P),
-                    pressed(egui::Key::Q),
                 )
             });
 
@@ -422,10 +411,6 @@ impl eframe::App for PresenterOnlyApp {
         if pip_stream {
             let mut console = lock_console(&self.shared);
             console.preview.pip_stream = !console.preview.pip_stream;
-        }
-        if pip_quad {
-            let mut console = lock_console(&self.shared);
-            console.preview.pip_quad = !console.preview.pip_quad;
         }
         if space {
             self.forward();

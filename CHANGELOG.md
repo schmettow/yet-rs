@@ -14,9 +14,15 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   Start is disabled until the adjust view has been finished and a calibration
   is fitted. Adjust, Calibrate and Quick remain available while a session runs
   and pause it first, so the experimenter can interrupt at any point.
-  Pause/Continue replace Pause/Resume, and Exit (F8, button included) opens the
-  “Sure you want to cancel the session? x/n trials saved.” safeguard instead of
-  aborting immediately.
+  Pause is enabled while running; Continue only while paused. Exit is available
+  only while paused and opens the “Sure you want to cancel the session? x/n
+  trials saved.” safeguard. Reset is available while paused (it aborts first)
+  and in the terminal Finished/Aborted states.
+- **The Quadbright view moved into the console.** The presenter no longer paints
+  quadrant means over the stimulus; the console's gaze-prediction viewer uses
+  the four means as its background and draws the predicted gaze dot on top. The
+  `PiP quad` checkbox, presenter key `Q` and `--pip-quad` were removed; the
+  camera PiP (`P`, `--pip-camera`) remains.
 - **Workspace reorganized from eight crates into three publishable libraries
   and one binary**, with a strict dependency direction
   `yet-zero -> yet-egui -> yet-stim -> yet-core`.
@@ -47,9 +53,9 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   white) scene with the circle while idle or paused. This is the immediate
   tracker check presenter-only mode needs. A small presenter-only status strip
   shows calibration/camera state and errors, and hides during a running trial.
-- `yet-egui`: `PreviewFrame` carries the Quadbright quadrant means
-  (`quad`) and `PreviewState` has `pip_stream` / `pip_quad`; the preview panel
-  keeps its image when only the presenter PiP is enabled.
+- `yet-egui`: `PreviewFrame` carries the Quadbright quadrant means (`quad`),
+  which the console gaze-prediction viewer uses as its background;
+  `PreviewState` has `pip_stream` for the camera PiP.
 - **Console window placement:** removed eframe's inner-size-only centering
   (which ignored the monitor origin and could push the title bar above the
   screen, e.g. on a vertically offset DP-1). The console now computes its
@@ -99,22 +105,21 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   workspace root are rendered at the first and last step by the new
   `yet-egui::markdown` subset renderer; built-in pages are used when absent.
   `examples/demo` ships both files.
-- `yet-zero present` no longer advertises the F7/F9/F8 shortcuts; `F`/`P`/`Q`
+- `yet-zero present` no longer advertises the F7/F9/F8 shortcuts; `F`/`P`
   remain as diagnostic extras, and `Esc` leaves fullscreen.
-- Console **Reset** button (F4): returns a finished or aborted session to
-  `Idle`, clears the session error and re-enables Start and Calibrate, so the
-  experimenter no longer has to restart the application after an abort.
+- Console **Reset** button (F4): a paused session is aborted and returned to
+  `Idle`, clearing the session error and re-enabling Start and Calibrate;
+  finished and aborted sessions can also be reset.
 - Automatic per-trial quick recalibration with the Python control flow: after a
   trial ends, the controller composes the next stimulus, pauses the engine
   clock and runs one center target over the **blurred** stimulus. When the run
   finishes or is cancelled, the trial resumes with its deadline shifted by the
   recalibration. This is a console/presenter flow; the pure engine and the
   headless runner stay deterministic.
-- Presenter picture-in-picture: the camera stream (bottom-right) and the
-  Quadbright quadrant means (bottom-left, labelled `Quadbright · eye ROI`) are
-  painted over the stimulus. Console checkboxes **PiP camera** / **PiP quad**,
-  presenter-only keys `P`/`Q`, and launch flags `--pip-camera` / `--pip-quad`.
-  Purely visual; the PiP never enters the trial scene or the result CSV.
+- Presenter picture-in-picture: the camera stream (bottom-right) is painted
+  over the stimulus. Console checkbox **PiP camera**, presenter-only key `P`,
+  and launch flag `--pip-camera`. Purely visual; the PiP never enters the trial
+  scene or the result CSV.
 - Python `yet_zero` workspace compatibility: `Config.csv` plus
   `Stimuli/Stimuli.csv` loads without conversion, using `SLIDE_TIME`,
   `SHUFFLE`/`SEED`, `STIM_FILE`, the `File` column and the Python result prefix
@@ -125,7 +130,7 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   the calibration.
 - `yet-zero present <workspace>`: a presenter-only window with no console. Keys:
   `Space` forward, `Backspace` back, `F11` fullscreen; optional diagnostics
-  `F`/`P`/`Q` and `Esc`.
+  `F`/`P` and `Esc`.
 - Follow circle in the console and presenter-only mode: a gaze marker scaled to
   the surface (1/50 radius, 1/200 halo) is appended to a temporary scene for
   painting only and never reaches the trial scene or CSV.
