@@ -931,6 +931,7 @@ fn run_loop<G>(
                             cancel_calibration(state, runner, calibration.as_mut(), shared, start);
                             auto_quick = false;
                         }
+                        lock_console(shared).pause_after_calibration = false;
                         if matches!(state.phase, Phase::Running | Phase::Paused) {
                             let effects = step(state, EngineEvent::Abort, at);
                             clear_gaze(shared, latest_gaze);
@@ -970,6 +971,7 @@ fn run_loop<G>(
                         update_progress(shared, runner.report(), state, at);
                         first_trial = false;
                         auto_quick = false;
+                        lock_console(shared).pause_after_calibration = false;
                         {
                             let mut console = lock_console(shared);
                             console.error = None;
@@ -1471,28 +1473,29 @@ fn begin_auto_quick<G>(
 where
     G: FnMut(&FrameRecord, Option<StimulusPlacement>) -> Option<GazeSample>,
 {
-    let eligible = calibration
-        .as_ref()
-        .is_some_and(|run| run.is_fitted() && !run.is_active());
-    if !eligible {
-        return Ok(false);
-    }
     if tracker.is_none() {
         *tracker = open_tracker(camera_config, shared);
     }
-    if tracker.is_none() {
-        return Ok(false);
-    }
-    let surface = runner.geometry().size_px;
-    if calibration
-        .as_ref()
-        .is_some_and(|run| run.grid().surface_px() != surface)
-    {
-        log_warning(
-            shared,
-            "the presenter surface changed; run a full calibration first",
-        );
-        return Ok(false);
+    let (fitted, active, grid_surface) = match calibration.as_ref() {
+        Some(run) => (
+            run.is_fitted(),
+            run.is_active(),
+            Some(run.grid().surface_px()),
+        ),
+        None => (false, false, None),
+    };
+    match auto_quick_state(
+        fitted,
+        active,
+        tracker.is_some(),
+        grid_surface,
+        runner.geometry().size_px,
+    ) {
+        AutoQuick::NotFitted => return Ok(false),
+        AutoQuick::Blocked(reason) => {
+            return Err(RunError::AutoQuick(reason.message().to_owned()));
+        }
+        AutoQuick::Ready => {}
     }
 
     for effect in step(state, EngineEvent::Pause, at) {
@@ -1515,9 +1518,69 @@ where
     if calibration.as_ref().is_some_and(CalibrationRun::is_active) {
         Ok(true)
     } else {
-        resume_after_auto_quick(state, runner, shared, at)?;
-        Ok(false)
+        Err(RunError::AutoQuick(
+            "the recalibration did not start".to_owned(),
+        ))
     }
+}
+
+/// Whether a new trial can be gated by an automatic quick recalibration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoQuick {
+    /// No fitted model: the documented no-gate case.
+    NotFitted,
+    /// A fitted model needs the gate, but a precondition failed.
+    Blocked(AutoQuickBlock),
+    /// Run the quick recalibration.
+    Ready,
+}
+
+/// Why a fitted model cannot gate the next trial.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoQuickBlock {
+    /// A calibration is already running.
+    Active,
+    /// The camera is not open.
+    NoTracker,
+    /// The calibration grid belongs to another presenter size.
+    SurfaceChanged,
+}
+
+impl AutoQuickBlock {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Active => "a calibration is already running",
+            Self::NoTracker => "the camera is not available",
+            Self::SurfaceChanged => "the presenter surface changed; run a full calibration first",
+        }
+    }
+}
+
+/// Decide whether a new trial can run its automatic quick recalibration.
+///
+/// A fitted model must never be skipped silently: the session would present
+/// un-gated trials that look normal but carry no calibrated gaze rows. Only a
+/// missing model may skip the gate.
+fn auto_quick_state(
+    fitted: bool,
+    active: bool,
+    tracker_open: bool,
+    grid_surface: Option<(u32, u32)>,
+    surface: (u32, u32),
+) -> AutoQuick {
+    if active {
+        return AutoQuick::Blocked(AutoQuickBlock::Active);
+    }
+    if !fitted {
+        return AutoQuick::NotFitted;
+    }
+    if !tracker_open {
+        return AutoQuick::Blocked(AutoQuickBlock::NoTracker);
+    }
+    if grid_surface != Some(surface) {
+        return AutoQuick::Blocked(AutoQuickBlock::SurfaceChanged);
+    }
+    AutoQuick::Ready
 }
 
 /// Resume a trial that was paused for an automatic quick recalibration.
@@ -2075,7 +2138,10 @@ mod tests {
 
     use yet_stim::{BlockId, PresenterCommand, Scene, Stimulus, StimulusId, StimulusKind};
 
-    use super::{centered_origin, presenter_monitor_for, split_trial_start, Effect};
+    use super::{
+        auto_quick_state, centered_origin, presenter_monitor_for, split_trial_start, AutoQuick,
+        AutoQuickBlock, Effect,
+    };
 
     fn trial_start() -> Effect {
         Effect::TrialStarted {
@@ -2139,5 +2205,31 @@ mod tests {
 
         assert!(split_trial_start(&mut effects).is_none());
         assert_eq!(effects.len(), 1);
+    }
+
+    #[test]
+    fn a_fitted_model_never_skips_the_automatic_quick_gate_silently() {
+        let surface = (1920, 1080);
+
+        assert_eq!(
+            auto_quick_state(true, false, false, Some(surface), surface),
+            AutoQuick::Blocked(AutoQuickBlock::NoTracker)
+        );
+        assert_eq!(
+            auto_quick_state(true, false, true, Some(surface), (1280, 720)),
+            AutoQuick::Blocked(AutoQuickBlock::SurfaceChanged)
+        );
+        assert_eq!(
+            auto_quick_state(false, true, true, None, surface),
+            AutoQuick::Blocked(AutoQuickBlock::Active)
+        );
+        assert_eq!(
+            auto_quick_state(false, false, true, None, surface),
+            AutoQuick::NotFitted
+        );
+        assert_eq!(
+            auto_quick_state(true, false, true, Some(surface), surface),
+            AutoQuick::Ready
+        );
     }
 }

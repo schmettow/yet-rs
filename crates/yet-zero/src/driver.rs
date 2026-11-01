@@ -113,6 +113,11 @@ pub enum RunError {
     /// The engine stopped without finishing.
     #[error("the session stopped in phase {0:?}")]
     Incomplete(Phase),
+    /// A fitted calibration could not gate a new trial.
+    #[error(
+        "automatic quick recalibration could not start: {0}; the session was stopped. Run a full calibration and start again"
+    )]
+    AutoQuick(String),
     /// A tick did not advance experiment time.
     #[error("the session scheduler made no progress")]
     Stalled,
