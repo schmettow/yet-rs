@@ -3,7 +3,7 @@
 [package]
 name = "yet-zero"
 description = "Webcam-based eye-tracking experiment runner with console, presenter and gaze overlay"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

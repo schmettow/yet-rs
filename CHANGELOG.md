@@ -7,6 +7,10 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-01
+
+Windows 11 compatibility, camera negotiation, and a fail-closed session gate.
+
 ### Fixed
 
 - **Windows camera format negotiation.** `nokhwa`'s `Closest` request matches
@@ -20,6 +24,12 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
   listing what the device reported instead of a negotiation error.
 - The Windows `CameraInfo` frame rate is now taken from the selected format;
   Media Foundation's packed frame-rate value previously surfaced as `1 fps`.
+- **Automatic quick recalibration now fails closed.** When a fitted model
+  cannot gate a new trial (camera unavailable, calibration already active, or
+  presenter surface changed), the session stops with `RunError::AutoQuick`
+  instead of silently presenting an ungated trial. Only a missing model may
+  skip the gate. `pause_after_calibration` is cleared on Abort and Reset so a
+  hold cannot leak into the next session.
 
 ### Changed
 
@@ -29,6 +39,9 @@ This project is pre-1.0 and follows semantic versioning for its public crates.
 - Windows troubleshooting documents the Defender Exploit Guard
   prevalence/age/trusted-list rule, which can delay the launch of a freshly
   built unsigned release binary by several seconds **before `main`**.
+- The install instructions separate the Rust toolchain from the native
+  linker/SDK prerequisites on Windows, macOS and Linux; yet-zero still has no
+  C or C++ source.
 
 ## [0.1.0] - 2026-10-31
 

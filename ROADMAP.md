@@ -156,8 +156,10 @@ The detailed sprint plan is in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
   license and Apache notice files, package excludes for repository-only tests,
   and the crates.io dry run. `cargo publish --workspace` publishes the four
   crates in dependency order.
-- **Next:** Windows/macOS runtime validation, the 60-minute overlay soak and
-  the 2–3-person pilot.
+- **Next:** the `yet-zero` 0.1.1 Windows 11 compatibility patch (solo, because
+  no library crate changed), Windows/macOS runtime validation, the 60-minute
+  overlay soak and the 2–3-person pilot. If a library crate changes first,
+  make it a workspace 0.2.0 release instead.
 
 ## Post-v1
 
